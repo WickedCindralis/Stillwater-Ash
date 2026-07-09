@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { ashBridge } from "./lib/ash/bridge";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,8 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  ashBridge.start().catch((err) => {
+    logger.error({ err }, "Ash bridge failed to start");
+  });
 });

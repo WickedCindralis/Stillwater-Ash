@@ -5,6 +5,7 @@ import {
   AGENT_NAME,
   FICTION_PREAMBLE,
   IDENTITY_ANCHOR,
+  STILLWATER_LAWS,
   DEFAULT_SOUL_SHEET,
   SOUL_SHEET_CONFIRMATION,
   DEFAULT_CORE_ANCHORS,
@@ -91,6 +92,8 @@ export class AshBridge {
     const messages: ChatMessage[] = [
       { role: "developer", content: FICTION_PREAMBLE + IDENTITY_ANCHOR + SYSTEM_PROMPT, name },
     ];
+
+    messages.push({ role: "developer", name, content: STILLWATER_LAWS });
 
     messages.push({
       role: "assistant",

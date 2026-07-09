@@ -467,9 +467,9 @@ GROUND RULES:
   }
 
   async start() {
-    const apiKey = process.env.ASH_OPENAI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY || process.env.ASH_OPENAI_API_KEY;
     if (!apiKey) {
-      this.error("ASH_OPENAI_API_KEY not set — Ash bridge disabled");
+      this.error("OPENAI_API_KEY not set — Ash bridge disabled");
       return;
     }
     this.openai = new OpenAI({ apiKey });

@@ -9,9 +9,9 @@ let _client: OpenAI | null | undefined;
 
 function getClient(): OpenAI | null {
   if (_client !== undefined) return _client;
-  const apiKey = process.env.ASH_OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY || process.env.ASH_OPENAI_API_KEY;
   _client = apiKey ? new OpenAI({ apiKey }) : null;
-  if (!apiKey) logger.warn("[image-gen] ASH_OPENAI_API_KEY not set — image generation disabled");
+  if (!apiKey) logger.warn("[image-gen] OPENAI_API_KEY not set — image generation disabled");
   return _client;
 }
 

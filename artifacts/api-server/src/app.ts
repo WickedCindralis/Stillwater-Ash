@@ -1,4 +1,5 @@
 import express, { type Express } from "express";
+import path from "node:path";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import session from "express-session";
@@ -59,5 +60,17 @@ app.use(
 );
 
 app.use("/api", router);
+
+// When STATIC_DIR is set (e.g. Northflank single-service deployment), serve
+// the built frontend and fall back to index.html for client-side routes.
+const staticDir = process.env["STATIC_DIR"];
+if (staticDir) {
+  const resolved = path.resolve(staticDir);
+  app.use(express.static(resolved));
+  app.get(/^\/(?!api(\/|$)).*/, (_req, res) => {
+    res.sendFile(path.join(resolved, "index.html"));
+  });
+  logger.info({ staticDir: resolved }, "Serving static frontend");
+}
 
 export default app;

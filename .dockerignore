@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/.tsbuildinfo
+**/*.tsbuildinfo
+.git
+.local
+.agents
+.cache
+.config
+.upm
+attached_assets
+screenshots
+*.log

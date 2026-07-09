@@ -12,6 +12,8 @@ export interface AshState {
   modelFallback: string;
   activeModel: string;
   voiceId: string;
+  wickedStatus: string;
+  wickedStatusMessage: string;
 }
 
 export interface AshMessage {

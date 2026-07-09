@@ -106,22 +106,26 @@ export class AshBridge {
       });
     }
 
+    const packetState = await storage.getState().catch(() => null);
+
+    // Volatile developer message: live timestamp + Wicked's current status.
+    let volatile = `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nAlways use 12-hour AM/PM format when referencing times. Never use military/24-hour time.`;
+    if (packetState) {
+      const wickedStatus = (packetState.wickedStatus || "online").toUpperCase();
+      const statusMessage = (packetState.wickedStatusMessage || "").trim();
+      volatile += `\n\n[WICKED STATUS: ${wickedStatus}${statusMessage ? ` — ${statusMessage}` : ""}]`;
+    }
     messages.push({
       role: "developer",
       name,
-      content: `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nAlways use 12-hour AM/PM format when referencing times. Never use military/24-hour time.`,
+      content: volatile,
     });
 
     // Recent private conversation with Wicked (text only — images are one-and-done).
     // For proactive self-prompt windows, history inclusion is controlled by a UI toggle.
     let includeHistory = true;
-    if (source === "self_prompt") {
-      try {
-        const state = await storage.getState();
-        includeHistory = state.selfPromptIncludeHistory !== 0;
-      } catch {
-        includeHistory = true;
-      }
+    if (source === "self_prompt" && packetState) {
+      includeHistory = packetState.selfPromptIncludeHistory !== 0;
     }
     if (includeHistory) {
       try {

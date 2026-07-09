@@ -32,6 +32,14 @@ const STATUS_COLORS: Record<string, string> = {
 
 const MODEL_OPTIONS = ["gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"];
 
+const WICKED_STATUS_ACTIVE: Record<string, string> = {
+  online: "bg-green-500/20 text-green-400 border-green-500/40",
+  away: "bg-amber-400/20 text-amber-300 border-amber-400/40",
+  busy: "bg-orange-500/20 text-orange-400 border-orange-500/40",
+  asleep: "bg-purple-500/20 text-purple-300 border-purple-500/40",
+  offline: "bg-white/15 text-white/70 border-white/30",
+};
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -180,6 +188,42 @@ export default function ChatPage() {
           </button>
         </div>
       </header>
+
+      {/* My Status (Wicked) */}
+      <div className="px-4 py-2 border-b border-white/10 bg-black/40 flex flex-wrap items-center gap-2" data-testid="panel-my-status">
+        <span className="text-xs uppercase tracking-wider text-gold/80 font-semibold mr-1">My Status</span>
+        {(["online", "away", "busy", "asleep", "offline"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => settingsMutation.mutate({ wickedStatus: s })}
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold capitalize border transition-colors ${
+              (state?.wickedStatus || "online") === s
+                ? WICKED_STATUS_ACTIVE[s]
+                : "bg-white/5 text-white/50 border-white/10 hover:text-white/80"
+            }`}
+            data-testid={`button-wicked-status-${s}`}
+          >
+            {s}
+          </button>
+        ))}
+        <input
+          type="text"
+          placeholder="Live status... e.g. I'll be in the Great Hall for the next hour"
+          defaultValue={state?.wickedStatusMessage || ""}
+          key={state?.wickedStatusMessage || ""}
+          onBlur={(e) => {
+            const v = e.target.value.trim();
+            if (v !== (state?.wickedStatusMessage || "")) {
+              settingsMutation.mutate({ wickedStatusMessage: v });
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          className="flex-1 min-w-[220px] bg-black/60 border border-white/15 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-white/25 outline-none focus:border-gold/40 font-serif italic"
+          data-testid="input-wicked-status-message"
+        />
+      </div>
 
       <div className="flex-1 flex min-h-0">
         {/* Chat column */}

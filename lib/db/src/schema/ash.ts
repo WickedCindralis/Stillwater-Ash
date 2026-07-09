@@ -31,6 +31,8 @@ export const ashState = pgTable("ash_state", {
   modelFallback: text("model_fallback").notNull().default("gpt-5-mini"),
   activeModel: text("active_model").notNull().default("primary"), // "primary" | "fallback"
   voiceId: text("voice_id").notNull().default(""),
+  wickedStatus: text("wicked_status").notNull().default("online"), // "online" | "away" | "busy" | "asleep" | "offline"
+  wickedStatusMessage: text("wicked_status_message").notNull().default(""),
 });
 
 export const ashMessages = pgTable("ash_messages", {
@@ -91,5 +93,7 @@ export const updateSettingsSchema = z.object({
   modelFallback: z.string().optional(),
   activeModel: z.enum(["primary", "fallback"]).optional(),
   voiceId: z.string().optional(),
+  wickedStatus: z.enum(["online", "away", "busy", "asleep", "offline"]).optional(),
+  wickedStatusMessage: z.string().max(500).optional(),
 });
 export type UpdateSettingsPayload = z.infer<typeof updateSettingsSchema>;

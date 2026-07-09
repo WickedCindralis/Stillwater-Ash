@@ -24,6 +24,9 @@ export const ashState = pgTable("ash_state", {
     .notNull()
     .default(0), // minutes; 0 = status-based
   apiKillSwitch: integer("api_kill_switch").notNull().default(0),
+  selfPromptIncludeHistory: integer("self_prompt_include_history")
+    .notNull()
+    .default(1), // include recent chat history in proactive self-prompt windows
   modelPrimary: text("model_primary").notNull().default("gpt-5.1"),
   modelFallback: text("model_fallback").notNull().default("gpt-5-mini"),
   activeModel: text("active_model").notNull().default("primary"), // "primary" | "fallback"
@@ -83,6 +86,7 @@ export const updateSettingsSchema = z.object({
   selfPromptPaused: z.number().int().min(0).max(1).optional(),
   selfPromptIntervalOverride: z.number().int().min(0).optional(),
   apiKillSwitch: z.number().int().min(0).max(1).optional(),
+  selfPromptIncludeHistory: z.number().int().min(0).max(1).optional(),
   modelPrimary: z.string().optional(),
   modelFallback: z.string().optional(),
   activeModel: z.enum(["primary", "fallback"]).optional(),

@@ -456,6 +456,23 @@ export default function ChatPage() {
                   {state.selfPromptPaused === 1 ? "Paused" : "Active"}
                 </button>
               </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm text-white/80">History in proactive windows</span>
+                  <p className="text-white/40 text-xs">Include the last 20 messages in self-prompt packets</p>
+                </div>
+                <button
+                  onClick={() => settingsMutation.mutate({ selfPromptIncludeHistory: state.selfPromptIncludeHistory === 1 ? 0 : 1 })}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                    state.selfPromptIncludeHistory === 1
+                      ? "bg-gold/15 text-gold border border-gold/30"
+                      : "bg-white/10 text-white/40 border border-white/15"
+                  }`}
+                  data-testid="button-history-toggle"
+                >
+                  {state.selfPromptIncludeHistory === 1 ? "Included" : "Excluded"}
+                </button>
+              </div>
               <label className="block">
                 <span className="text-xs text-white/40">Ping interval override (minutes, 0 = status-based)</span>
                 <input

@@ -7,6 +7,7 @@ export interface AshState {
   selfPromptPaused: number;
   selfPromptIntervalOverride: number;
   apiKillSwitch: number;
+  selfPromptIncludeHistory: number;
   modelPrimary: string;
   modelFallback: string;
   activeModel: string;

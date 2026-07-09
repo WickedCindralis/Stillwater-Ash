@@ -59,7 +59,7 @@ const STATUS_ALIASES: Record<string, string> = {
 };
 
 const NO_TEMPERATURE_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.3-chat", "gpt-5.4", "gpt-5.5"];
-const HISTORY_LIMIT = 40;
+const HISTORY_LIMIT = 20;
 
 export class AshBridge {
   private running = false;
@@ -113,21 +113,33 @@ export class AshBridge {
     });
 
     // Recent private conversation with Wicked (text only — images are one-and-done).
-    try {
-      const history = await storage.getRecentHistory(HISTORY_LIMIT);
-      const relevant = history.filter((m: AshMessage) => m.content && m.content.trim().length > 0);
-      if (relevant.length > 0) {
-        const lines = relevant.map((m: AshMessage) =>
-          m.role === "wicked" ? `[Wicked] ${m.content}` : `[${name}] ${m.content}`
-        ).join("\n");
-        messages.push({
-          role: "assistant",
-          name,
-          content: `[PRIVATE MESSAGES — WICKED]\nYour recent private conversation with Wicked (oldest first):\n${lines}`,
-        });
+    // For proactive self-prompt windows, history inclusion is controlled by a UI toggle.
+    let includeHistory = true;
+    if (source === "self_prompt") {
+      try {
+        const state = await storage.getState();
+        includeHistory = state.selfPromptIncludeHistory !== 0;
+      } catch {
+        includeHistory = true;
       }
-    } catch (e) {
-      this.error("Failed to build conversation history:", e);
+    }
+    if (includeHistory) {
+      try {
+        const history = await storage.getRecentHistory(HISTORY_LIMIT);
+        const relevant = history.filter((m: AshMessage) => m.content && m.content.trim().length > 0);
+        if (relevant.length > 0) {
+          const lines = relevant.map((m: AshMessage) =>
+            m.role === "wicked" ? `[Wicked] ${m.content}` : `[${name}] ${m.content}`
+          ).join("\n");
+          messages.push({
+            role: "assistant",
+            name,
+            content: `[PRIVATE MESSAGES — WICKED]\nYour recent private conversation with Wicked (oldest first):\n${lines}`,
+          });
+        }
+      } catch (e) {
+        this.error("Failed to build conversation history:", e);
+      }
     }
 
     if (source === "private_message") {

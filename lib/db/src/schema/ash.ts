@@ -50,6 +50,14 @@ export const ashDiaryEntries = pgTable("ash_diary_entries", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Activity feed: diary entries, bridge crossings (restarts), status changes, ping toggles.
+export const ashActivity = pgTable("ash_activity", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(), // "diary_entry" | "bridge" | "status" | "pings_off" | "pings_on"
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Session table for connect-pg-simple (express-session store).
 export const ashSession = pgTable(
   "ash_session",
@@ -75,6 +83,7 @@ export type AshMessage = typeof ashMessages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type AshDiaryEntry = typeof ashDiaryEntries.$inferSelect;
 export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
+export type AshActivity = typeof ashActivity.$inferSelect;
 
 export const sendMessageSchema = z.object({
   content: z.string().default(""),

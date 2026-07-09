@@ -16,6 +16,24 @@ export interface AshState {
   wickedStatusMessage: string;
 }
 
+export interface AshActivity {
+  id: number;
+  kind: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface SystemInfo {
+  buildName: string;
+  status: string;
+  pingIntervalMs: number;
+  pingIntervalOverrideMinutes: number;
+  selfPromptPaused: number;
+  apiKillSwitch: number;
+  lastHeartbeat: string | null;
+  tokensUsed: number;
+}
+
 export interface AshMessage {
   id: number;
   role: string;

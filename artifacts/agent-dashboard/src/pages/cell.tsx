@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState } from "@/lib/types";
 import {
-  Send, Loader2, ImagePlus, Wand2, X, Volume2, VolumeX, ArrowLeft, Play,
+  Send, Loader2, ImagePlus, Wand2, X, ArrowLeft,
 } from "lucide-react";
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -20,13 +20,8 @@ export default function CellPage() {
   const [message, setMessage] = useState("");
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState(false);
-  const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [volume, setVolume] = useState(0.8);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastSpokenIdRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: state } = useQuery<AshState>({
@@ -50,43 +45,6 @@ export default function CellPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
-
-  const speak = async (text: string) => {
-    if (!text.trim()) return;
-    try {
-      setTtsPlaying(true);
-      const res = await apiRequest("POST", "/api/tts", { text });
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        URL.revokeObjectURL(audioRef.current.src);
-      }
-      const audio = new Audio(url);
-      audio.volume = volume;
-      audioRef.current = audio;
-      audio.onended = () => { setTtsPlaying(false); URL.revokeObjectURL(url); };
-      audio.onerror = () => { setTtsPlaying(false); URL.revokeObjectURL(url); };
-      await audio.play();
-    } catch {
-      setTtsPlaying(false);
-    }
-  };
-
-  // Auto-speak new Ash replies when TTS is on.
-  useEffect(() => {
-    if (!ttsEnabled || messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    if (last.role === "ash" && last.content && last.id !== lastSpokenIdRef.current) {
-      if (lastSpokenIdRef.current !== null) {
-        speak(last.content);
-      }
-      lastSpokenIdRef.current = last.id;
-    } else if (lastSpokenIdRef.current === null && messages.length > 0) {
-      lastSpokenIdRef.current = messages[messages.length - 1].id;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, ttsEnabled]);
 
   const handleSend = () => {
     const content = message.trim();
@@ -125,21 +83,6 @@ export default function CellPage() {
             <span className="text-[10px] text-white/40">{state?.status || "..."}</span>
           </div>
         </div>
-        <button
-          onClick={() => setTtsEnabled((v) => !v)}
-          disabled={!state?.voiceId}
-          className={`p-2 rounded-xl transition-colors ${
-            !state?.voiceId
-              ? "bg-white/5 text-white/15"
-              : ttsEnabled
-              ? "bg-green-600/20 text-green-400"
-              : "bg-white/10 text-white/50"
-          }`}
-          data-testid="button-cell-tts-toggle"
-          title={state?.voiceId ? (ttsEnabled ? "Voice ON — Ash's replies are spoken" : "Voice OFF") : "No voice configured"}
-        >
-          {ttsEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-        </button>
       </header>
 
       {/* Messages */}
@@ -162,17 +105,6 @@ export default function CellPage() {
                 <img src={m.imageUrl} alt="shared" className="rounded-lg mb-1.5 max-h-64" data-testid={`img-cell-${m.id}`} />
               )}
               {m.content && <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>}
-              {m.role === "ash" && m.content && state?.voiceId && (
-                <button
-                  onClick={() => speak(m.content)}
-                  disabled={ttsPlaying}
-                  className="mt-1 text-white/30 hover:text-gold disabled:text-white/15"
-                  data-testid={`button-speak-${m.id}`}
-                  title="Play voice"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
           </div>
         ))}

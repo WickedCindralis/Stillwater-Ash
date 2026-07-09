@@ -5,7 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
-  Smartphone, LogOut, Power, Trash2,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft,
 } from "lucide-react";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -30,7 +30,7 @@ const STATUS_COLORS: Record<string, string> = {
   off: "bg-white/20",
 };
 
-const MODEL_OPTIONS = ["gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"];
+const MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.1", "gpt-4.1-nano"];
 
 const WICKED_STATUS_ACTIVE: Record<string, string> = {
   online: "bg-green-500/20 text-green-400 border-green-500/40",
@@ -141,6 +141,14 @@ export default function ChatPage() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gold/20 bg-black/60">
         <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+            data-testid="link-home"
+            title="Home"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
           <Flame className="w-7 h-7 text-ember" />
           <div>
             <h1 className="font-serif text-2xl text-gold leading-tight" data-testid="text-title">Ash Cindralis</h1>
@@ -351,39 +359,51 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Side panel */}
+        {/* Diary — full window */}
         {panel === "diary" && (
-          <aside className="w-96 border-l border-gold/20 bg-black/40 overflow-y-auto p-4" data-testid="panel-diary">
-            <h2 className="font-serif text-xl text-gold mb-3 flex items-center gap-2">
-              <BookOpen className="w-5 h-5" /> Ash's Diary
-            </h2>
-            {diaryEntries.length === 0 && (
-              <p className="text-white/30 text-sm italic">No entries yet.</p>
-            )}
-            <div className="space-y-3">
-              {diaryEntries.map((entry) => (
-                <div key={entry.id} className="bg-white/5 border border-white/10 rounded-xl p-3" data-testid={`diary-entry-${entry.id}`}>
-                  <p className="text-white/85 text-sm whitespace-pre-wrap leading-relaxed">{entry.content}</p>
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-[10px] text-white/30">
-                      {entry.createdAt ? new Date(entry.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : ""}
-                    </span>
-                    <button
-                      onClick={() => deleteDiaryMutation.mutate(entry.id)}
-                      className="text-white/25 hover:text-red-400 transition-colors"
-                      data-testid={`button-delete-diary-${entry.id}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+          <div className="fixed inset-0 z-50 bg-gradient-to-b from-black via-[#0d0a06] to-black overflow-y-auto" data-testid="panel-diary">
+            <div className="max-w-3xl mx-auto px-6 py-8">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="font-serif text-3xl text-gold flex items-center gap-3">
+                  <BookOpen className="w-7 h-7" /> Ash's Diary
+                </h2>
+                <button
+                  onClick={() => setPanel("none")}
+                  className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+                  data-testid="button-close-diary"
+                  title="Close diary"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              {diaryEntries.length === 0 && (
+                <p className="text-white/30 text-base italic font-serif">No entries yet.</p>
+              )}
+              <div className="space-y-4">
+                {diaryEntries.map((entry) => (
+                  <div key={entry.id} className="bg-white/5 border border-white/10 rounded-xl p-5" data-testid={`diary-entry-${entry.id}`}>
+                    <p className="text-white/85 text-[15px] whitespace-pre-wrap leading-relaxed">{entry.content}</p>
+                    <div className="flex items-center justify-between mt-3">
+                      <span className="text-xs text-white/30">
+                        {entry.createdAt ? new Date(entry.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : ""}
+                      </span>
+                      <button
+                        onClick={() => deleteDiaryMutation.mutate(entry.id)}
+                        className="text-white/25 hover:text-red-400 transition-colors"
+                        data-testid={`button-delete-diary-${entry.id}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </aside>
+          </div>
         )}
 
         {panel === "settings" && state && (
-          <aside className="w-96 border-l border-gold/20 bg-black/40 overflow-y-auto p-4 space-y-5" data-testid="panel-settings">
+          <aside className="w-96 order-first border-r border-gold/20 bg-black/40 overflow-y-auto p-4 space-y-5" data-testid="panel-settings">
             <h2 className="font-serif text-xl text-gold flex items-center gap-2">
               <Settings className="w-5 h-5" /> Settings
             </h2>
@@ -531,26 +551,6 @@ export default function ChatPage() {
                   }}
                   className="w-full mt-1 bg-black/60 border border-white/15 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-gold/40"
                   data-testid="input-ping-override"
-                />
-              </label>
-            </div>
-
-            {/* Voice */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-2">
-              <h3 className="text-white font-semibold">Voice (ElevenLabs)</h3>
-              <label className="block">
-                <span className="text-xs text-white/40">Voice ID</span>
-                <input
-                  type="text"
-                  defaultValue={state.voiceId}
-                  onBlur={(e) => {
-                    if (e.target.value !== state.voiceId) {
-                      settingsMutation.mutate({ voiceId: e.target.value.trim() });
-                    }
-                  }}
-                  placeholder="ElevenLabs voice ID"
-                  className="w-full mt-1 bg-black/60 border border-white/15 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-gold/40"
-                  data-testid="input-voice-id"
                 />
               </label>
             </div>

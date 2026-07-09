@@ -2,8 +2,11 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Route, Switch, Redirect, Router as WouterRouter } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import LoginPage from "./pages/login";
+import HomePage from "./pages/home";
 import ChatPage from "./pages/chat";
 import CellPage from "./pages/cell";
+import ActivityPage from "./pages/activity";
+import NorthflankPage from "./pages/northflank";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { data, isLoading } = useQuery<{ authenticated: boolean }>({
@@ -35,9 +38,24 @@ function Router() {
           <CellPage />
         </AuthGate>
       </Route>
-      <Route>
+      <Route path="/ash">
         <AuthGate>
           <ChatPage />
+        </AuthGate>
+      </Route>
+      <Route path="/activity">
+        <AuthGate>
+          <ActivityPage />
+        </AuthGate>
+      </Route>
+      <Route path="/northflank">
+        <AuthGate>
+          <NorthflankPage />
+        </AuthGate>
+      </Route>
+      <Route>
+        <AuthGate>
+          <HomePage />
         </AuthGate>
       </Route>
     </Switch>

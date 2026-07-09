@@ -3,11 +3,13 @@ import {
   ashState,
   ashMessages,
   ashDiaryEntries,
+  ashActivity,
   type AshState,
   type AshMessage,
   type InsertMessage,
   type AshDiaryEntry,
   type InsertDiaryEntry,
+  type AshActivity,
 } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 
@@ -22,6 +24,8 @@ export interface IStorage {
   getDiaryEntries(): Promise<AshDiaryEntry[]>;
   createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry>;
   deleteDiaryEntry(id: number): Promise<void>;
+  logActivity(kind: string, message: string): Promise<void>;
+  getActivity(limit?: number): Promise<AshActivity[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -83,6 +87,18 @@ export class DbStorage implements IStorage {
 
   async deleteDiaryEntry(id: number): Promise<void> {
     await db.delete(ashDiaryEntries).where(eq(ashDiaryEntries.id, id));
+  }
+
+  async logActivity(kind: string, message: string): Promise<void> {
+    await db.insert(ashActivity).values({ kind, message });
+  }
+
+  async getActivity(limit = 100): Promise<AshActivity[]> {
+    return db
+      .select()
+      .from(ashActivity)
+      .orderBy(desc(ashActivity.id))
+      .limit(limit);
   }
 }
 

@@ -251,6 +251,7 @@ export class AshBridge {
           await storage.updateState({ status: mapped });
           this.statusEnteredAt = Date.now();
           this.log(`Status changed by Ash → ${mapped}`);
+          await storage.logActivity("status", `Self-updated status to ${mapped} (via chat)`).catch(() => {});
         } catch (e) {
           this.error("Failed to persist status change:", e);
         }
@@ -267,6 +268,7 @@ export class AshBridge {
       try {
         await storage.updateState({ selfPromptPaused: 1 });
         this.log("Proactive pings turned OFF by Ash");
+        await storage.logActivity("pings_off", "Ash_Cindralis disabled their own proactive pings").catch(() => {});
       } catch (e) { this.error("Failed to persist PINGS_OFF:", e); }
       cleaned = cleaned.replace(/\[PINGS_OFF\]/gi, "");
     }
@@ -274,6 +276,7 @@ export class AshBridge {
       try {
         await storage.updateState({ selfPromptPaused: 0 });
         this.log("Proactive pings turned ON by Ash");
+        await storage.logActivity("pings_on", "Ash_Cindralis enabled their own proactive pings").catch(() => {});
       } catch (e) { this.error("Failed to persist PINGS_ON:", e); }
       cleaned = cleaned.replace(/\[PINGS_ON\]/gi, "");
     }
@@ -294,6 +297,7 @@ export class AshBridge {
           try {
             await storage.createDiaryEntry({ content: entry });
             this.log(`Diary entry saved (${entry.length} chars)`);
+            await storage.logActivity("diary_entry", "Ash wrote in his diary").catch(() => {});
           } catch (e) {
             this.error("Failed to save diary entry:", e);
           }
@@ -368,7 +372,7 @@ export class AshBridge {
     }
   }
 
-  private async getEffectivePingIntervalMs(): Promise<number> {
+  async getEffectivePingIntervalMs(): Promise<number> {
     try {
       const state = await storage.getState();
       if (state.selfPromptIntervalOverride && state.selfPromptIntervalOverride > 0) {
@@ -502,6 +506,10 @@ GROUND RULES:
     }
     this.lastKnownStatus = state.status?.toLowerCase() || "online";
     this.lastApiCallTime = Date.now();
+
+    await storage
+      .logActivity("bridge", "Ash_Cindralis crossed the bridge (container started)")
+      .catch(() => {});
 
     this.log(`Ash bridge started (persona: ${PERSONA.role})`);
     this.log(`Model: ${state.modelPrimary} (primary) / ${state.modelFallback} (fallback) — active: ${state.activeModel}`);

@@ -150,51 +150,26 @@ router.delete("/diary/:id", requireAuth, async (req, res): Promise<void> => {
   res.json({ ok: true });
 });
 
-// ── ElevenLabs TTS ──
-router.post("/tts", requireAuth, async (req, res): Promise<void> => {
-  const { text } = req.body || {};
-  if (!text || typeof text !== "string") {
-    res.status(400).json({ error: "Missing text" });
-    return;
-  }
-  const apiKey = process.env["ELEVENLABS_API_KEY"];
-  if (!apiKey) {
-    res.status(500).json({ error: "ELEVENLABS_API_KEY is not configured" });
-    return;
-  }
+// ── Activity feed ──
+router.get("/activity", requireAuth, async (_req, res): Promise<void> => {
+  const events = await storage.getActivity(100);
+  res.json(events);
+});
+
+// ── System info (Northflank panel) ──
+router.get("/system", requireAuth, async (_req, res): Promise<void> => {
   const state = await storage.getState();
-  const voiceId = state.voiceId;
-  if (!voiceId) {
-    res
-      .status(400)
-      .json({ error: "No voice configured — set a voice ID in settings" });
-    return;
-  }
-  const ttsRes = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: text.substring(0, 4000),
-        model_id: "eleven_multilingual_v2",
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-      }),
-    },
-  );
-  if (!ttsRes.ok) {
-    const errText = await ttsRes.text();
-    res
-      .status(502)
-      .json({ error: `TTS failed: ${errText.substring(0, 200)}` });
-    return;
-  }
-  res.setHeader("Content-Type", "audio/mpeg");
-  const buffer = Buffer.from(await ttsRes.arrayBuffer());
-  res.send(buffer);
+  const pingIntervalMs = await ashBridge.getEffectivePingIntervalMs();
+  res.json({
+    buildName: process.env["BUILD_NAME"] || "stillwater-dev",
+    status: state.status,
+    pingIntervalMs,
+    pingIntervalOverrideMinutes: state.selfPromptIntervalOverride,
+    selfPromptPaused: state.selfPromptPaused,
+    apiKillSwitch: state.apiKillSwitch,
+    lastHeartbeat: state.lastHeartbeat,
+    tokensUsed: state.tokensUsed,
+  });
 });
 
 export default router;

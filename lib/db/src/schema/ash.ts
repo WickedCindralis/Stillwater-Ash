@@ -19,11 +19,11 @@ export const ashState = pgTable("ash_state", {
   status: text("status").notNull().default("online"),
   lastHeartbeat: timestamp("last_heartbeat"),
   tokensUsed: integer("tokens_used").notNull().default(0),
-  selfPromptPaused: integer("self_prompt_paused").notNull().default(0),
+  selfPromptPaused: integer("self_prompt_paused").notNull().default(1),
   selfPromptIntervalOverride: integer("self_prompt_interval_override")
     .notNull()
     .default(0), // minutes; 0 = status-based
-  apiKillSwitch: integer("api_kill_switch").notNull().default(0),
+  apiKillSwitch: integer("api_kill_switch").notNull().default(1),
   selfPromptIncludeHistory: integer("self_prompt_include_history")
     .notNull()
     .default(1), // include recent chat history in proactive self-prompt windows

@@ -1,6 +1,6 @@
-# Agent Dashboard (Ash Container)
+# Stillwater (Ash Container)
 
-A password-protected AI companion app — a standalone home for "Ash Cindralis": OpenAI-powered persona chat, private diary, an autonomous status/heartbeat engine with proactive self-prompt pings, image attach/generation, a kill switch, and a model primary/fallback toggle.
+The project is named "Stillwater". A password-protected AI companion app — a standalone home for "Ash Cindralis": OpenAI-powered persona chat, private diary, an autonomous status/heartbeat engine with proactive self-prompt pings, image attach/generation, a kill switch, and a model primary/fallback toggle.
 
 ## Run & Operate
 

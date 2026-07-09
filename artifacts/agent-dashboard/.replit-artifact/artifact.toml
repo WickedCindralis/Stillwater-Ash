@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Agent Dashboard"
+title = "Stillwater"
 version = "1.0.0"
 id = "artifacts/agent-dashboard"
 router = "path"

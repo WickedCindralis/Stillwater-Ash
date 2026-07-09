@@ -79,8 +79,8 @@ export default function CellPage() {
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="font-serif text-lg text-gold leading-tight" data-testid="text-cell-title">Ash</h1>
-            <span className="text-[10px] text-white/40">{state?.status || "..."}</span>
+            <h1 className="font-serif text-xl text-gold leading-tight" data-testid="text-cell-title">Ash</h1>
+            <span className="text-lg text-white/40 leading-tight">{state?.status || "..."}</span>
           </div>
         </div>
       </header>
@@ -99,12 +99,12 @@ export default function CellPage() {
               }`}
             >
               {m.source === "self_prompt" && (
-                <div className="text-[9px] uppercase tracking-wider text-ember/80 mb-0.5">Reflection</div>
+                <div className="text-lg uppercase tracking-wider text-ember/80 mb-0.5">Reflection</div>
               )}
               {m.imageUrl && (
                 <img src={m.imageUrl} alt="shared" className="rounded-lg mb-1.5 max-h-64" data-testid={`img-cell-${m.id}`} />
               )}
-              {m.content && <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>}
+              {m.content && <p className="whitespace-pre-wrap text-lg leading-relaxed">{m.content}</p>}
             </div>
           </div>
         ))}
@@ -112,7 +112,7 @@ export default function CellPage() {
           <div className="flex justify-start">
             <div className="bg-white/8 border border-white/10 rounded-2xl px-3.5 py-2.5 flex items-center gap-2 text-white/50">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm font-serif italic">Ash is thinking...</span>
+              <span className="text-lg font-serif italic">Ash is thinking...</span>
             </div>
           </div>
         )}
@@ -179,7 +179,7 @@ export default function CellPage() {
             placeholder="Message Ash..."
             rows={1}
             className="flex-1 bg-white/10 text-white placeholder-white/30 rounded-xl px-4 py-2.5 resize-none outline-none border border-white/10 focus:border-white/30"
-            style={{ fontSize: "1rem", maxHeight: 120 }}
+            style={{ fontSize: "1.125rem", maxHeight: 120 }}
             data-testid="input-cell-message"
           />
           <button

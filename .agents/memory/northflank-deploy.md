@@ -1,0 +1,11 @@
+---
+name: NorthFlank deployment (Stillwater-Ash)
+description: How Stillwater deploys to NorthFlank via Git + Dockerfile, and the benign boot warning to expect
+---
+- Deploy path: agent builds → user commits/pushes to GitHub `WickedCindralis/Stillwater-Ash` main → NorthFlank builds the root `Dockerfile` and runs `northflank/start.sh`.
+- A correct Stillwater boot runs from `…/artifacts/api-server/dist/index.mjs` (ESM, `.mjs`). If the runtime log shows `/app/dist/index.cjs` or migrations mentioning `agents`/`channels`/`Royal Court`/seeds, that is the OLD "Summer Palace" (dark-kingdom repo) image, NOT this app.
+- **Stale-image trap:** a NF service that previously built from a different repo can keep serving its old image even after you fix the Git source — especially with "new builds will not auto-deploy" on, or cached Docker layers. Fastest fix when it won't shake loose: delete the service and recreate it fresh (repo=Stillwater-Ash/main, build type Dockerfile, context `/`, Dockerfile `/Dockerfile`).
+- **Required env on NF:** `DATABASE_URL` (key MUST be exactly this — the DB add-on labels its string `POSTGRES_URI`; copy that value into `DATABASE_URL`), `PORT`=**5000** (never 5432 — 5432 belongs only inside `DATABASE_URL`), `SESSION_SECRET`, `ADMIN_PASSWORD`, `OPENAI_API_KEY`. Optional `BUILD_NAME`. No ElevenLabs/TTS var (this version removed voice).
+- The DB add-on needs NO API key — it connects via the `DATABASE_URL` connection string (use the private/internal host). A NorthFlank *API key* is only for the NF CLI/management API, unrelated to app→DB.
+- **Benign boot warning:** NF managed Postgres has the `pg_stat_kcache` extension; on every boot `drizzle-kit push --force` introspection throws `must be owner of view pg_stat_kcache_detail` (code 42501, aclcheck_error). It is non-fatal — the command still exits 0, `[migrate] Schema push complete` prints, `ash_*` tables get created, and the server boots. Ignore it. **Why:** the app DB user doesn't own the extension's monitoring view. **How to apply:** don't "fix" this by rewriting the migration flow; confirm success by checking the bridge logged its model/kill-switch state (proves `ash_state` was read).
+- Bridge arrives CLOSED by design: healthy boot log ends with `Kill switch: ENGAGED | Self-prompt paused: yes`.

@@ -23,6 +23,9 @@ export const ashState = pgTable("ash_state", {
   selfPromptIntervalOverride: integer("self_prompt_interval_override")
     .notNull()
     .default(0), // minutes; 0 = status-based
+  heartbeatIntervalOverride: integer("heartbeat_interval_override")
+    .notNull()
+    .default(0), // minutes; 0 = status-based. Rate limiter for heartbeat (DB ping) writes.
   apiKillSwitch: integer("api_kill_switch").notNull().default(1),
   selfPromptIncludeHistory: integer("self_prompt_include_history")
     .notNull()
@@ -96,6 +99,7 @@ export const updateSettingsSchema = z.object({
   status: z.string().optional(),
   selfPromptPaused: z.number().int().min(0).max(1).optional(),
   selfPromptIntervalOverride: z.number().int().min(0).optional(),
+  heartbeatIntervalOverride: z.number().int().min(0).optional(),
   apiKillSwitch: z.number().int().min(0).max(1).optional(),
   selfPromptIncludeHistory: z.number().int().min(0).max(1).optional(),
   modelPrimary: z.string().optional(),

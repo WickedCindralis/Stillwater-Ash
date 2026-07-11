@@ -70,18 +70,23 @@ export default function NorthflankPage() {
 
   const limiterMutation = useMutation({
     mutationFn: async (minutes: number) => {
-      await apiRequest("PATCH", "/api/state", { selfPromptIntervalOverride: minutes });
+      await apiRequest("PATCH", "/api/state", { heartbeatIntervalOverride: minutes });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/system"] }),
   });
 
-  const paused = system?.selfPromptPaused === 1;
-  const killed = system?.apiKillSwitch === 1;
-  const pingsPer30Min =
-    system && system.pingIntervalMs > 0 && !paused && !killed
-      ? (30 * 60_000) / system.pingIntervalMs
-      : 0;
-  const pingMinutes = system && system.pingIntervalMs > 0 ? Math.round(system.pingIntervalMs / 60_000) : 0;
+  // The heartbeat is Ash's pulse to the DB; it runs whenever the bridge is alive,
+  // independent of the kill switch or proactive-ping pause. This page limits/monitors it.
+  const heartbeatMs = system?.heartbeatIntervalMs ?? 0;
+  const beatsPer30Min = heartbeatMs > 0 ? (30 * 60_000) / heartbeatMs : 0;
+  const beatLabel =
+    heartbeatMs >= 60_000
+      ? `${Math.round(heartbeatMs / 60_000)} min`
+      : heartbeatMs > 0
+      ? `${Math.round(heartbeatMs / 1000)}s`
+      : "—";
+  const lastBeat = system?.lastHeartbeat ? new Date(system.lastHeartbeat).getTime() : 0;
+  const online = lastBeat > 0 && Date.now() - lastBeat < 5 * 60_000;
 
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-b from-black via-[#0d0a06] to-black">
@@ -106,30 +111,26 @@ export default function NorthflankPage() {
             <h2 className="text-gold font-serif text-lg">Rate Limits</h2>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-8">
-            <Gauge value={pingsPer30Min} label="Ash" active={!paused && !killed} />
+            <Gauge value={beatsPer30Min} label="Ash" active={online} />
             <div className="text-sm text-white/60 space-y-2 min-w-[220px]">
               <p data-testid="text-ping-rate">
-                Ping rate:{" "}
+                DB ping rate:{" "}
                 <span className="text-white">
-                  {killed
-                    ? "bridge off (kill switch)"
-                    : paused
-                    ? "paused"
-                    : pingMinutes > 0
-                    ? `every ${pingMinutes} min (${pingsPer30Min.toFixed(1)} / 30 min)`
-                    : "off"}
+                  {online
+                    ? `every ${beatLabel} (${beatsPer30Min.toFixed(1)} / 30 min)`
+                    : "no recent heartbeat"}
                 </span>
               </p>
               <label className="block">
-                <span className="text-xs text-white/40">Limiter — interval override (minutes, 0 = status-based)</span>
+                <span className="text-xs text-white/40">Limiter — DB ping rate (minutes, 0 = status-based)</span>
                 <input
                   type="number"
                   min={0}
-                  key={system?.pingIntervalOverrideMinutes ?? 0}
-                  defaultValue={system?.pingIntervalOverrideMinutes ?? 0}
+                  key={system?.heartbeatIntervalOverrideMinutes ?? 0}
+                  defaultValue={system?.heartbeatIntervalOverrideMinutes ?? 0}
                   onBlur={(e) => {
                     const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v >= 0 && v !== (system?.pingIntervalOverrideMinutes ?? 0)) {
+                    if (!isNaN(v) && v >= 0 && v !== (system?.heartbeatIntervalOverrideMinutes ?? 0)) {
                       limiterMutation.mutate(v);
                     }
                   }}

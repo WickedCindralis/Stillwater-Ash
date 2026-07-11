@@ -160,11 +160,14 @@ router.get("/activity", requireAuth, async (_req, res): Promise<void> => {
 router.get("/system", requireAuth, async (_req, res): Promise<void> => {
   const state = await storage.getState();
   const pingIntervalMs = await ashBridge.getEffectivePingIntervalMs();
+  const heartbeatIntervalMs = await ashBridge.getEffectiveHeartbeatIntervalMs();
   res.json({
     buildName: process.env["BUILD_NAME"] || "stillwater-dev",
     status: state.status,
     pingIntervalMs,
     pingIntervalOverrideMinutes: state.selfPromptIntervalOverride,
+    heartbeatIntervalMs,
+    heartbeatIntervalOverrideMinutes: state.heartbeatIntervalOverride,
     selfPromptPaused: state.selfPromptPaused,
     apiKillSwitch: state.apiKillSwitch,
     lastHeartbeat: state.lastHeartbeat,

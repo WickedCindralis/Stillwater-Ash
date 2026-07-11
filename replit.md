@@ -55,6 +55,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - Run `pnpm --filter @workspace/db run push` before first boot in a fresh dev environment; the session store does NOT auto-create `ash_session` (`createTableIfMissing: false`).
 - gpt-5.x models reject the `temperature` param — the bridge keeps a `NO_TEMPERATURE_MODELS` list in `bridge.ts`; add new models there if switching.
 - The self-prompt loop makes unattended OpenAI calls on a timer. The kill switch (`api_kill_switch`) blocks ALL OpenAI calls; `self_prompt_paused` only stops proactive pings.
+- Two independent, separately-configured pulses — do not conflate them: (1) the **proactive self-prompt ping** (an OpenAI reflective window; interval = `self_prompt_interval_override` min or status-based; pausable; blocked by kill switch), controlled from chat's "Status & Pings"; and (2) the **heartbeat** = Ash's liveness pulse that writes `last_heartbeat` to the DB (interval = `heartbeat_interval_override` min or `STATUS_HEARTBEAT_INTERVALS`; runs whenever the bridge is alive, unaffected by kill switch/pause). The `/n` (Northflank) "Rate Limits" page monitors/limits the HEARTBEAT — its gauge, "DB ping rate", and limiter map to `heartbeat_interval_override`, and its online dot = `last_heartbeat` fresh (within 5 min), NOT `!paused && !killed`.
 
 ## Pointers
 

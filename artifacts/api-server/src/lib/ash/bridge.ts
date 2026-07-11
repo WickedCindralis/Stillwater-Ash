@@ -352,7 +352,10 @@ export class AshBridge {
       try {
         const state = await storage.getState();
         const currentStatus = state.status?.toLowerCase() || "online";
-        heartbeatMs = STATUS_HEARTBEAT_INTERVALS[currentStatus] ?? 60_000;
+        heartbeatMs =
+          state.heartbeatIntervalOverride && state.heartbeatIntervalOverride > 0
+            ? state.heartbeatIntervalOverride * 60_000
+            : STATUS_HEARTBEAT_INTERVALS[currentStatus] ?? 60_000;
 
         await storage.updateState({ lastHeartbeat: new Date() });
         if (state.status === "off") {
@@ -380,6 +383,22 @@ export class AshBridge {
     } catch (e) {
       this.error("Failed to get effective ping interval:", e);
       return STATUS_PING_INTERVALS.online;
+    }
+  }
+
+  // The heartbeat is Ash's liveness pulse written to the DB. Its rate is
+  // status-based unless a rate-limiter override (minutes) is set.
+  async getEffectiveHeartbeatIntervalMs(): Promise<number> {
+    try {
+      const state = await storage.getState();
+      if (state.heartbeatIntervalOverride && state.heartbeatIntervalOverride > 0) {
+        return state.heartbeatIntervalOverride * 60_000;
+      }
+      const status = state.status?.toLowerCase() || "online";
+      return STATUS_HEARTBEAT_INTERVALS[status] ?? 60_000;
+    } catch (e) {
+      this.error("Failed to get effective heartbeat interval:", e);
+      return 60_000;
     }
   }
 

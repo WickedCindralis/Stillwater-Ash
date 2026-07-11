@@ -28,6 +28,8 @@ export interface SystemInfo {
   status: string;
   pingIntervalMs: number;
   pingIntervalOverrideMinutes: number;
+  heartbeatIntervalMs: number;
+  heartbeatIntervalOverrideMinutes: number;
   selfPromptPaused: number;
   apiKillSwitch: number;
   lastHeartbeat: string | null;

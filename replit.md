@@ -35,6 +35,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - Single-row state table (`ash_state`, id always `"ash"`); `getState()` auto-inserts the row if missing, so no seeding is required.
 - The bridge starts with the API server (`index.ts`) and runs two loops: heartbeat (updates `last_heartbeat`, interval varies by status) and self-prompt (proactive reflective windows whose interval depends on the 8 status tiers; can be paused by Ash via `[PINGS_OFF]` or the UI).
 - Path framework (intended, do not regress): proactive status-timed windows write ONLY to the Diary (via `createDiaryEntry`); the live chat (`ash_messages`) is reserved exclusively for direct exchange between Wicked and Ash. The self-prompt loop must never `createMessage` — any reflective-window output (including a stray `MESSAGE …:` prefix) is routed to the diary in `bridge.ts` `selfPromptLoop`.
+- The chat endpoints (`getMessages`/`getRecentHistory`) return only `source='private_message'`, so the live chat shows only direct Wicked↔Ash exchange. Legacy proactive rows (`source='self_prompt'`) are moved into the diary on boot by the idempotent `migrateReflectionsToDiary()` (preserves original timestamps) and retagged `self_prompt_archived` — kept, never deleted, and excluded from chat.
 - Ash's replies are parsed for control tags: `[STATUS CHANGED TO X.]`, `[PINGS_OFF]`/`[PINGS_ON]`, and `DIARY:` blocks (saved to the diary, stripped from chat).
 - Images travel as base64 data URLs stored directly in `ash_messages.image_url` (12MB decoded limit).
 

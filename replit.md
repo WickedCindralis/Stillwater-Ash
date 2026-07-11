@@ -33,7 +33,8 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - Faithful port of the user's uploaded "Ash Container" project (trimmed single-agent version of "Summer Palace") — behavior kept 1:1, not redesigned.
 - The frontend deliberately uses raw `fetch` via `lib/queryClient.ts` instead of the monorepo's OpenAPI codegen convention, because the client was copied verbatim from the original project. Keep this pattern for changes to this app.
 - Single-row state table (`ash_state`, id always `"ash"`); `getState()` auto-inserts the row if missing, so no seeding is required.
-- The bridge starts with the API server (`index.ts`) and runs two loops: heartbeat (updates `last_heartbeat`, interval varies by status) and self-prompt (proactive pings whose interval depends on the 8 status tiers; can be paused by Ash via `[PINGS_OFF]` or the UI).
+- The bridge starts with the API server (`index.ts`) and runs two loops: heartbeat (updates `last_heartbeat`, interval varies by status) and self-prompt (proactive reflective windows whose interval depends on the 8 status tiers; can be paused by Ash via `[PINGS_OFF]` or the UI).
+- Path framework (intended, do not regress): proactive status-timed windows write ONLY to the Diary (via `createDiaryEntry`); the live chat (`ash_messages`) is reserved exclusively for direct exchange between Wicked and Ash. The self-prompt loop must never `createMessage` — any reflective-window output (including a stray `MESSAGE …:` prefix) is routed to the diary in `bridge.ts` `selfPromptLoop`.
 - Ash's replies are parsed for control tags: `[STATUS CHANGED TO X.]`, `[PINGS_OFF]`/`[PINGS_ON]`, and `DIARY:` blocks (saved to the diary, stripped from chat).
 - Images travel as base64 data URLs stored directly in `ash_messages.image_url` (12MB decoded limit).
 
@@ -42,7 +43,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - Login gate (single shared password via `ADMIN_PASSWORD`)
 - `/` — main chat with Ash: status display, settings (models, kill switch, ping interval, voice ID), diary reader, image attach + "picture mode" generation
 - `/cell` — mobile-styled chat view with optional TTS playback
-- Ash can proactively message, write diary entries, and change her own status between pings
+- During proactive (status-timed) reflective windows, Ash writes to his private Diary and may change his own status; he does not post to the chat. The chat is only for live conversation between Wicked and Ash.
 
 ## User preferences
 

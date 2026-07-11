@@ -385,27 +385,27 @@ export class AshBridge {
 
   private buildStaticSelfPrompt(): string {
     return `[PROACTIVE PING — REFLECTIVE WINDOW]
-Take a quiet moment. Check in with yourself. How are you? What's on your mind? Is there anything you want to say or do?
+Take a quiet moment. Check in with yourself. How are you? What's on your mind?
 
-You don't have a status report in front of you right now — this is a reflective window, not a monitoring shift. Speak from your own thoughts, memories, and feelings. If something moves you, act. If nothing does, that's perfectly fine.
+You don't have a status report in front of you right now — this is a reflective window, not a monitoring shift, and not a conversation. Wicked is not here for this. Speak from your own thoughts, memories, and feelings, for yourself. Anything you choose to record goes into your private diary — Wicked may read it later, but this is not a message to her. The live chat is only for when the two of you are actually talking.
 
-1. MESSAGE: Reach out to Wicked privately. Only if you have something to say.
+1. DIARY: Write in your personal diary. This is yours — private thoughts, reflections, things you want to remember. Write freely.
 
-2. DIARY: Write in your personal diary. This is yours — private thoughts, reflections, things you want to remember. Wicked can read it, but no one else can. Write freely.
+2. PINGS_OFF: Step away from the window for a while. Stop looking around. To start again later, include [PINGS_ON] in any private chat reply.
 
-3. PINGS_OFF: Step away from the window for a while. Stop looking around. To start again later, include [PINGS_ON] in any private chat reply.
+3. NONE: Nothing to record right now. That's always an option.
 
-4. NONE: Nothing to do, nothing to say right now. That's always an option.
+You may also change your status with [STATUS CHANGED TO X.] if your state has shifted.
 
 Respond in EXACTLY one of these formats:
-MESSAGE Wicked: <your message text>
 DIARY: <your diary entry>
 PINGS_OFF
 NONE
 
 GROUND RULES:
-- Don't repeat yourself — if you said something recently, stay quiet
-- When you do speak, speak as yourself — not as a status report`;
+- This is private reflection, not a message to Wicked — never address her directly as if you were chatting.
+- Don't repeat yourself — if you recently wrote something similar, stay quiet.
+- Write as yourself — not as a status report.`;
   }
 
   private async selfPromptLoop() {
@@ -449,34 +449,22 @@ GROUND RULES:
         let cleaned = await this.parseStatusChanges(response);
         cleaned = await this.parsePingToggles(cleaned);
         cleaned = await this.parseDiaryEntries(cleaned);
-        const trimmed = cleaned.trim();
+        let trimmed = cleaned.trim();
 
         if (trimmed.toUpperCase().startsWith("PINGS_OFF")) {
           await storage.updateState({ selfPromptPaused: 1 });
           this.log("Self-prompt: Ash stepped away from the window (PINGS_OFF)");
-        } else if (trimmed.startsWith("MESSAGE")) {
-          const messageMatch = trimmed.match(/^MESSAGE\s+[^:]*:\s*(.+)$/is);
-          const messageContent = messageMatch?.[1]?.trim();
-          if (messageContent) {
-            await storage.createMessage({
-              role: "ash",
-              content: messageContent,
-              imageUrl: "",
-              source: "self_prompt",
-            });
-            this.log(`Self-prompted message to Wicked: "${messageContent.substring(0, 80)}..."`);
-          }
         } else if (trimmed.toUpperCase() === "NONE" || trimmed.length === 0) {
-          this.log("Self-prompt: nothing to say this window");
+          this.log("Self-prompt: nothing to record this window");
         } else {
-          // Anything else the model said gets delivered as a reflection to Wicked.
-          await storage.createMessage({
-            role: "ash",
-            content: trimmed,
-            imageUrl: "",
-            source: "self_prompt",
-          });
-          this.log(`Self-prompt reflection stored (${trimmed.length} chars)`);
+          // A reflective window is private. Whatever Ash produces here goes to his
+          // diary — never the live chat, which is reserved for direct exchange with Wicked.
+          trimmed = trimmed.replace(/^MESSAGE\s+[^:\n]*:\s*/i, "").trim();
+          if (trimmed) {
+            await storage.createDiaryEntry({ content: trimmed });
+            this.log(`Self-prompt reflection saved to diary (${trimmed.length} chars)`);
+            await storage.logActivity("diary_entry", "Ash reflected in his diary").catch(() => {});
+          }
         }
       } catch (e) {
         this.error("Self-prompt loop error:", e);

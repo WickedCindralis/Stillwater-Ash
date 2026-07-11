@@ -1,2 +1,3 @@
 - [Ash Container port](ash-container-port.md) — faithful port: raw fetch (no codegen) in agent-dashboard, persona files are user content, gpt-5.x rejects temperature.
 - [NorthFlank deploy](northflank-deploy.md) — Git→Dockerfile deploy; boots from index.mjs (index.cjs=old SP image); required env + PORT=5000; benign pg_stat_kcache 42501 warning is non-fatal.
+- [Replit deploy health probe](replit-deploy-health.md) — platform probes the bare service path (/api), not just configured /api/healthz; answer 200 at base path or logs show healthcheck 500s (also transient on cold starts).

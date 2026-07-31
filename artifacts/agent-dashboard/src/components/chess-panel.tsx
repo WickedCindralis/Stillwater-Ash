@@ -163,7 +163,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-gradient-to-b from-black via-[#0d0a06] to-black overflow-y-auto" data-testid="panel-chess">
-      <div className="max-w-5xl mx-auto px-4 py-6 sm:px-6 sm:py-8">
+      <div className="max-w-[1700px] mx-auto px-4 py-6 sm:px-6 sm:py-8">
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-serif text-2xl sm:text-3xl text-gold flex items-center gap-3">
             <Swords className="w-7 h-7" /> Chess with Ash
@@ -201,7 +201,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                 {captured.byAsh.map((g, i) => <span key={i}>{g}</span>)}
               </div>
 
-              <div className="aspect-square w-full max-w-[560px] mx-auto rounded-lg overflow-hidden border-2 border-gold/30 select-none" data-testid="chess-board">
+              <div className="aspect-square w-full max-w-[720px] mx-auto rounded-lg overflow-hidden border-2 border-gold/30 select-none" data-testid="chess-board">
                 {board.map((rank, r) => (
                   <div key={r} className="flex" style={{ height: "12.5%" }}>
                     {rank.map((sq, f) => {
@@ -225,7 +225,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                             <span
                               className="leading-none"
                               style={{
-                                fontSize: "min(6.5vw, 38px)",
+                                fontSize: "min(6.5vw, 50px)",
                                 color: sq!.color === "w" ? "#f5e9d0" : "#1a120a",
                                 textShadow: sq!.color === "w" ? "0 1px 2px rgba(0,0,0,0.8)" : "0 1px 1px rgba(255,255,255,0.15)",
                               }}
@@ -255,7 +255,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* Status + banter composer */}
-              <div className="max-w-[560px] mx-auto mt-2 space-y-3">
+              <div className="max-w-[720px] mx-auto mt-2 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-serif italic text-gold/90" data-testid="text-chess-status">
                     {moveMutation.isPending ? "Ash is pondering his move..." : statusLine(game, chess)}
@@ -323,10 +323,10 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
             </div>
 
             {/* Conversation */}
-            <div className="lg:w-96 shrink-0 flex flex-col">
+            <div className="lg:w-[48rem] lg:max-w-[45vw] shrink-0 flex flex-col">
               <h3 className="text-xs uppercase tracking-wider text-gold/70 font-semibold mb-2">Conversation</h3>
               <div
-                className="bg-white/5 border border-white/10 rounded-xl p-3 h-[420px] lg:h-[620px] overflow-y-auto space-y-3"
+                className="bg-white/5 border border-white/10 rounded-xl p-4 h-[420px] lg:h-[780px] overflow-y-auto space-y-3"
                 data-testid="chess-chat"
               >
                 {recentMessages.length === 0 && (

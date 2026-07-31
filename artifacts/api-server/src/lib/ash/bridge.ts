@@ -149,9 +149,20 @@ export class AshBridge {
         const history = await storage.getRecentHistory(HISTORY_LIMIT);
         const relevant = history.filter((m: AshMessage) => m.content && m.content.trim().length > 0);
         if (relevant.length > 0) {
-          const lines = relevant.map((m: AshMessage) =>
-            m.role === "wicked" ? `[Wicked] ${m.content}` : `[${name}] ${m.content}`
-          ).join("\n");
+          // Stamp Wicked's most recent message with when she actually sent it,
+          // so "the last thing she said" stays anchored in real time.
+          const lastWickedIdx = relevant.map((m) => m.role).lastIndexOf("wicked");
+          const lines = relevant.map((m: AshMessage, i: number) => {
+            const speaker = m.role === "wicked" ? "[Wicked]" : `[${name}]`;
+            const stamp = i === lastWickedIdx && m.createdAt
+              ? ` (sent ${new Date(m.createdAt).toLocaleString("en-US", {
+                  weekday: "long", month: "long", day: "numeric", year: "numeric",
+                  hour: "numeric", minute: "2-digit", hour12: true,
+                  timeZone: "America/New_York",
+                })} Eastern)`
+              : "";
+            return `${speaker}${stamp} ${m.content}`;
+          }).join("\n");
           messages.push({
             role: "assistant",
             name,

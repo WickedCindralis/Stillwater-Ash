@@ -54,21 +54,29 @@ function numberedHistory(moves: string[]): string {
 }
 
 const PIECE_NAMES: Record<string, string> = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "QUEEN", k: "king" };
-const INITIAL_COUNTS: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1, k: 1 };
 
 // Plain-words material report so Ash never has to deduce captures from notation.
-function materialSummary(chess: Chess): string {
-  const counts: Record<string, number> = {};
-  for (const row of chess.board()) {
-    for (const sq of row) {
-      if (sq) counts[`${sq.color}${sq.type}`] = (counts[`${sq.color}${sq.type}`] || 0) + 1;
+// Derived by replaying the move history (promotion-safe — board counting would
+// misreport a promoted pawn as "lost").
+function materialSummary(moves: string[]): string {
+  const board = new Chess();
+  const lostBy: Record<"w" | "b", Record<string, number>> = { w: {}, b: {} };
+  for (const san of moves) {
+    try {
+      const mv = board.move(san);
+      if (mv.captured) {
+        const loser = mv.color === "w" ? "b" : "w";
+        lostBy[loser][mv.captured] = (lostBy[loser][mv.captured] || 0) + 1;
+      }
+    } catch {
+      break; // history should always replay; bail rather than misreport
     }
   }
   const lost = (color: "w" | "b") => {
     const parts: string[] = [];
     for (const t of ["q", "r", "b", "n", "p"]) {
-      const missing = INITIAL_COUNTS[t]! - (counts[`${color}${t}`] || 0);
-      if (missing > 0) parts.push(missing > 1 ? `${missing} ${PIECE_NAMES[t]}s` : PIECE_NAMES[t]!);
+      const n = lostBy[color][t] || 0;
+      if (n > 0) parts.push(n > 1 ? `${n} ${PIECE_NAMES[t]}s` : PIECE_NAMES[t]!);
     }
     return parts.length ? parts.join(", ") : "nothing";
   };
@@ -91,7 +99,7 @@ function buildChessPacket(opts: {
   if (captured) {
     lines.push(`⚠ Wicked just CAPTURED your ${PIECE_NAMES[captured] ?? captured} on ${capturedOn}. Be accurate about this — do not misname the piece you lost.`);
   }
-  lines.push(materialSummary(chess));
+  lines.push(materialSummary(moves));
   lines.push(`Move history: ${numberedHistory(moves)}`);
   lines.push(`Board (FEN): ${chess.fen()}`);
   lines.push("Board diagram (uppercase = White/Wicked, lowercase = you/Black):");
@@ -168,7 +176,10 @@ async function playWickedMoveLocked(san: string, banter: string): Promise<ChessT
   });
 
   // Ask Ash. On illegal/missing move, retry with a firm correction.
-  let prompt = buildChessPacket({ chess, moves, wickedSan, banter, captured: applied.captured, capturedOn: applied.to, gameOver });
+  let prompt = buildChessPacket({ chess, moves, wickedSan, banter, captured: applied.captured,
+    // En passant: the captured pawn sits on the from-rank, not the landing square.
+    capturedOn: applied.flags.includes("e") ? `${applied.to[0]}${applied.from[1]}` : applied.to,
+    gameOver });
   let ashSan: string | null = null;
   let ashBanterRaw = "";
 

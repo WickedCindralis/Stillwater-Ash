@@ -12,22 +12,22 @@ const PIECE_GLYPHS: Record<string, string> = {
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
 
-const INITIAL_COUNTS: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1, k: 1 };
-
-function capturedPieces(chess: Chess): { byWicked: string[]; byAsh: string[] } {
-  const counts: Record<string, number> = {};
-  for (const row of chess.board()) {
-    for (const sq of row) {
-      if (sq) counts[`${sq.color}${sq.type}`] = (counts[`${sq.color}${sq.type}`] || 0) + 1;
-    }
-  }
+// Replay the move history to tally captures (promotion-safe, unlike counting
+// what's missing from the board).
+function capturedPieces(movesSan: string[]): { byWicked: string[]; byAsh: string[] } {
+  const board = new Chess();
   const byWicked: string[] = []; // black pieces Wicked captured
   const byAsh: string[] = []; // white pieces Ash captured
-  for (const t of ["q", "r", "b", "n", "p"]) {
-    const missingBlack = INITIAL_COUNTS[t]! - (counts[`b${t}`] || 0);
-    const missingWhite = INITIAL_COUNTS[t]! - (counts[`w${t}`] || 0);
-    for (let i = 0; i < missingBlack; i++) byWicked.push(PIECE_GLYPHS[`b${t}`]!);
-    for (let i = 0; i < missingWhite; i++) byAsh.push(PIECE_GLYPHS[`w${t}`]!);
+  for (const san of movesSan) {
+    try {
+      const mv = board.move(san);
+      if (mv.captured) {
+        if (mv.color === "w") byWicked.push(PIECE_GLYPHS[`b${mv.captured}`]!);
+        else byAsh.push(PIECE_GLYPHS[`w${mv.captured}`]!);
+      }
+    } catch {
+      break;
+    }
   }
   return { byWicked, byAsh };
 }
@@ -70,14 +70,15 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
   });
   const recentMessages = messages.slice(-40);
   const chatScrollRef = useRef<HTMLDivElement>(null);
-  const lastScrolledCount = useRef(-1);
+  const lastScrolledId = useRef<number | null>(null);
   useEffect(() => {
     // Runs after every render because the chat container mounts only once the
-    // game query resolves — a deps list would miss that first paint. The ref
-    // guard means we only jump when there's actually something new.
+    // game query resolves — a deps list would miss that first paint. Keyed on
+    // the newest message's id (not count, which stops changing at the cap).
     const el = chatScrollRef.current;
-    if (el && lastScrolledCount.current !== recentMessages.length) {
-      lastScrolledCount.current = recentMessages.length;
+    const newestId = recentMessages.length > 0 ? recentMessages[recentMessages.length - 1]!.id : null;
+    if (el && newestId !== null && lastScrolledId.current !== newestId) {
+      lastScrolledId.current = newestId;
       el.scrollTop = el.scrollHeight;
     }
   });
@@ -178,7 +179,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const captured = capturedPieces(chess);
+  const captured = capturedPieces(game?.moves ? game.moves.split(" ").filter(Boolean) : []);
   const board = chess.board(); // rank 8 → rank 1
 
   return (
@@ -365,7 +366,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                   <p className="text-white/25 text-sm italic font-serif">Nothing said yet.</p>
                 )}
                 {recentMessages.map((m) => {
-                  const mine = m.role === "user";
+                  const mine = m.role === "wicked";
                   return (
                     <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                       <div

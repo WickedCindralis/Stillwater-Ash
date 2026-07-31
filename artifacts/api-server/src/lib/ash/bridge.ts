@@ -465,9 +465,12 @@ GROUND RULES:
         const response = await this.callOpenAI(prompt, "self_prompt");
         if (!response) continue;
 
+        // NOTE: do NOT run parseDiaryEntries here. In a reflective window the
+        // ENTIRE remaining output is the diary entry — running the DIARY: block
+        // parser first and then saving the leftover text produced TWO diary
+        // entries from one window (same timestamp). One window = one entry, max.
         let cleaned = await this.parseStatusChanges(response);
         cleaned = await this.parsePingToggles(cleaned);
-        cleaned = await this.parseDiaryEntries(cleaned);
         let trimmed = cleaned.trim();
 
         if (trimmed.toUpperCase().startsWith("PINGS_OFF")) {
@@ -479,6 +482,8 @@ GROUND RULES:
           // A reflective window is private. Whatever Ash produces here goes to his
           // diary — never the live chat, which is reserved for direct exchange with Wicked.
           trimmed = trimmed.replace(/^MESSAGE\s+[^:\n]*:\s*/i, "").trim();
+          // Strip DIARY: prefixes but keep everything as ONE entry.
+          trimmed = trimmed.replace(/^\s*DIARY:\s*/gim, "").trim();
           if (trimmed) {
             await storage.createDiaryEntry({ content: trimmed });
             this.log(`Self-prompt reflection saved to diary (${trimmed.length} chars)`);

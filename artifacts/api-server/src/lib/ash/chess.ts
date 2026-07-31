@@ -81,14 +81,15 @@ function buildChessPacket(opts: {
   wickedSan: string;
   banter: string;
   captured: string | undefined; // piece type Wicked's move just captured, if any
+  capturedOn: string; // square her move landed on
   gameOver: { status: string; result: string } | null;
 }): string {
-  const { chess, moves, wickedSan, banter, captured, gameOver } = opts;
+  const { chess, moves, wickedSan, banter, captured, capturedOn, gameOver } = opts;
   const lines: string[] = [];
   if (banter.trim()) lines.push(banter.trim(), "");
   lines.push(`[CHESS — Wicked just played: ${wickedSan}]`);
   if (captured) {
-    lines.push(`⚠ Her move just CAPTURED your ${PIECE_NAMES[captured] ?? captured}. Be accurate about this — do not misname the piece you lost.`);
+    lines.push(`⚠ Wicked just CAPTURED your ${PIECE_NAMES[captured] ?? captured} on ${capturedOn}. Be accurate about this — do not misname the piece you lost.`);
   }
   lines.push(materialSummary(chess));
   lines.push(`Move history: ${numberedHistory(moves)}`);
@@ -167,7 +168,7 @@ async function playWickedMoveLocked(san: string, banter: string): Promise<ChessT
   });
 
   // Ask Ash. On illegal/missing move, retry with a firm correction.
-  let prompt = buildChessPacket({ chess, moves, wickedSan, banter, captured: applied.captured, gameOver });
+  let prompt = buildChessPacket({ chess, moves, wickedSan, banter, captured: applied.captured, capturedOn: applied.to, gameOver });
   let ashSan: string | null = null;
   let ashBanterRaw = "";
 

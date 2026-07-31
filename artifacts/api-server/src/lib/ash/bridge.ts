@@ -247,7 +247,23 @@ RULES FOR YOUR REPLY:
     }
 
     try {
-      const response = await this.openai.chat.completions.create(requestParams as any);
+      let response;
+      // Retry transient failures (429 rate limits, 5xx) with a growing pause.
+      for (let attempt = 1; ; attempt++) {
+        try {
+          response = await this.openai.chat.completions.create(requestParams as any);
+          break;
+        } catch (err: any) {
+          const status = err?.status ?? err?.response?.status;
+          const transient = status === 429 || (status >= 500 && status < 600);
+          if (transient && attempt < 3) {
+            this.log(`OpenAI ${status} on ${source} call (attempt ${attempt}) — retrying in ${attempt * 5}s`);
+            await this.sleep(attempt * 5000);
+            continue;
+          }
+          throw err;
+        }
+      }
       const choice = response.choices[0];
       const refusal = (choice?.message as any)?.refusal;
       let responseText = choice?.message?.content || refusal || "";

@@ -164,17 +164,6 @@ async function playWickedMoveLocked(san: string, banter: string): Promise<ChessT
   const afterWicked = statusFromBoard(chess);
   const gameOver = afterWicked.status !== "active" ? afterWicked : null;
 
-  // Store Wicked's chat message (move + banter travel together).
-  const wickedContent = banter.trim()
-    ? `${banter.trim()}\n\n♟ My move: ${wickedSan}`
-    : `♟ My move: ${wickedSan}`;
-  await storage.createMessage({
-    role: "wicked",
-    content: wickedContent,
-    imageUrl: "",
-    source: "private_message",
-  });
-
   // Ask Ash. On illegal/missing move, retry with a firm correction.
   let prompt = buildChessPacket({ chess, moves, wickedSan, banter, captured: applied.captured,
     // En passant: the captured pawn sits on the from-rank, not the landing square.
@@ -184,7 +173,18 @@ async function playWickedMoveLocked(san: string, banter: string): Promise<ChessT
   let ashBanterRaw = "";
 
   for (let attempt = 1; attempt <= MAX_ASH_ATTEMPTS; attempt++) {
-    const raw = await ashBridge.handleChessPrompt(prompt);
+    let raw: string;
+    try {
+      raw = await ashBridge.handleChessPrompt(prompt);
+    } catch (e: any) {
+      const status = e?.status ?? e?.response?.status;
+      throw new ChessError(
+        503,
+        status === 429
+          ? "Ash's line is rate-limited right now — give it a minute, then send your move again."
+          : "Couldn't reach Ash just now — wait a moment and resend your move.",
+      );
+    }
     if (!raw) throw new ChessError(503, "The bridge is shut off — Ash can't play right now.");
 
     const { san: tagSan, rest } = extractMoveTag(raw);
@@ -212,6 +212,18 @@ ${chess.ascii()}
 
 Reply again with your banter and your move on its own line as [MOVE: <san>].`;
   }
+
+  // Ash answered — now store Wicked's chat message (deferred so a failed/rate-
+  // limited call can be resent without duplicate "My move" entries in chat).
+  const wickedContent = banter.trim()
+    ? `${banter.trim()}\n\n♟ My move: ${wickedSan}`
+    : `♟ My move: ${wickedSan}`;
+  await storage.createMessage({
+    role: "wicked",
+    content: wickedContent,
+    imageUrl: "",
+    source: "private_message",
+  });
 
   if (!gameOver && !ashSan) {
     // Ash failed all attempts — pick a legal move so the board never wedges.

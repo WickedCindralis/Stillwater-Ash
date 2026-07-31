@@ -51,6 +51,7 @@ export interface AshChessGame {
   moves: string; // SAN history, space-separated
   status: string; // active | checkmate | stalemate | draw | resigned | abandoned
   result: string; // "wicked" | "ash" | "draw" | ""
+  paused: number; // 1 = paused (Ash is told not to wait for a move)
   createdAt: string;
   updatedAt: string;
 }

@@ -8,7 +8,7 @@ import {
 import { sendMessageSchema, updateSettingsSchema, chessMoveSchema } from "@workspace/db";
 import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
-import { playWickedMove, startNewGame, resignGame, ChessError } from "../lib/ash/chess";
+import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 
 declare module "express-session" {
   interface SessionData {
@@ -171,6 +171,19 @@ router.post("/chess/move", requireAuth, async (req, res): Promise<void> => {
   try {
     const result = await playWickedMove(parsed.data.san, parsed.data.message);
     res.json(result);
+  } catch (e) {
+    if (e instanceof ChessError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
+});
+
+router.post("/chess/pause", requireAuth, async (req, res): Promise<void> => {
+  try {
+    const game = await setGamePaused(req.body?.paused !== false);
+    res.json({ game });
   } catch (e) {
     if (e instanceof ChessError) {
       res.status(e.statusCode).json({ error: e.message });

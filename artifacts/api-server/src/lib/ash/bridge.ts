@@ -115,6 +115,23 @@ export class AshBridge {
       const statusMessage = (packetState.wickedStatusMessage || "").trim();
       volatile += `\n\n[WICKED STATUS: ${wickedStatus}${statusMessage ? ` — ${statusMessage}` : ""}]`;
     }
+    // Ongoing chess game: let Ash know in ANY conversation (chat or reflective
+    // window) so he can bring it up himself — and know not to wait when paused.
+    if (source !== "chess") {
+      try {
+        const chessGame = await storage.getCurrentChessGame();
+        if (chessGame && chessGame.status === "active") {
+          const mv = chessGame.moves ? chessGame.moves.split(" ").filter(Boolean) : [];
+          volatile += `\n\n[ONGOING CHESS GAME] You (Black) and Wicked (White) have a chess game in progress — ${mv.length} half-moves played${mv.length > 0 ? `, most recent: ${mv.slice(-6).join(" ")}` : " (board still fresh)"}. Board FEN: ${chessGame.fen}. It's Wicked's move; the board lives in the app. `;
+          volatile += chessGame.paused === 1
+            ? "Wicked has PAUSED the game — she's stepped away from the board (perhaps to sleep). Don't wait on her move or press her for it; the board keeps."
+            : "Feel free to bring the game up, needle her about her next move, or invite her back to the board if it fits the moment.";
+        }
+      } catch (e) {
+        this.error("Failed to attach chess context:", e);
+      }
+    }
+
     messages.push({
       role: "developer",
       name,

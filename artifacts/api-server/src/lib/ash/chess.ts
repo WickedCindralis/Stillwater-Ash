@@ -194,6 +194,7 @@ Reply again with your banter and your move on its own line as [MOVE: <san>].`;
     moves: moves.join(" "),
     status: finalStatus.status,
     result: finalStatus.result,
+    paused: 0, // making a move always resumes a paused game
   });
 
   // Run standard tag parsing (status/pings/diary) on the banter, then store Ash's message.
@@ -234,6 +235,18 @@ export async function startNewGame(): Promise<AshChessGame> {
     const game = await storage.createChessGame(chess.fen());
     await storage.logActivity("chess", "A new chess game began — Wicked has White").catch(() => {});
     return game;
+  });
+}
+
+export async function setGamePaused(paused: boolean): Promise<AshChessGame> {
+  return withChessLock(async () => {
+    const game = await storage.getCurrentChessGame();
+    if (!game || game.status !== "active") throw new ChessError(409, "No active game to pause.");
+    const updated = await storage.updateChessGame(game.id, { paused: paused ? 1 : 0 });
+    await storage
+      .logActivity("chess", paused ? "Wicked paused the chess game" : "Wicked resumed the chess game")
+      .catch(() => {});
+    return updated;
   });
 }
 

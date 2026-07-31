@@ -68,6 +68,7 @@ export const ashChessGames = pgTable("ash_chess_games", {
   moves: text("moves").notNull().default(""), // SAN history, space-separated (e.g. "e4 e5 Nf3")
   status: text("status").notNull().default("active"), // active | checkmate | stalemate | draw | resigned
   result: text("result").notNull().default(""), // "wicked" | "ash" | "draw" | "" (unfinished)
+  paused: integer("paused").notNull().default(0), // 1 = Wicked stepped away; Ash is told not to wait
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Chess, type Square } from "chess.js";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshChessGame } from "@/lib/types";
-import { Loader2, Flag, RotateCcw, Swords, X } from "lucide-react";
+import { Loader2, Flag, RotateCcw, Swords, X, Pause, Play } from "lucide-react";
 
 const PIECE_GLYPHS: Record<string, string> = {
   wk: "\u2654", wq: "\u2655", wr: "\u2656", wb: "\u2657", wn: "\u2658", wp: "\u2659",
@@ -35,6 +35,7 @@ function capturedPieces(chess: Chess): { byWicked: string[]; byAsh: string[] } {
 function statusLine(game: AshChessGame, chess: Chess): string {
   switch (game.status) {
     case "active":
+      if (game.paused === 1) return "Game paused — Ash knows you've stepped away.";
       if (chess.turn() === "w") return chess.inCheck() ? "Your move — you're in check!" : "Your move.";
       return "Ash's move...";
     case "checkmate":
@@ -100,6 +101,14 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
       setError("");
       queryClient.invalidateQueries({ queryKey: ["/api/chess"] });
     },
+  });
+
+  const pauseMutation = useMutation({
+    mutationFn: async (paused: boolean) => {
+      const res = await apiRequest("POST", "/api/chess/pause", { paused });
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/chess"] }),
   });
 
   const resignMutation = useMutation({
@@ -262,6 +271,24 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                 )}
 
                 <div className="flex gap-2">
+                  {gameActive && (
+                    <button
+                      onClick={() => pauseMutation.mutate(game.paused !== 1)}
+                      disabled={pauseMutation.isPending || moveMutation.isPending}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors text-sm disabled:opacity-40 ${
+                        game.paused === 1
+                          ? "bg-gold/15 text-gold border-gold/30 hover:bg-gold/25 font-semibold"
+                          : "bg-white/5 text-white/50 border-white/10 hover:text-gold hover:border-gold/30"
+                      }`}
+                      data-testid="button-pause"
+                    >
+                      {game.paused === 1 ? (
+                        <><Play className="w-4 h-4" /> Resume game</>
+                      ) : (
+                        <><Pause className="w-4 h-4" /> Pause game</>
+                      )}
+                    </button>
+                  )}
                   {gameActive ? (
                     <button
                       onClick={() => resignMutation.mutate()}

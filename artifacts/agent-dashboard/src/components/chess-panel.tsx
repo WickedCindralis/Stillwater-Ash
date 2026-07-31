@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Chess, type Square } from "chess.js";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { AshChessGame } from "@/lib/types";
+import type { AshChessGame, AshMessage } from "@/lib/types";
 import { Loader2, Flag, RotateCcw, Swords, X, Pause, Play } from "lucide-react";
 
 const PIECE_GLYPHS: Record<string, string> = {
@@ -63,6 +63,16 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
     refetchInterval: 30_000,
   });
   const game = data?.game ?? null;
+
+  const { data: messages = [] } = useQuery<AshMessage[]>({
+    queryKey: ["/api/messages"],
+    refetchInterval: 10_000,
+  });
+  const recentMessages = messages.slice(-40);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
 
   const chess = useMemo(() => {
     try {
@@ -148,11 +158,6 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const moves = game?.moves ? game.moves.split(" ").filter(Boolean) : [];
-  const movePairs: { n: number; white: string; black?: string }[] = [];
-  for (let i = 0; i < moves.length; i += 2) {
-    movePairs.push({ n: i / 2 + 1, white: moves[i]!, black: moves[i + 1] });
-  }
   const captured = capturedPieces(chess);
   const board = chess.board(); // rank 8 → rank 1
 
@@ -317,24 +322,40 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Move history */}
-            <div className="lg:w-56 shrink-0">
-              <h3 className="text-xs uppercase tracking-wider text-gold/70 font-semibold mb-2">Moves</h3>
-              <div className="bg-white/5 border border-white/10 rounded-xl p-3 max-h-[420px] overflow-y-auto" data-testid="move-history">
-                {movePairs.length === 0 && (
-                  <p className="text-white/25 text-sm italic font-serif">No moves yet.</p>
+            {/* Conversation */}
+            <div className="lg:w-96 shrink-0 flex flex-col">
+              <h3 className="text-xs uppercase tracking-wider text-gold/70 font-semibold mb-2">Conversation</h3>
+              <div
+                className="bg-white/5 border border-white/10 rounded-xl p-3 h-[420px] lg:h-[620px] overflow-y-auto space-y-3"
+                data-testid="chess-chat"
+              >
+                {recentMessages.length === 0 && (
+                  <p className="text-white/25 text-sm italic font-serif">Nothing said yet.</p>
                 )}
-                <table className="w-full text-sm">
-                  <tbody>
-                    {movePairs.map((p) => (
-                      <tr key={p.n} className="text-white/70">
-                        <td className="text-white/30 pr-2 py-0.5 w-8">{p.n}.</td>
-                        <td className="py-0.5">{p.white}</td>
-                        <td className="py-0.5">{p.black || ""}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {recentMessages.map((m) => {
+                  const mine = m.role === "user";
+                  return (
+                    <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`max-w-[85%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                          mine
+                            ? "bg-gold/15 text-white/90 border border-gold/20"
+                            : "bg-white/8 text-white/80 border border-white/10"
+                        }`}
+                      >
+                        {m.content}
+                      </div>
+                    </div>
+                  );
+                })}
+                {moveMutation.isPending && (
+                  <div className="flex justify-start">
+                    <div className="rounded-xl px-3 py-2 text-sm bg-white/8 text-white/40 border border-white/10 italic font-serif flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ash is pondering...
+                    </div>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
               </div>
             </div>
           </div>

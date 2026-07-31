@@ -5,8 +5,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
-  Smartphone, LogOut, Power, Trash2, ArrowLeft,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords,
 } from "lucide-react";
+import ChessPanel from "@/components/chess-panel";
 
 const STATUS_LABELS: Record<string, string> = {
   alert: "Searching",
@@ -53,7 +54,7 @@ export default function ChatPage() {
   const [message, setMessage] = useState("");
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
-  const [panel, setPanel] = useState<"none" | "diary" | "settings">("none");
+  const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess">("none");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -170,6 +171,14 @@ export default function ChatPage() {
           >
             <Smartphone className="w-5 h-5" />
           </Link>
+          <button
+            onClick={() => setPanel(panel === "chess" ? "none" : "chess")}
+            className={`p-2 rounded-lg transition-colors ${panel === "chess" ? "text-gold bg-gold/10" : "text-white/50 hover:text-gold hover:bg-white/5"}`}
+            data-testid="button-chess"
+            title="Chess with Ash"
+          >
+            <Swords className="w-5 h-5" />
+          </button>
           <button
             onClick={() => setPanel(panel === "diary" ? "none" : "diary")}
             className={`p-2 rounded-lg transition-colors ${panel === "diary" ? "text-gold bg-gold/10" : "text-white/50 hover:text-gold hover:bg-white/5"}`}
@@ -358,6 +367,9 @@ export default function ChatPage() {
             </div>
           </div>
         </div>
+
+        {/* Chess — full window */}
+        {panel === "chess" && <ChessPanel onClose={() => setPanel("none")} />}
 
         {/* Diary — full window */}
         {panel === "diary" && (

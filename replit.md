@@ -47,6 +47,8 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - `/cell` — mobile-styled chat view with optional TTS playback
 - During proactive (status-timed) reflective windows, Ash writes to his private Diary and may change his own status; he does not post to the chat. The chat is only for live conversation between Wicked and Ash.
 
+- Chess: Wicked (White) vs Ash (Black) — `ash_chess_games` table, server-side rules via chess.js in `api-server/src/lib/ash/chess.ts`. Ash's move comes back as a `[MOVE: <san>]` tag; illegal/missing moves are retried up to 3 times with the legal-move list, then a legal move is auto-played so the board never wedges. Move + banter travel through the normal private-message chat path. UI: `chess-panel.tsx`, opened from the header on `/` and `/cell`.
+
 ## User preferences
 
 - The app's owner is addressed as "Wicked" in-app; Ash's persona files in `persona.ts` are personal content — do not rewrite or "improve" them without being asked.

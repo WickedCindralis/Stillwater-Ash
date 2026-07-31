@@ -45,6 +45,16 @@ export interface AshMessage {
   createdAt: string;
 }
 
+export interface AshChessGame {
+  id: number;
+  fen: string;
+  moves: string; // SAN history, space-separated
+  status: string; // active | checkmate | stalemate | draw | resigned | abandoned
+  result: string; // "wicked" | "ash" | "draw" | ""
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AshDiaryEntry {
   id: number;
   content: string;

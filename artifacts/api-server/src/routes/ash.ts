@@ -5,9 +5,10 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, chessMoveSchema } from "@workspace/db";
 import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
+import { playWickedMove, startNewGame, resignGame, ChessError } from "../lib/ash/chess";
 
 declare module "express-session" {
   interface SessionData {
@@ -148,6 +149,48 @@ router.delete("/diary/:id", requireAuth, async (req, res): Promise<void> => {
   }
   await storage.deleteDiaryEntry(id);
   res.json({ ok: true });
+});
+
+// ── Chess ──
+router.get("/chess", requireAuth, async (_req, res): Promise<void> => {
+  const game = await storage.getCurrentChessGame();
+  res.json({ game });
+});
+
+router.post("/chess/new", requireAuth, async (_req, res): Promise<void> => {
+  const game = await startNewGame();
+  res.json({ game });
+});
+
+router.post("/chess/move", requireAuth, async (req, res): Promise<void> => {
+  const parsed = chessMoveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    return;
+  }
+  try {
+    const result = await playWickedMove(parsed.data.san, parsed.data.message);
+    res.json(result);
+  } catch (e) {
+    if (e instanceof ChessError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
+});
+
+router.post("/chess/resign", requireAuth, async (_req, res): Promise<void> => {
+  try {
+    const game = await resignGame();
+    res.json({ game });
+  } catch (e) {
+    if (e instanceof ChessError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
 });
 
 // ── Activity feed ──

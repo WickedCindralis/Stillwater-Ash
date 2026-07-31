@@ -4,6 +4,8 @@ import {
   ashMessages,
   ashDiaryEntries,
   ashActivity,
+  ashChessGames,
+  type AshChessGame,
   type AshState,
   type AshMessage,
   type InsertMessage,
@@ -27,6 +29,12 @@ export interface IStorage {
   logActivity(kind: string, message: string): Promise<void>;
   getActivity(limit?: number): Promise<AshActivity[]>;
   migrateReflectionsToDiary(): Promise<number>;
+  getCurrentChessGame(): Promise<AshChessGame | null>;
+  createChessGame(fen: string): Promise<AshChessGame>;
+  updateChessGame(
+    id: number,
+    patch: Partial<Omit<AshChessGame, "id" | "createdAt">>,
+  ): Promise<AshChessGame>;
 }
 
 export class DbStorage implements IStorage {
@@ -133,6 +141,34 @@ export class DbStorage implements IStorage {
     });
     return stale.length;
   }
+
+  // ── Chess ──
+  async getCurrentChessGame(): Promise<AshChessGame | null> {
+    const rows = await db
+      .select()
+      .from(ashChessGames)
+      .orderBy(desc(ashChessGames.id))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async createChessGame(fen: string): Promise<AshChessGame> {
+    const rows = await db.insert(ashChessGames).values({ fen }).returning();
+    return rows[0]!;
+  }
+
+  async updateChessGame(
+    id: number,
+    patch: Partial<Omit<AshChessGame, "id" | "createdAt">>,
+  ): Promise<AshChessGame> {
+    const rows = await db
+      .update(ashChessGames)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(ashChessGames.id, id))
+      .returning();
+    return rows[0]!;
+  }
 }
 
 export const storage = new DbStorage();
+

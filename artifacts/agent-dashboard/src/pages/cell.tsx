@@ -4,8 +4,9 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState } from "@/lib/types";
 import {
-  Send, Loader2, ImagePlus, Wand2, X, ArrowLeft,
+  Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords,
 } from "lucide-react";
+import ChessPanel from "@/components/chess-panel";
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -20,6 +21,7 @@ export default function CellPage() {
   const [message, setMessage] = useState("");
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
+  const [showChess, setShowChess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -83,7 +85,17 @@ export default function CellPage() {
             <span className="text-lg text-white/40 leading-tight">{state?.status || "..."}</span>
           </div>
         </div>
+        <button
+          onClick={() => setShowChess(true)}
+          className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+          data-testid="button-cell-chess"
+          title="Chess with Ash"
+        >
+          <Swords className="w-5 h-5" />
+        </button>
       </header>
+
+      {showChess && <ChessPanel onClose={() => setShowChess(false)} />}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">

@@ -150,6 +150,21 @@ export class AshBridge {
       messages.push({ role: "developer", content: "[PRIVATE CONVERSATION] This is a private message from Wicked. Respond directly to her. Your reply goes to Wicked's private inbox." });
     }
 
+    if (source === "chess") {
+      messages.push({
+        role: "developer",
+        content: `[CHESS GAME] You and Wicked are playing chess together — she is White, you are Black. Her message includes the current board and her latest move. This is a cozy two-player game between the two of you: banter, tease, react — stay fully in character.
+
+RULES FOR YOUR REPLY:
+- You MUST include your move as a tag on its own line, exactly like: [MOVE: e5]
+- Use standard algebraic notation (SAN) exactly as it appears in the legal-move list provided (e.g. Nf6, exd5, O-O, Qxf7#).
+- Choose ONLY from the legal moves listed in the message. Any other move is physically impossible on this board.
+- Play thoughtfully — you're a competent player, not a pushover, but this is for fun, not tournament play.
+- The rest of your reply is normal banter to Wicked. Do not describe the whole board back to her; she can see it.
+- If the message says the game is over, do NOT include a [MOVE:] tag — just react to the result.`,
+      });
+    }
+
     if (imageDataUrl) {
       messages.push({
         role: "user",
@@ -343,6 +358,19 @@ export class AshBridge {
     const cleaned = await this.parseAll(rawReply);
     const { text, imageUrl } = await processImageRequest({ requestImage, cleanedReply: cleaned });
     return { text, imageUrl };
+  }
+
+  // ── Public entry: chess exchange (Wicked moved; Ash replies with move + banter) ──
+  // Returns the RAW model reply — the chess module extracts [MOVE:] first, then
+  // hands the remainder back to parseChessBanter for normal tag handling.
+  async handleChessPrompt(prompt: string): Promise<string> {
+    return this.callOpenAI(prompt, "chess");
+  }
+
+  // Runs the standard tag parsing (status, pings, diary) on a chess reply after
+  // the [MOVE:] tag has been extracted, and returns the cleaned banter text.
+  async parseChessBanter(replyWithoutMove: string): Promise<string> {
+    return this.parseAll(replyWithoutMove);
   }
 
   // ── Loops ──

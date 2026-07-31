@@ -61,6 +61,17 @@ export const ashActivity = pgTable("ash_activity", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Chess games between Wicked (White) and Ash (Black). One active game at a time.
+export const ashChessGames = pgTable("ash_chess_games", {
+  id: serial("id").primaryKey(),
+  fen: text("fen").notNull(),
+  moves: text("moves").notNull().default(""), // SAN history, space-separated (e.g. "e4 e5 Nf3")
+  status: text("status").notNull().default("active"), // active | checkmate | stalemate | draw | resigned
+  result: text("result").notNull().default(""), // "wicked" | "ash" | "draw" | "" (unfinished)
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Session table for connect-pg-simple (express-session store).
 export const ashSession = pgTable(
   "ash_session",
@@ -87,6 +98,14 @@ export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type AshDiaryEntry = typeof ashDiaryEntries.$inferSelect;
 export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
 export type AshActivity = typeof ashActivity.$inferSelect;
+
+export type AshChessGame = typeof ashChessGames.$inferSelect;
+
+export const chessMoveSchema = z.object({
+  san: z.string().min(1).max(10),
+  message: z.string().max(4000).default(""),
+});
+export type ChessMovePayload = z.infer<typeof chessMoveSchema>;
 
 export const sendMessageSchema = z.object({
   content: z.string().default(""),

@@ -69,10 +69,18 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
     refetchInterval: 10_000,
   });
   const recentMessages = messages.slice(-40);
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const lastScrolledCount = useRef(-1);
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+    // Runs after every render because the chat container mounts only once the
+    // game query resolves — a deps list would miss that first paint. The ref
+    // guard means we only jump when there's actually something new.
+    const el = chatScrollRef.current;
+    if (el && lastScrolledCount.current !== recentMessages.length) {
+      lastScrolledCount.current = recentMessages.length;
+      el.scrollTop = el.scrollHeight;
+    }
+  });
 
   const chess = useMemo(() => {
     try {
@@ -326,6 +334,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
             <div className="lg:w-[48rem] lg:max-w-[45vw] shrink-0 flex flex-col">
               <h3 className="text-xs uppercase tracking-wider text-gold/70 font-semibold mb-2">Conversation</h3>
               <div
+                ref={chatScrollRef}
                 className="bg-white/5 border border-white/10 rounded-xl p-4 h-[420px] lg:h-[780px] overflow-y-auto space-y-3"
                 data-testid="chess-chat"
               >
@@ -355,7 +364,6 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                 )}
-                <div ref={chatBottomRef} />
               </div>
             </div>
           </div>

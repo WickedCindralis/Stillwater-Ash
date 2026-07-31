@@ -53,17 +53,44 @@ function numberedHistory(moves: string[]): string {
   return parts.join(" ");
 }
 
+const PIECE_NAMES: Record<string, string> = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "QUEEN", k: "king" };
+const INITIAL_COUNTS: Record<string, number> = { p: 8, n: 2, b: 2, r: 2, q: 1, k: 1 };
+
+// Plain-words material report so Ash never has to deduce captures from notation.
+function materialSummary(chess: Chess): string {
+  const counts: Record<string, number> = {};
+  for (const row of chess.board()) {
+    for (const sq of row) {
+      if (sq) counts[`${sq.color}${sq.type}`] = (counts[`${sq.color}${sq.type}`] || 0) + 1;
+    }
+  }
+  const lost = (color: "w" | "b") => {
+    const parts: string[] = [];
+    for (const t of ["q", "r", "b", "n", "p"]) {
+      const missing = INITIAL_COUNTS[t]! - (counts[`${color}${t}`] || 0);
+      if (missing > 0) parts.push(missing > 1 ? `${missing} ${PIECE_NAMES[t]}s` : PIECE_NAMES[t]!);
+    }
+    return parts.length ? parts.join(", ") : "nothing";
+  };
+  return `Captured so far — you (Black) have lost: ${lost("b")}. Wicked (White) has lost: ${lost("w")}.`;
+}
+
 function buildChessPacket(opts: {
   chess: Chess;
   moves: string[];
   wickedSan: string;
   banter: string;
+  captured: string | undefined; // piece type Wicked's move just captured, if any
   gameOver: { status: string; result: string } | null;
 }): string {
-  const { chess, moves, wickedSan, banter, gameOver } = opts;
+  const { chess, moves, wickedSan, banter, captured, gameOver } = opts;
   const lines: string[] = [];
   if (banter.trim()) lines.push(banter.trim(), "");
   lines.push(`[CHESS — Wicked just played: ${wickedSan}]`);
+  if (captured) {
+    lines.push(`⚠ Her move just CAPTURED your ${PIECE_NAMES[captured] ?? captured}. Be accurate about this — do not misname the piece you lost.`);
+  }
+  lines.push(materialSummary(chess));
   lines.push(`Move history: ${numberedHistory(moves)}`);
   lines.push(`Board (FEN): ${chess.fen()}`);
   lines.push("Board diagram (uppercase = White/Wicked, lowercase = you/Black):");
@@ -140,7 +167,7 @@ async function playWickedMoveLocked(san: string, banter: string): Promise<ChessT
   });
 
   // Ask Ash. On illegal/missing move, retry with a firm correction.
-  let prompt = buildChessPacket({ chess, moves, wickedSan, banter, gameOver });
+  let prompt = buildChessPacket({ chess, moves, wickedSan, banter, captured: applied.captured, gameOver });
   let ashSan: string | null = null;
   let ashBanterRaw = "";
 

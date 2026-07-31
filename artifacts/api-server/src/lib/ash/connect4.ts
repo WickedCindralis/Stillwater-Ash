@@ -1,4 +1,4 @@
-// Connect Four between Wicked (gold, moves first) and Ash (ember).
+// Connect Four between Wicked (purple, moves first) and Ash (black).
 // Mirrors the chess module: moves travel as text, Ash replies with [MOVE: <column>],
 // banter flows through the normal private-message chat path.
 import type { AshConnect4Game } from "@workspace/db";
@@ -88,9 +88,9 @@ function statusFromGrid(grid: Grid): { status: string; result: string } {
 export function asciiGrid(grid: Grid): string {
   const lines: string[] = ["  1 2 3 4 5 6 7"];
   for (let r = ROWS - 1; r >= 0; r--) {
-    lines.push("| " + grid[r]!.map((p) => (p === "W" ? "G" : p === "A" ? "E" : ".")).join(" ") + " |");
+    lines.push("| " + grid[r]!.map((p) => (p === "W" ? "P" : p === "A" ? "B" : ".")).join(" ") + " |");
   }
-  lines.push("  1 2 3 4 5 6 7   (G = Wicked's gold disc, E = your ember disc, . = empty)");
+  lines.push("  1 2 3 4 5 6 7   (P = Wicked's purple disc, B = your black disc, . = empty)");
   return lines.join("\n");
 }
 
@@ -104,7 +104,7 @@ function buildPacket(opts: {
   const { grid, moves, wickedCol, banter, gameOver } = opts;
   const lines: string[] = [];
   if (banter.trim()) lines.push(banter.trim(), "");
-  lines.push(`[CONNECT FOUR — Wicked just dropped a gold disc in column ${wickedCol}]`);
+  lines.push(`[CONNECT FOUR — Wicked just dropped a purple disc in column ${wickedCol}]`);
   lines.push(`Moves so far (columns, Wicked first, alternating): ${moves.join(" ") || "(game just started)"}`);
   lines.push("Board (discs fall to the lowest empty slot in a column):");
   lines.push(asciiGrid(grid));
@@ -212,8 +212,8 @@ Reply again with your banter and your column on its own line as [MOVE: <column n
   // Ash answered — now store Wicked's chat message (deferred so a failed call
   // can be resent without duplicate entries in chat).
   const wickedContent = banter.trim()
-    ? `${banter.trim()}\n\n🟡 My drop: column ${column}`
-    : `🟡 My drop: column ${column}`;
+    ? `${banter.trim()}\n\n🟣 My drop: column ${column}`
+    : `🟣 My drop: column ${column}`;
   await storage.createMessage({
     role: "wicked",
     content: wickedContent,
@@ -246,8 +246,8 @@ Reply again with your banter and your column on its own line as [MOVE: <column n
   const ashContent =
     !gameOver && ashCol
       ? ashBanter
-        ? `${ashBanter}\n\n🔴 My drop: column ${ashCol}`
-        : `🔴 My drop: column ${ashCol}`
+        ? `${ashBanter}\n\n⚫ My drop: column ${ashCol}`
+        : `⚫ My drop: column ${ashCol}`
       : ashBanter;
   if (ashContent.trim()) {
     await storage.createMessage({

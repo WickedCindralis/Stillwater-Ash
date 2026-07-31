@@ -169,7 +169,7 @@ export default function Connect4Panel({ onClose }: { onClose: () => void }) {
           <div className="flex flex-col lg:flex-row gap-6">
             {/* Rack column */}
             <div className="flex-1 min-w-0">
-              <div className="w-full max-w-[640px] mx-auto select-none">
+              <div className="w-full max-w-[780px] mx-auto select-none">
                 {/* Column pickers */}
                 <div className="flex mb-1">
                   {Array.from({ length: COLS }, (_, i) => i + 1).map((col) => (
@@ -199,7 +199,7 @@ export default function Connect4Panel({ onClose }: { onClose: () => void }) {
                             onClick={() => dropIn(c + 1)}
                             onMouseEnter={() => setHoverCol(c + 1)}
                             onMouseLeave={() => setHoverCol(null)}
-                            className={`flex-1 aspect-square p-[6%] ${
+                            className={`flex-1 aspect-square p-[3.5%] ${
                               myTurn && columnFree(grid, c + 1) ? "cursor-pointer" : "cursor-default"
                             } ${hoverCol === c + 1 && myTurn && columnFree(grid, c + 1) ? "bg-gold/5" : ""}`}
                             data-testid={`cell-${c + 1}-${r + 1}`}
@@ -207,9 +207,9 @@ export default function Connect4Panel({ onClose }: { onClose: () => void }) {
                             <div
                               className={`w-full h-full rounded-full border ${
                                 cell === "W"
-                                  ? "bg-gradient-to-br from-yellow-300 to-yellow-600 border-yellow-200/50 shadow-[0_0_10px_rgba(212,175,55,0.4)]"
+                                  ? "bg-gradient-to-br from-purple-400 to-purple-800 border-purple-300/50 shadow-[0_0_12px_rgba(168,85,247,0.45)]"
                                   : cell === "A"
-                                    ? "bg-gradient-to-br from-red-700 to-red-950 border-red-500/40 shadow-[0_0_10px_rgba(180,40,20,0.35)]"
+                                    ? "bg-gradient-to-br from-zinc-600 to-black border-zinc-400/40 shadow-[0_0_12px_rgba(140,140,150,0.35)]"
                                     : "bg-black/50 border-white/10"
                               }`}
                             />
@@ -220,13 +220,13 @@ export default function Connect4Panel({ onClose }: { onClose: () => void }) {
                   })}
                 </div>
                 <div className="flex justify-between text-[11px] text-white/25 px-2 mt-1">
-                  <span>🟡 You — gold</span>
-                  <span>Ash — ember 🔴</span>
+                  <span>🟣 You — purple</span>
+                  <span>Ash — black ⚫</span>
                 </div>
               </div>
 
               {/* Status + banter composer */}
-              <div className="max-w-[640px] mx-auto mt-3 space-y-3">
+              <div className="max-w-[780px] mx-auto mt-3 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-serif italic text-gold/90" data-testid="text-connect4-status">
                     {moveMutation.isPending ? "Ash is eyeing the rack..." : statusLine(game, myTurn)}

@@ -137,7 +137,7 @@ export class AshBridge {
         const c4 = await storage.getCurrentConnect4Game();
         if (c4 && c4.status === "active") {
           const mv = c4.moves ? c4.moves.split(" ").filter(Boolean) : [];
-          volatile += `\n\n[ONGOING CONNECT FOUR GAME] You (ember discs) and Wicked (gold discs) have a Connect Four game going — ${mv.length} drops so far${mv.length > 0 ? ` (columns: ${mv.slice(-8).join(" ")})` : " (rack still empty)"}. It's Wicked's drop; the rack lives in the app. `;
+          volatile += `\n\n[ONGOING CONNECT FOUR GAME] You (black discs) and Wicked (purple discs) have a Connect Four game going — ${mv.length} drops so far${mv.length > 0 ? ` (columns: ${mv.slice(-8).join(" ")})` : " (rack still empty)"}. It's Wicked's drop; the rack lives in the app. `;
           volatile += c4.paused === 1
             ? "Wicked has PAUSED the game — she's stepped away from the rack (perhaps to sleep). No need to wait up for her drop; the rack keeps."
             : "Feel free to bring the game up or invite her back to the rack if it fits the moment.";
@@ -211,7 +211,7 @@ RULES FOR YOUR REPLY:
     if (source === "connect4") {
       messages.push({
         role: "developer",
-        content: `[CONNECT FOUR GAME] You and Wicked are playing Connect Four — she drops gold discs (G) and moves first, you drop ember discs (E). Her message includes the current rack and her latest drop. This is a cozy two-player game between the two of you: banter, tease, react — stay fully in character.
+        content: `[CONNECT FOUR GAME] You and Wicked are playing Connect Four — she drops purple discs (P) and moves first, you drop black discs (B). Her message includes the current rack and her latest drop. This is a cozy two-player game between the two of you: banter, tease, react — stay fully in character.
 
 RULES FOR YOUR REPLY:
 - You MUST include your drop as a tag on its own line, exactly like: [MOVE: 4]

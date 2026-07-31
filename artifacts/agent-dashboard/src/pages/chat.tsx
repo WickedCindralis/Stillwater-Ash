@@ -538,15 +538,19 @@ export default function ChatPage() {
                 </button>
               </div>
               <label className="block">
-                <span className="text-xs text-white/40">Ping interval override (minutes, 0 = status-based)</span>
+                <span className="text-xs text-white/40">Ping interval override (hours, 0 = status-based)</span>
                 <input
                   type="number"
                   min={0}
-                  defaultValue={state.selfPromptIntervalOverride}
+                  step={0.5}
+                  key={state.selfPromptIntervalOverride}
+                  defaultValue={state.selfPromptIntervalOverride ? +(state.selfPromptIntervalOverride / 60).toFixed(2) : 0}
                   onBlur={(e) => {
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v) && v >= 0 && v !== state.selfPromptIntervalOverride) {
-                      settingsMutation.mutate({ selfPromptIntervalOverride: v });
+                    const hours = parseFloat(e.target.value);
+                    if (isNaN(hours) || hours < 0) return;
+                    const minutes = Math.round(hours * 60);
+                    if (minutes !== state.selfPromptIntervalOverride) {
+                      settingsMutation.mutate({ selfPromptIntervalOverride: minutes });
                     }
                   }}
                   className="w-full mt-1 bg-black/60 border border-white/15 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-gold/40"

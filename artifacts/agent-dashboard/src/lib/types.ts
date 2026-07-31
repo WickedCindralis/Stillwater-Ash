@@ -56,6 +56,16 @@ export interface AshChessGame {
   updatedAt: string;
 }
 
+export interface AshConnect4Game {
+  id: number;
+  moves: string; // column numbers 1-7, space-separated, Wicked first
+  status: string; // active | won | draw | resigned | abandoned
+  result: string; // "wicked" | "ash" | "draw" | ""
+  paused: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AshDiaryEntry {
   id: number;
   content: string;

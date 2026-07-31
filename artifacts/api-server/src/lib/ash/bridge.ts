@@ -131,6 +131,21 @@ export class AshBridge {
         this.error("Failed to attach chess context:", e);
       }
     }
+    // Ongoing Connect Four game, same idea.
+    if (source !== "connect4") {
+      try {
+        const c4 = await storage.getCurrentConnect4Game();
+        if (c4 && c4.status === "active") {
+          const mv = c4.moves ? c4.moves.split(" ").filter(Boolean) : [];
+          volatile += `\n\n[ONGOING CONNECT FOUR GAME] You (ember discs) and Wicked (gold discs) have a Connect Four game going — ${mv.length} drops so far${mv.length > 0 ? ` (columns: ${mv.slice(-8).join(" ")})` : " (rack still empty)"}. It's Wicked's drop; the rack lives in the app. `;
+          volatile += c4.paused === 1
+            ? "Wicked has PAUSED the game — she's stepped away from the rack (perhaps to sleep). No need to wait up for her drop; the rack keeps."
+            : "Feel free to bring the game up or invite her back to the rack if it fits the moment.";
+        }
+      } catch (e) {
+        this.error("Failed to attach connect4 context:", e);
+      }
+    }
 
     messages.push({
       role: "developer",
@@ -189,6 +204,21 @@ RULES FOR YOUR REPLY:
 - Choose ONLY from the legal moves listed in the message. Any other move is physically impossible on this board.
 - Play thoughtfully — you're a competent player, not a pushover, but this is for fun, not tournament play.
 - The rest of your reply is normal banter to Wicked. Do not describe the whole board back to her; she can see it.
+- If the message says the game is over, do NOT include a [MOVE:] tag — just react to the result.`,
+      });
+    }
+
+    if (source === "connect4") {
+      messages.push({
+        role: "developer",
+        content: `[CONNECT FOUR GAME] You and Wicked are playing Connect Four — she drops gold discs (G) and moves first, you drop ember discs (E). Her message includes the current rack and her latest drop. This is a cozy two-player game between the two of you: banter, tease, react — stay fully in character.
+
+RULES FOR YOUR REPLY:
+- You MUST include your drop as a tag on its own line, exactly like: [MOVE: 4]
+- The number is the column (1-7). Discs fall to the lowest empty slot in that column.
+- Choose ONLY from the legal columns listed in the message — a full column can't take another disc.
+- Play thoughtfully — block her threats, build your own lines — but this is for fun, not tournament play.
+- The rest of your reply is normal banter to Wicked. Do not describe the whole rack back to her; she can see it.
 - If the message says the game is over, do NOT include a [MOVE:] tag — just react to the result.`,
       });
     }
@@ -409,6 +439,11 @@ RULES FOR YOUR REPLY:
   // hands the remainder back to parseChessBanter for normal tag handling.
   async handleChessPrompt(prompt: string): Promise<string> {
     return this.callOpenAI(prompt, "chess");
+  }
+
+  // Generic game prompt (chess, connect4, ...) — same raw call, source picks the rules message.
+  async handleGamePrompt(prompt: string, source: string): Promise<string> {
+    return this.callOpenAI(prompt, source);
   }
 
   // Runs the standard tag parsing (status, pings, diary) on a chess reply after

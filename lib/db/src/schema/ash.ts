@@ -73,6 +73,17 @@ export const ashChessGames = pgTable("ash_chess_games", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Connect Four games between Wicked (gold discs, moves first) and Ash (ember discs).
+export const ashConnect4Games = pgTable("ash_connect4_games", {
+  id: serial("id").primaryKey(),
+  moves: text("moves").notNull().default(""), // column numbers 1-7, space-separated, Wicked first
+  status: text("status").notNull().default("active"), // active | won | draw | resigned | abandoned
+  result: text("result").notNull().default(""), // "wicked" | "ash" | "draw" | "" (unfinished)
+  paused: integer("paused").notNull().default(0), // 1 = Wicked stepped away; Ash is told not to wait
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Session table for connect-pg-simple (express-session store).
 export const ashSession = pgTable(
   "ash_session",
@@ -107,6 +118,14 @@ export const chessMoveSchema = z.object({
   message: z.string().max(4000).default(""),
 });
 export type ChessMovePayload = z.infer<typeof chessMoveSchema>;
+
+export type AshConnect4Game = typeof ashConnect4Games.$inferSelect;
+
+export const connect4MoveSchema = z.object({
+  column: z.number().int().min(1).max(7),
+  message: z.string().max(4000).default(""),
+});
+export type Connect4MovePayload = z.infer<typeof connect4MoveSchema>;
 
 export const sendMessageSchema = z.object({
   content: z.string().default(""),

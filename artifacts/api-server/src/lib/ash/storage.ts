@@ -5,7 +5,9 @@ import {
   ashDiaryEntries,
   ashActivity,
   ashChessGames,
+  ashConnect4Games,
   type AshChessGame,
+  type AshConnect4Game,
   type AshState,
   type AshMessage,
   type InsertMessage,
@@ -35,6 +37,12 @@ export interface IStorage {
     id: number,
     patch: Partial<Omit<AshChessGame, "id" | "createdAt">>,
   ): Promise<AshChessGame>;
+  getCurrentConnect4Game(): Promise<AshConnect4Game | null>;
+  createConnect4Game(): Promise<AshConnect4Game>;
+  updateConnect4Game(
+    id: number,
+    patch: Partial<Omit<AshConnect4Game, "id" | "createdAt">>,
+  ): Promise<AshConnect4Game>;
 }
 
 export class DbStorage implements IStorage {
@@ -165,6 +173,32 @@ export class DbStorage implements IStorage {
       .update(ashChessGames)
       .set({ ...patch, updatedAt: new Date() })
       .where(eq(ashChessGames.id, id))
+      .returning();
+    return rows[0]!;
+  }
+  // ── Connect Four ──
+  async getCurrentConnect4Game(): Promise<AshConnect4Game | null> {
+    const rows = await db
+      .select()
+      .from(ashConnect4Games)
+      .orderBy(desc(ashConnect4Games.id))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async createConnect4Game(): Promise<AshConnect4Game> {
+    const rows = await db.insert(ashConnect4Games).values({}).returning();
+    return rows[0]!;
+  }
+
+  async updateConnect4Game(
+    id: number,
+    patch: Partial<Omit<AshConnect4Game, "id" | "createdAt">>,
+  ): Promise<AshConnect4Game> {
+    const rows = await db
+      .update(ashConnect4Games)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(ashConnect4Games.id, id))
       .returning();
     return rows[0]!;
   }

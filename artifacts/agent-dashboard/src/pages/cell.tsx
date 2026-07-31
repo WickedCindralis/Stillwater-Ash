@@ -4,9 +4,10 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState } from "@/lib/types";
 import {
-  Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords,
+  Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords, CircleDot,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
+import Connect4Panel from "@/components/connect4-panel";
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -22,6 +23,7 @@ export default function CellPage() {
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
   const [showChess, setShowChess] = useState(false);
+  const [showConnect4, setShowConnect4] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -85,17 +87,28 @@ export default function CellPage() {
             <span className="text-lg text-white/40 leading-tight">{state?.status || "..."}</span>
           </div>
         </div>
-        <button
-          onClick={() => setShowChess(true)}
-          className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
-          data-testid="button-cell-chess"
-          title="Chess with Ash"
-        >
-          <Swords className="w-5 h-5" />
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={() => setShowChess(true)}
+            className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+            data-testid="button-cell-chess"
+            title="Chess with Ash"
+          >
+            <Swords className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setShowConnect4(true)}
+            className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+            data-testid="button-cell-connect4"
+            title="Connect Four with Ash"
+          >
+            <CircleDot className="w-5 h-5" />
+          </button>
+        </div>
       </header>
 
       {showChess && <ChessPanel onClose={() => setShowChess(false)} />}
+      {showConnect4 && <Connect4Panel onClose={() => setShowConnect4(false)} />}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">

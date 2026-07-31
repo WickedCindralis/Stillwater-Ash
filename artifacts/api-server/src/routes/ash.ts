@@ -5,10 +5,11 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema, chessMoveSchema } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
 import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
+import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
 
 declare module "express-session" {
   interface SessionData {
@@ -199,6 +200,61 @@ router.post("/chess/resign", requireAuth, async (_req, res): Promise<void> => {
     res.json({ game });
   } catch (e) {
     if (e instanceof ChessError) {
+      res.status(e.statusCode).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
+});
+
+// ── Connect Four ──
+router.get("/connect4", requireAuth, async (_req, res): Promise<void> => {
+  const game = await storage.getCurrentConnect4Game();
+  res.json({ game });
+});
+
+router.post("/connect4/new", requireAuth, async (_req, res): Promise<void> => {
+  const game = await startNewConnect4Game();
+  res.json({ game });
+});
+
+router.post("/connect4/move", requireAuth, async (req, res): Promise<void> => {
+  const parsed = connect4MoveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    return;
+  }
+  try {
+    const result = await playWickedDrop(parsed.data.column, parsed.data.message);
+    res.json(result);
+  } catch (e) {
+    if (e instanceof Connect4Error) {
+      res.status(e.statusCode).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
+});
+
+router.post("/connect4/pause", requireAuth, async (req, res): Promise<void> => {
+  try {
+    const game = await setConnect4Paused(req.body?.paused !== false);
+    res.json({ game });
+  } catch (e) {
+    if (e instanceof Connect4Error) {
+      res.status(e.statusCode).json({ error: e.message });
+      return;
+    }
+    throw e;
+  }
+});
+
+router.post("/connect4/resign", requireAuth, async (_req, res): Promise<void> => {
+  try {
+    const game = await resignConnect4Game();
+    res.json({ game });
+  } catch (e) {
+    if (e instanceof Connect4Error) {
       res.status(e.statusCode).json({ error: e.message });
       return;
     }

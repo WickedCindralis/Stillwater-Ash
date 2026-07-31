@@ -5,9 +5,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
-  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
+import Connect4Panel from "@/components/connect4-panel";
 
 const STATUS_LABELS: Record<string, string> = {
   alert: "Searching",
@@ -54,7 +55,7 @@ export default function ChatPage() {
   const [message, setMessage] = useState("");
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
-  const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess">("none");
+  const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess" | "connect4">("none");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -178,6 +179,14 @@ export default function ChatPage() {
             title="Chess with Ash"
           >
             <Swords className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setPanel(panel === "connect4" ? "none" : "connect4")}
+            className={`p-2 rounded-lg transition-colors ${panel === "connect4" ? "text-gold bg-gold/10" : "text-white/50 hover:text-gold hover:bg-white/5"}`}
+            data-testid="button-connect4"
+            title="Connect Four with Ash"
+          >
+            <CircleDot className="w-5 h-5" />
           </button>
           <button
             onClick={() => setPanel(panel === "diary" ? "none" : "diary")}
@@ -370,6 +379,9 @@ export default function ChatPage() {
 
         {/* Chess — full window */}
         {panel === "chess" && <ChessPanel onClose={() => setPanel("none")} />}
+
+        {/* Connect Four — full window */}
+        {panel === "connect4" && <Connect4Panel onClose={() => setPanel("none")} />}
 
         {/* Diary — full window */}
         {panel === "diary" && (

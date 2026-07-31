@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Chess, type Square } from "chess.js";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshChessGame, AshMessage } from "@/lib/types";
-import { Loader2, Flag, RotateCcw, Swords, X, Pause, Play } from "lucide-react";
+import { Loader2, Flag, RotateCcw, Swords, X, Pause, Play, Send } from "lucide-react";
 
 const PIECE_GLYPHS: Record<string, string> = {
   wk: "\u2654", wq: "\u2655", wr: "\u2656", wb: "\u2657", wn: "\u2658", wp: "\u2659",
@@ -119,6 +119,18 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
       setError("");
       queryClient.invalidateQueries({ queryKey: ["/api/chess"] });
     },
+  });
+
+  // Plain message, no move — Ash still sees the live board via his packet.
+  const talkMutation = useMutation({
+    mutationFn: async (content: string) => {
+      await apiRequest("POST", "/api/messages", { content, requestImage: false });
+    },
+    onSuccess: () => {
+      setBanter("");
+      queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
+    },
+    onError: (e: Error) => setError(e.message.replace(/^\d+:\s*/, "")),
   });
 
   const pauseMutation = useMutation({
@@ -273,14 +285,25 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                 {error && <p className="text-sm text-red-400" data-testid="text-chess-error">{error}</p>}
 
                 {gameActive && (
-                  <textarea
-                    value={banter}
-                    onChange={(e) => setBanter(e.target.value)}
-                    placeholder="Say something with your move... (travels to Ash with it)"
-                    rows={2}
-                    className="w-full bg-white/5 text-white placeholder-white/30 rounded-xl px-4 py-2.5 resize-none outline-none border border-white/10 focus:border-gold/40 text-[15px]"
-                    data-testid="input-chess-banter"
-                  />
+                  <div className="relative">
+                    <textarea
+                      value={banter}
+                      onChange={(e) => setBanter(e.target.value)}
+                      placeholder="Say something... it travels with your move, or send it alone with the arrow →"
+                      rows={2}
+                      className="w-full bg-white/5 text-white placeholder-white/30 rounded-xl pl-4 pr-12 py-2.5 resize-none outline-none border border-white/10 focus:border-gold/40 text-[15px]"
+                      data-testid="input-chess-banter"
+                    />
+                    <button
+                      onClick={() => banter.trim() && talkMutation.mutate(banter.trim())}
+                      disabled={!banter.trim() || talkMutation.isPending || moveMutation.isPending}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2 rounded-lg text-gold/70 hover:text-gold hover:bg-gold/10 transition-colors disabled:opacity-30 disabled:cursor-default"
+                      title="Send without a move — ask Ash anything"
+                      data-testid="button-chess-talk"
+                    >
+                      {talkMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                    </button>
+                  </div>
                 )}
 
                 <div className="flex gap-2">
@@ -357,7 +380,7 @@ export default function ChessPanel({ onClose }: { onClose: () => void }) {
                     </div>
                   );
                 })}
-                {moveMutation.isPending && (
+                {(moveMutation.isPending || talkMutation.isPending) && (
                   <div className="flex justify-start">
                     <div className="rounded-xl px-3 py-2 text-sm bg-white/8 text-white/40 border border-white/10 italic font-serif flex items-center gap-2">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ash is pondering...

@@ -15,7 +15,7 @@ import {
   type InsertDiaryEntry,
   type AshActivity,
 } from "@workspace/db";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and, like } from "drizzle-orm";
 
 const ASH_ID = "ash";
 
@@ -24,6 +24,7 @@ export interface IStorage {
   updateState(patch: Partial<Omit<AshState, "id">>): Promise<AshState>;
   getMessages(limit?: number): Promise<AshMessage[]>;
   getMessageById(id: number): Promise<AshMessage | null>;
+  clearWickedPhotos(): Promise<number>;
   createMessage(msg: InsertMessage): Promise<AshMessage>;
   getRecentHistory(limit: number): Promise<AshMessage[]>;
   getDiaryEntries(): Promise<AshDiaryEntry[]>;
@@ -137,6 +138,19 @@ export class DbStorage implements IStorage {
   // diary (preserving their original timestamps) without deleting the originals. The
   // source is retagged so they no longer surface in the live chat and are never
   // re-copied on a later boot. Runs on startup, so each deployment self-heals.
+  async clearWickedPhotos(): Promise<number> {
+    // Summer Palace rule: Ash sees Wicked's photos once, then they are gone.
+    // One-time cleanup for photos stored before this rule existed.
+    const rows = await db
+      .update(ashMessages)
+      .set({ imageUrl: "" })
+      .where(
+        and(eq(ashMessages.role, "wicked"), like(ashMessages.imageUrl, "data:%")),
+      )
+      .returning({ id: ashMessages.id });
+    return rows.length;
+  }
+
   async migrateReflectionsToDiary(): Promise<number> {
     const stale = await db
       .select()

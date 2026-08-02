@@ -15,14 +15,14 @@ import {
   type InsertDiaryEntry,
   type AshActivity,
 } from "@workspace/db";
-import { eq, desc, inArray, and, like } from "drizzle-orm";
+import { eq, desc, inArray, and, like, lt } from "drizzle-orm";
 
 const ASH_ID = "ash";
 
 export interface IStorage {
   getState(): Promise<AshState>;
   updateState(patch: Partial<Omit<AshState, "id">>): Promise<AshState>;
-  getMessages(limit?: number): Promise<AshMessage[]>;
+  getMessages(limit?: number, beforeId?: number): Promise<AshMessage[]>;
   getMessageById(id: number): Promise<AshMessage | null>;
   clearWickedPhotos(): Promise<number>;
   createMessage(msg: InsertMessage): Promise<AshMessage>;
@@ -72,13 +72,17 @@ export class DbStorage implements IStorage {
     return rows[0]!;
   }
 
-  async getMessages(limit = 200): Promise<AshMessage[]> {
+  async getMessages(limit = 200, beforeId?: number): Promise<AshMessage[]> {
     // The live chat only ever shows direct exchange between Wicked and Ash.
     // Proactive reflective-window output lives in the diary, not here.
+    // `beforeId` pages further back in history (messages older than that id).
+    const where = beforeId
+      ? and(eq(ashMessages.source, "private_message"), lt(ashMessages.id, beforeId))
+      : eq(ashMessages.source, "private_message");
     const rows = await db
       .select()
       .from(ashMessages)
-      .where(eq(ashMessages.source, "private_message"))
+      .where(where)
       .orderBy(desc(ashMessages.id))
       .limit(limit);
     return rows.reverse();

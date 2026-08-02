@@ -36,6 +36,31 @@ export default function CellPage() {
     queryKey: ["/api/messages"],
     refetchInterval: 8_000,
   });
+  // Older history loaded on demand (the main query only carries the latest 300)
+  const [olderMessages, setOlderMessages] = useState<AshMessage[]>([]);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const allMessages = (() => {
+    const seen = new Set<number>();
+    const merged: AshMessage[] = [];
+    for (const m of [...olderMessages, ...messages]) {
+      if (!seen.has(m.id)) { seen.add(m.id); merged.push(m); }
+    }
+    return merged.sort((a, b) => a.id - b.id);
+  })();
+  const loadOlder = async () => {
+    const oldest = allMessages[0];
+    if (!oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const res = await apiRequest("GET", `/api/messages?before=${oldest.id}`);
+      const page: AshMessage[] = await res.json();
+      if (page.length === 0) setHasMoreHistory(false);
+      setOlderMessages((prev) => [...page, ...prev]);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const sendMutation = useMutation({
     mutationFn: async (payload: { content: string; imageDataUrl?: string; requestImage: boolean }) => {
@@ -112,7 +137,19 @@ export default function CellPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
-        {messages.map((m) => (
+        {messages.length >= 300 && hasMoreHistory && (
+          <div className="text-center py-1">
+            <button
+              onClick={loadOlder}
+              disabled={loadingOlder}
+              className="px-4 py-1.5 rounded-full text-sm text-gold/70 hover:text-gold bg-white/5 border border-white/10 hover:border-gold/30 transition-colors disabled:opacity-50"
+              data-testid="button-cell-load-older"
+            >
+              {loadingOlder ? "Fetching the archives..." : "↑ Load earlier messages"}
+            </button>
+          </div>
+        )}
+        {allMessages.map((m) => (
           <div key={m.id} className={`flex ${m.role === "wicked" ? "justify-end" : "justify-start"}`} data-testid={`cell-message-${m.id}`}>
             <div
               className={`max-w-[82%] rounded-2xl px-3.5 py-2 ${

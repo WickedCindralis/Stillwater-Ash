@@ -88,8 +88,10 @@ function lightweightMessage<T extends { id: number; imageUrl: string }>(m: T): T
   return m;
 }
 
-router.get("/messages", requireAuth, async (_req, res): Promise<void> => {
-  const messages = await storage.getMessages(300);
+router.get("/messages", requireAuth, async (req, res): Promise<void> => {
+  const before = Number(req.query["before"]);
+  const beforeId = Number.isInteger(before) && before > 0 ? before : undefined;
+  const messages = await storage.getMessages(300, beforeId);
   res.json(messages.map(lightweightMessage));
 });
 

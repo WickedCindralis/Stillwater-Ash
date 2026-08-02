@@ -131,11 +131,13 @@ router.post("/messages", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  // Store Wicked's message (image kept for display only — one-and-done for the model).
+  // Store Wicked's message. Photos are one-and-done (Summer Palace rule):
+  // Ash sees the image once in this exchange, but it is never persisted —
+  // only the text stays in the chat history.
   const wickedMessage = await storage.createMessage({
     role: "wicked",
     content: content.trim(),
-    imageUrl: imageDataUrl || "",
+    imageUrl: "",
     source: "private_message",
   });
 

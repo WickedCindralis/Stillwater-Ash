@@ -78,9 +78,33 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
 });
 
 // ── Chat ──
+// Inline base64 images are huge (several MB each); sending them inside the
+// message list made the chat payload tens of MB and the chat could fail to
+// load entirely. Replace them with a lightweight per-message image URL.
+function lightweightMessage<T extends { id: number; imageUrl: string }>(m: T): T {
+  if (m.imageUrl && m.imageUrl.startsWith("data:")) {
+    return { ...m, imageUrl: `/api/messages/${m.id}/image` };
+  }
+  return m;
+}
+
 router.get("/messages", requireAuth, async (_req, res): Promise<void> => {
   const messages = await storage.getMessages(300);
-  res.json(messages);
+  res.json(messages.map(lightweightMessage));
+});
+
+router.get("/messages/:id/image", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const msg = Number.isInteger(id) ? await storage.getMessageById(id) : null;
+  const match = msg?.imageUrl?.match(/^data:(image\/[\w.+-]+);base64,(.*)$/s);
+  if (!match) {
+    res.status(404).json({ error: "No image on this message" });
+    return;
+  }
+  const buf = Buffer.from(match[2]!, "base64");
+  res.setHeader("Content-Type", match[1]!);
+  res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+  res.send(buf);
 });
 
 router.post("/messages", requireAuth, async (req, res): Promise<void> => {
@@ -130,7 +154,10 @@ router.post("/messages", requireAuth, async (req, res): Promise<void> => {
       source: "private_message",
     });
   }
-  res.json({ wickedMessage, ashMessage });
+  res.json({
+    wickedMessage: lightweightMessage(wickedMessage),
+    ashMessage: ashMessage ? lightweightMessage(ashMessage) : null,
+  });
 });
 
 // ── Diary ──

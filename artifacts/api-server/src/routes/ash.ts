@@ -10,6 +10,7 @@ import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 
 declare module "express-session" {
   interface SessionData {
@@ -162,6 +163,81 @@ router.post("/messages", requireAuth, async (req, res): Promise<void> => {
     wickedMessage: lightweightMessage(wickedMessage),
     ashMessage: ashMessage ? lightweightMessage(ashMessage) : null,
   });
+});
+
+// ── Export & purge ──
+const EASTERN_STAMP: Intl.DateTimeFormatOptions = {
+  timeZone: "America/New_York",
+  month: "2-digit",
+  day: "2-digit",
+  year: "2-digit",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+};
+
+router.get("/export-doc", requireAuth, async (_req, res): Promise<void> => {
+  const [messages, diary] = await Promise.all([
+    storage.getAllMessages(),
+    storage.getDiaryEntries(),
+  ]);
+
+  type Entry = { kind: "message" | "diary"; who: string; content: string; at: Date };
+  const entries: Entry[] = [
+    ...messages.map((m): Entry => ({
+      kind: "message",
+      who: m.role === "wicked" ? "Wicked→Ash_Cindralis" : "Ash_Cindralis→Wicked",
+      content: m.content,
+      at: new Date(m.createdAt),
+    })),
+    ...diary.map((d): Entry => ({
+      kind: "diary",
+      who: "Ash's Diary",
+      content: d.content,
+      at: new Date(d.createdAt),
+    })),
+  ].sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  const children: Paragraph[] = [
+    new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun("Stillwater Archive")] }),
+    new Paragraph({
+      children: [new TextRun({ text: `Exported ${new Date().toLocaleString("en-US", EASTERN_STAMP)} (Eastern) — ${messages.length} messages, ${diary.length} diary entries`, italics: true, color: "888888" })],
+    }),
+    new Paragraph({ children: [] }),
+  ];
+  for (const e of entries) {
+    const stamp = e.at.toLocaleString("en-US", EASTERN_STAMP).replace(",", "");
+    children.push(
+      new Paragraph({
+        spacing: { before: 240 },
+        children: [
+          new TextRun({
+            text: `${e.who} ${stamp}`,
+            bold: true,
+            color: e.kind === "diary" ? "B45309" : "8B7500",
+          }),
+        ],
+      }),
+    );
+    for (const line of e.content.split("\n")) {
+      children.push(new Paragraph({ children: [new TextRun(line)] }));
+    }
+  }
+
+  const doc = new Document({ sections: [{ children }] });
+  const buf = await Packer.toBuffer(doc);
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  );
+  res.setHeader("Content-Disposition", 'attachment; filename="stillwater-archive.docx"');
+  res.send(buf);
+});
+
+router.post("/messages/purge", requireAuth, async (_req, res): Promise<void> => {
+  const removed = await storage.purgeMessagesKeepLast(20);
+  await storage.logActivity("status", `Chat purged — ${removed} messages removed, last 20 kept`);
+  res.json({ removed });
 });
 
 // ── Diary ──

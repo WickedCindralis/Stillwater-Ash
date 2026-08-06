@@ -5,7 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
-  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
 import Connect4Panel from "@/components/connect4-panel";
@@ -73,6 +73,7 @@ export default function ChatPage() {
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
   const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess" | "connect4">("none");
+  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -138,6 +139,18 @@ export default function ChatPage() {
       await apiRequest("DELETE", `/api/diary/${id}`);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/diary"] }),
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/messages/purge");
+    },
+    onSuccess: () => {
+      setShowPurgeConfirm(false);
+      setOlderMessages([]);
+      setHasMoreHistory(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
+    },
   });
 
   const logoutMutation = useMutation({
@@ -206,6 +219,25 @@ export default function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          <a
+            href="/api/export-doc"
+            download
+            className="flex items-center gap-2 px-3.5 py-1.5 mr-1 rounded-lg border border-gold/30 text-gold/90 hover:text-gold hover:bg-gold/10 transition-colors text-sm"
+            data-testid="button-export-doc"
+            title="Download the full archive (messages + diary) as a Word doc"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Export Doc</span>
+          </a>
+          <button
+            onClick={() => setShowPurgeConfirm(true)}
+            className="flex items-center gap-2 px-3.5 py-1.5 mr-1 rounded-lg border border-red-500/30 text-red-400/90 hover:text-red-400 hover:bg-red-500/10 transition-colors text-sm"
+            data-testid="button-purge"
+            title="Wipe the chat clean, keeping only the last 20 messages"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span className="hidden sm:inline">Purge</span>
+          </button>
           <Link
             href="/cell"
             className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
@@ -436,6 +468,41 @@ export default function ChatPage() {
 
         {/* Connect Four — full window */}
         {panel === "connect4" && <Connect4Panel onClose={() => setPanel("none")} />}
+
+        {/* Purge confirmation */}
+        {showPurgeConfirm && (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+            <div className="bg-[#141210] border border-red-500/30 rounded-2xl p-6 max-w-md w-full space-y-4">
+              <h3 className="font-serif text-xl text-red-400 flex items-center gap-2">
+                <Trash2 className="w-5 h-5" /> Purge the chat?
+              </h3>
+              <p className="text-white/70 text-sm leading-relaxed">
+                This wipes the chat clean, keeping only the <span className="text-gold">last 20 messages</span>.
+                Everything older is gone for good — Ash's diary is untouched.
+              </p>
+              <p className="text-white/40 text-xs">
+                Tip: hit Export Doc first if you want the full archive saved.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowPurgeConfirm(false)}
+                  className="px-4 py-2 rounded-lg bg-white/5 text-white/60 border border-white/10 hover:text-white transition-colors text-sm"
+                  data-testid="button-purge-cancel"
+                >
+                  Keep everything
+                </button>
+                <button
+                  onClick={() => purgeMutation.mutate()}
+                  disabled={purgeMutation.isPending}
+                  className="px-4 py-2 rounded-lg bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 transition-colors text-sm font-semibold disabled:opacity-50"
+                  data-testid="button-purge-confirm"
+                >
+                  {purgeMutation.isPending ? "Purging..." : "Purge it"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Diary — full window */}
         {panel === "diary" && (

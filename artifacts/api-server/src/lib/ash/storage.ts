@@ -23,6 +23,8 @@ export interface IStorage {
   getState(): Promise<AshState>;
   updateState(patch: Partial<Omit<AshState, "id">>): Promise<AshState>;
   getMessages(limit?: number, beforeId?: number): Promise<AshMessage[]>;
+  getAllMessages(): Promise<AshMessage[]>;
+  purgeMessagesKeepLast(keep: number): Promise<number>;
   getMessageById(id: number): Promise<AshMessage | null>;
   clearWickedPhotos(): Promise<number>;
   createMessage(msg: InsertMessage): Promise<AshMessage>;
@@ -86,6 +88,32 @@ export class DbStorage implements IStorage {
       .orderBy(desc(ashMessages.id))
       .limit(limit);
     return rows.reverse();
+  }
+
+  async getAllMessages(): Promise<AshMessage[]> {
+    return db
+      .select()
+      .from(ashMessages)
+      .where(eq(ashMessages.source, "private_message"))
+      .orderBy(ashMessages.id);
+  }
+
+  async purgeMessagesKeepLast(keep: number): Promise<number> {
+    const recent = await db
+      .select({ id: ashMessages.id })
+      .from(ashMessages)
+      .where(eq(ashMessages.source, "private_message"))
+      .orderBy(desc(ashMessages.id))
+      .limit(keep);
+    const cutoff = recent.length > 0 ? recent[recent.length - 1]!.id : null;
+    if (cutoff === null) return 0;
+    const gone = await db
+      .delete(ashMessages)
+      .where(
+        and(eq(ashMessages.source, "private_message"), lt(ashMessages.id, cutoff)),
+      )
+      .returning({ id: ashMessages.id });
+    return gone.length;
   }
 
   async getMessageById(id: number): Promise<AshMessage | null> {

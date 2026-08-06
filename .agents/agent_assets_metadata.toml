@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "o_UwuOvRitn4WTIT6bdQu"
+uri = "file://exports/stillwater-project.zip"
+type = "unspecified"
+title = "Stillwater — Full Project Files"
+description = "Complete copy of all Stillwater files, ready to upload into a new Replit project."

@@ -18,6 +18,23 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function messageStamp(m: AshMessage): string {
+  const who = m.role === "wicked" ? "Wicked→Ash_Cindralis" : "Ash_Cindralis→Wicked";
+  if (!m.createdAt) return who;
+  const stamp = new Date(m.createdAt)
+    .toLocaleString("en-US", {
+      timeZone: "America/New_York",
+      month: "2-digit",
+      day: "2-digit",
+      year: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .replace(",", "");
+  return `${who} ${stamp}`;
+}
+
 export default function CellPage() {
   const [message, setMessage] = useState("");
   const [pendingImage, setPendingImage] = useState<string | null>(null);
@@ -160,6 +177,9 @@ export default function CellPage() {
                   : "bg-white/8 border border-white/10 text-white/90"
               }`}
             >
+              <div className="text-[10px] text-white/30 mb-1" data-testid={`stamp-cell-${m.id}`}>
+                {messageStamp(m)}
+              </div>
               {m.source === "self_prompt" && (
                 <div className="text-lg uppercase tracking-wider text-ember/80 mb-0.5">Reflection</div>
               )}

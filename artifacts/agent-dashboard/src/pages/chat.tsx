@@ -42,6 +42,23 @@ const WICKED_STATUS_ACTIVE: Record<string, string> = {
   offline: "bg-white/15 text-white/70 border-white/30",
 };
 
+function messageStamp(m: AshMessage): string {
+  const who = m.role === "wicked" ? "Wicked→Ash_Cindralis" : "Ash_Cindralis→Wicked";
+  if (!m.createdAt) return who;
+  const stamp = new Date(m.createdAt)
+    .toLocaleString("en-US", {
+      timeZone: "America/New_York",
+      month: "2-digit",
+      day: "2-digit",
+      year: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .replace(",", "");
+  return `${who} ${stamp}`;
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -315,6 +332,9 @@ export default function ChatPage() {
                       : "bg-white/5 border border-white/10 text-white/90"
                   }`}
                 >
+                  <div className="text-[10px] text-white/30 mb-1" data-testid={`stamp-message-${m.id}`}>
+                    {messageStamp(m)}
+                  </div>
                   {m.source === "self_prompt" && (
                     <div className="text-[10px] uppercase tracking-wider text-ember/80 mb-1">Reflection</div>
                   )}
@@ -327,9 +347,6 @@ export default function ChatPage() {
                     />
                   )}
                   {m.content && <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>}
-                  <div className="text-[10px] text-white/25 mt-1">
-                    {m.createdAt ? new Date(m.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : ""}
-                  </div>
                 </div>
               </div>
             ))}

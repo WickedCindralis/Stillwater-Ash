@@ -32,7 +32,7 @@ const STATUS_COLORS: Record<string, string> = {
   off: "bg-white/20",
 };
 
-const MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.1", "gpt-4.1-nano"];
+const MODEL_OPTIONS = ["gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.1", "gpt-4.1-nano"];
 
 const WICKED_STATUS_ACTIVE: Record<string, string> = {
   online: "bg-green-500/20 text-green-400 border-green-500/40",

@@ -58,7 +58,7 @@ const STATUS_ALIASES: Record<string, string> = {
   online: "online",
 };
 
-const NO_TEMPERATURE_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.3-chat", "gpt-5.4", "gpt-5.5"];
+const NO_TEMPERATURE_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.3-chat", "gpt-5.4", "gpt-5.5", "gpt-5.6-luna"];
 const HISTORY_LIMIT = 20;
 
 export class AshBridge {

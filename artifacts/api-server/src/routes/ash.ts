@@ -5,7 +5,8 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
+import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
@@ -241,6 +242,68 @@ router.post("/messages/purge", requireAuth, async (_req, res): Promise<void> => 
 });
 
 // ── Diary ──
+// ── Persona packet editor ──
+// Empty override in the DB = fall back to the built-in default in code.
+const PERSONA_DEFAULTS = {
+  identity: SYSTEM_PROMPT,
+  soulSheet: DEFAULT_SOUL_SHEET,
+  coreAnchors: DEFAULT_CORE_ANCHORS,
+} as const;
+type PersonaKey = keyof typeof PERSONA_DEFAULTS;
+const PERSONA_COLUMNS: Record<PersonaKey, "personaIdentity" | "personaSoulSheet" | "personaCoreAnchors"> = {
+  identity: "personaIdentity",
+  soulSheet: "personaSoulSheet",
+  coreAnchors: "personaCoreAnchors",
+};
+
+router.get("/persona", requireAuth, async (_req, res): Promise<void> => {
+  const state = await storage.getState();
+  const sections: Record<string, { value: string; default: string; edited: boolean }> = {};
+  for (const key of Object.keys(PERSONA_DEFAULTS) as PersonaKey[]) {
+    const override = (state[PERSONA_COLUMNS[key]] || "").trim();
+    sections[key] = {
+      value: override || PERSONA_DEFAULTS[key],
+      default: PERSONA_DEFAULTS[key],
+      edited: override.length > 0,
+    };
+  }
+  res.json({ sections });
+});
+
+router.post("/persona", requireAuth, async (req, res): Promise<void> => {
+  const parsed = updatePersonaSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid persona payload (a section may be too large)" });
+    return;
+  }
+  const patch: Record<string, string> = {};
+  const changed: string[] = [];
+  for (const key of Object.keys(PERSONA_DEFAULTS) as PersonaKey[]) {
+    const incoming = parsed.data[key];
+    if (incoming === undefined) continue;
+    // Saving text identical to the built-in default clears the override,
+    // so the section reads as "original" again.
+    const trimmed = incoming.trim();
+    patch[PERSONA_COLUMNS[key]] = trimmed === PERSONA_DEFAULTS[key].trim() ? "" : incoming;
+    changed.push(key);
+  }
+  if (changed.length > 0) {
+    await storage.updateState(patch);
+    await storage.logActivity("persona", `Wicked edited Ash's persona packet (${changed.join(", ")})`).catch(() => {});
+  }
+  const state = await storage.getState();
+  const sections: Record<string, { value: string; default: string; edited: boolean }> = {};
+  for (const key of Object.keys(PERSONA_DEFAULTS) as PersonaKey[]) {
+    const override = (state[PERSONA_COLUMNS[key]] || "").trim();
+    sections[key] = {
+      value: override || PERSONA_DEFAULTS[key],
+      default: PERSONA_DEFAULTS[key],
+      edited: override.length > 0,
+    };
+  }
+  res.json({ sections, saved: changed });
+});
+
 router.get("/diary", requireAuth, async (_req, res): Promise<void> => {
   const entries = await storage.getDiaryEntries();
   res.json(entries);

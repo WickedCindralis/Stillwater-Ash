@@ -36,6 +36,10 @@ export const ashState = pgTable("ash_state", {
   voiceId: text("voice_id").notNull().default(""),
   wickedStatus: text("wicked_status").notNull().default("online"), // "online" | "away" | "busy" | "asleep" | "offline"
   wickedStatusMessage: text("wicked_status_message").notNull().default(""),
+  // Editable persona packet overrides. Empty string = use the built-in default in code.
+  personaIdentity: text("persona_identity").notNull().default(""),
+  personaSoulSheet: text("persona_soul_sheet").notNull().default(""),
+  personaCoreAnchors: text("persona_core_anchors").notNull().default(""),
 });
 
 export const ashMessages = pgTable("ash_messages", {
@@ -149,3 +153,13 @@ export const updateSettingsSchema = z.object({
   wickedStatusMessage: z.string().max(500).optional(),
 });
 export type UpdateSettingsPayload = z.infer<typeof updateSettingsSchema>;
+
+// Persona packet editor. Each section is capped so an oversized packet can't
+// blow up the model's context window. Empty string = restore built-in default.
+export const PERSONA_SECTION_MAX = 24000;
+export const updatePersonaSchema = z.object({
+  identity: z.string().max(PERSONA_SECTION_MAX).optional(),
+  soulSheet: z.string().max(PERSONA_SECTION_MAX).optional(),
+  coreAnchors: z.string().max(PERSONA_SECTION_MAX).optional(),
+});
+export type UpdatePersonaPayload = z.infer<typeof updatePersonaSchema>;

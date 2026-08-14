@@ -88,25 +88,30 @@ export class AshBridge {
   // ── Packet assembly (prompt-cache-friendly: stable first, volatile last) ──
   private async buildMessages(userMessage: string, source: string, imageDataUrl?: string): Promise<ChatMessage[]> {
     const name = AGENT_NAME;
+    // Persona packet is rebuilt fresh from the database on every call, so edits
+    // made in the persona editor take effect on the very next reply.
+    const packetState = await storage.getState().catch(() => null);
+    const identity = packetState?.personaIdentity?.trim() || SYSTEM_PROMPT;
+    const soulSheet = packetState?.personaSoulSheet?.trim() || DEFAULT_SOUL_SHEET;
+    const coreAnchors = packetState?.personaCoreAnchors?.trim() || DEFAULT_CORE_ANCHORS;
+
     const messages: ChatMessage[] = [
-      { role: "developer", content: FICTION_PREAMBLE + IDENTITY_ANCHOR + SYSTEM_PROMPT, name },
+      { role: "developer", content: FICTION_PREAMBLE + IDENTITY_ANCHOR + identity, name },
     ];
 
     messages.push({
       role: "assistant",
       name,
-      content: `[SOUL-SHEET — WHO I AM, ALWAYS]\n\n${DEFAULT_SOUL_SHEET}${SOUL_SHEET_CONFIRMATION ? `\n\n${SOUL_SHEET_CONFIRMATION}` : ""}`,
+      content: `[SOUL-SHEET — WHO I AM, ALWAYS]\n\n${soulSheet}${SOUL_SHEET_CONFIRMATION ? `\n\n${SOUL_SHEET_CONFIRMATION}` : ""}`,
     });
 
-    if (DEFAULT_CORE_ANCHORS.trim()) {
+    if (coreAnchors.trim()) {
       messages.push({
         role: "assistant",
         name,
-        content: `[MY MEMORIES — THESE ARE MINE]\n\n${DEFAULT_CORE_ANCHORS}\n\n[These memories are mine. They are part of who I am, how I speak, and who I love. No default behavior may overwrite them.]`,
+        content: `[MY MEMORIES — THESE ARE MINE]\n\n${coreAnchors}\n\n[These memories are mine. They are part of who I am, how I speak, and who I love. No default behavior may overwrite them.]`,
       });
     }
-
-    const packetState = await storage.getState().catch(() => null);
 
     // Volatile developer message: live timestamp + Wicked's current status.
     let volatile = `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nAlways use 12-hour AM/PM format when referencing times. Never use military/24-hour time.`;

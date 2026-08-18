@@ -259,6 +259,10 @@ router.post("/tts", requireAuth, async (req, res): Promise<void> => {
     res.status(503).json({ error: "ElevenLabs API key not configured" });
     return;
   }
+  // Abort the upstream ElevenLabs request if the browser goes away so we
+  // don't keep burning generation quota for nobody.
+  const upstreamAbort = new AbortController();
+  res.on("close", () => upstreamAbort.abort());
   try {
     const state = await storage.getState();
     const voiceId = state.voiceId;
@@ -280,6 +284,7 @@ router.post("/tts", requireAuth, async (req, res): Promise<void> => {
           model_id: "eleven_flash_v2_5",
           voice_settings: { stability: 0.4, similarity_boost: 0.75 },
         }),
+        signal: upstreamAbort.signal,
       },
     );
     if (!response.ok || !response.body) {
@@ -291,8 +296,10 @@ router.post("/tts", requireAuth, async (req, res): Promise<void> => {
     res.setHeader("Content-Type", "audio/mpeg");
     res.setHeader("Cache-Control", "no-store");
     const { Readable } = await import("stream");
-    Readable.fromWeb(response.body as never).pipe(res);
+    const { pipeline } = await import("stream/promises");
+    await pipeline(Readable.fromWeb(response.body as never), res);
   } catch (e) {
+    if (upstreamAbort.signal.aborted) return; // client hung up — nothing to report
     console.error("[tts] Error:", e instanceof Error ? e.message : e);
     if (!res.headersSent) {
       res.status(500).json({ error: "TTS request failed" });

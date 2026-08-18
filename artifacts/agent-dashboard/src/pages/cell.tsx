@@ -62,26 +62,44 @@ export default function CellPage() {
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastSpokenIdRef = useRef<number | null>(null);
+  // Each speak() call gets a generation number + abort controller; only the
+  // newest generation may create audio or touch playback state.
+  const ttsGenRef = useRef(0);
+  const ttsAbortRef = useRef<AbortController | null>(null);
 
   const stopSpeaking = useCallback(() => {
-    if (audioRef.current) {
-      try { audioRef.current.pause(); } catch { /* noop */ }
+    ttsGenRef.current += 1; // invalidate any in-flight speak()
+    ttsAbortRef.current?.abort();
+    ttsAbortRef.current = null;
+    const audio = audioRef.current;
+    if (audio) {
+      try { audio.pause(); } catch { /* noop */ }
+      if (audio.src.startsWith("blob:")) { try { URL.revokeObjectURL(audio.src); } catch { /* noop */ } }
       audioRef.current = null;
     }
     setTtsPlaying(false);
   }, []);
 
+  // Stop speech (and abort the request) when leaving the page.
+  useEffect(() => stopSpeaking, [stopSpeaking]);
+
   const speak = useCallback(async (text: string) => {
     if (!text.trim()) return;
     stopSpeaking();
+    const gen = ttsGenRef.current;
+    const alive = () => ttsGenRef.current === gen;
+    const abort = new AbortController();
+    ttsAbortRef.current = abort;
     setTtsPlaying(true);
     const cleanup = (url?: string) => {
+      if (url) { try { URL.revokeObjectURL(url); } catch { /* noop */ } }
+      if (!alive()) return;
       setTtsPlaying(false);
       audioRef.current = null;
-      if (url) { try { URL.revokeObjectURL(url); } catch { /* noop */ } }
     };
     try {
       const res = await apiRequest("POST", "/api/tts", { text: text.substring(0, 5000) });
+      if (!alive()) { abort.abort(); return; }
       const MS = (window as unknown as { ManagedMediaSource?: typeof MediaSource }).ManagedMediaSource || window.MediaSource;
       const canStream = MS && typeof MS.isTypeSupported === "function" && MS.isTypeSupported("audio/mpeg") && res.body;
 
@@ -96,38 +114,43 @@ export default function CellPage() {
         audio.onended = () => cleanup(objUrl);
         audio.onerror = () => cleanup(objUrl);
         mediaSource.addEventListener("sourceopen", async () => {
+          const reader = res.body!.getReader();
           try {
             const sb = mediaSource.addSourceBuffer("audio/mpeg");
-            const reader = res.body!.getReader();
-            const queue: Uint8Array[] = [];
-            let streamDone = false;
+            const waitForIdle = () =>
+              new Promise<void>((resolve) => {
+                if (!sb.updating) { resolve(); return; }
+                sb.addEventListener("updateend", () => resolve(), { once: true });
+              });
             let started = false;
-            const pump = () => {
-              if (sb.updating) return;
-              if (queue.length > 0) {
-                try { sb.appendBuffer(queue.shift()! as BufferSource); } catch { /* noop */ }
-              } else if (streamDone) {
-                try { mediaSource.endOfStream(); } catch { /* noop */ }
-              }
-            };
-            sb.addEventListener("updateend", pump);
             for (;;) {
               const { value, done } = await reader.read();
-              if (done) { streamDone = true; pump(); break; }
-              queue.push(value);
+              if (!alive()) { try { reader.cancel(); } catch { /* noop */ } break; }
+              if (done) {
+                await waitForIdle();
+                try { mediaSource.endOfStream(); } catch { /* noop */ }
+                break;
+              }
+              // Backpressure: append one chunk at a time, waiting for the
+              // SourceBuffer to finish before reading more.
+              await waitForIdle();
+              if (!alive()) { try { reader.cancel(); } catch { /* noop */ } break; }
+              sb.appendBuffer(value as BufferSource);
               if (!started) {
                 audio.play().catch(() => {});
                 started = true;
               }
-              pump();
             }
           } catch {
+            try { reader.cancel(); } catch { /* noop */ }
+            try { audio.pause(); } catch { /* noop */ }
             cleanup(objUrl);
           }
         }, { once: true });
       } else {
         // Fallback: whole-blob playback
         const blob = await res.blob();
+        if (!alive()) return;
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;

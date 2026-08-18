@@ -8,6 +8,7 @@ import {
   Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
+import throneDamask from "@/assets/throne-damask.jpg";
 import Connect4Panel from "@/components/connect4-panel";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -336,7 +337,14 @@ export default function ChatPage() {
       <div className="flex-1 flex min-h-0">
         {/* Chat column */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          <div
+            className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
+            style={{
+              backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${throneDamask})`,
+              backgroundSize: "auto, 900px auto",
+              backgroundRepeat: "repeat",
+            }}
+          >
             {messagesLoading && (
               <div className="text-white/30 text-sm text-center py-8">Loading...</div>
             )}

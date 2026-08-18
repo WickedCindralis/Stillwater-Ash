@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
 import Connect4Panel from "@/components/connect4-panel";
+import throneDamask from "@/assets/throne-damask.jpg";
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -153,7 +154,14 @@ export default function CellPage() {
       {showConnect4 && <Connect4Panel onClose={() => setShowConnect4(false)} />}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5">
+      <div
+        className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5"
+        style={{
+          backgroundImage: `linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0.55)), url(${throneDamask})`,
+          backgroundSize: "auto, 600px auto",
+          backgroundRepeat: "repeat",
+        }}
+      >
         {messages.length >= 300 && hasMoreHistory && (
           <div className="text-center py-1">
             <button

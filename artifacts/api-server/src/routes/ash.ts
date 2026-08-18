@@ -241,6 +241,67 @@ router.post("/messages/purge", requireAuth, async (_req, res): Promise<void> => 
   res.json({ removed });
 });
 
+// ── ElevenLabs TTS (streaming, Summer Palace pathing) ──
+// Client POSTs { text }; the server looks up Ash's voice from ash_state and
+// pipes the streaming MP3 straight through. The API key never leaves the server.
+router.post("/tts", requireAuth, async (req, res): Promise<void> => {
+  const { text } = req.body || {};
+  if (!text || typeof text !== "string") {
+    res.status(400).json({ error: "Missing text" });
+    return;
+  }
+  if (text.length > 5000) {
+    res.status(400).json({ error: "Text too long (max 5000 chars)" });
+    return;
+  }
+  const apiKey = process.env["ELEVENLABS_API_KEY"];
+  if (!apiKey) {
+    res.status(503).json({ error: "ElevenLabs API key not configured" });
+    return;
+  }
+  try {
+    const state = await storage.getState();
+    const voiceId = state.voiceId;
+    if (!voiceId) {
+      res.status(400).json({ error: "No voice configured — set a voice ID in settings" });
+      return;
+    }
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?optimize_streaming_latency=3&output_format=mp3_44100_128`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": apiKey,
+          "Content-Type": "application/json",
+          "Accept": "audio/mpeg",
+        },
+        body: JSON.stringify({
+          text,
+          model_id: "eleven_flash_v2_5",
+          voice_settings: { stability: 0.4, similarity_boost: 0.75 },
+        }),
+      },
+    );
+    if (!response.ok || !response.body) {
+      const err = response.body ? await response.text() : "no body";
+      console.error("[tts] ElevenLabs error:", response.status, err.substring(0, 200));
+      res.status(502).json({ error: `TTS failed: ${err.substring(0, 200)}` });
+      return;
+    }
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    const { Readable } = await import("stream");
+    Readable.fromWeb(response.body as never).pipe(res);
+  } catch (e) {
+    console.error("[tts] Error:", e instanceof Error ? e.message : e);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "TTS request failed" });
+    } else {
+      res.end();
+    }
+  }
+});
+
 // ── Diary ──
 // ── Persona packet editor ──
 // Empty override in the DB = fall back to the built-in default in code.

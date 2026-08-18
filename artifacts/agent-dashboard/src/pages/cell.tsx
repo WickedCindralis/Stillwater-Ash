@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState } from "@/lib/types";
 import {
   Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords, CircleDot,
+  Volume2, VolumeX,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
 import Connect4Panel from "@/components/connect4-panel";
@@ -56,6 +57,89 @@ export default function CellPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── Ash's voice (ElevenLabs TTS) ──
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastSpokenIdRef = useRef<number | null>(null);
+
+  const stopSpeaking = useCallback(() => {
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch { /* noop */ }
+      audioRef.current = null;
+    }
+    setTtsPlaying(false);
+  }, []);
+
+  const speak = useCallback(async (text: string) => {
+    if (!text.trim()) return;
+    stopSpeaking();
+    setTtsPlaying(true);
+    const cleanup = (url?: string) => {
+      setTtsPlaying(false);
+      audioRef.current = null;
+      if (url) { try { URL.revokeObjectURL(url); } catch { /* noop */ } }
+    };
+    try {
+      const res = await apiRequest("POST", "/api/tts", { text: text.substring(0, 5000) });
+      const MS = (window as unknown as { ManagedMediaSource?: typeof MediaSource }).ManagedMediaSource || window.MediaSource;
+      const canStream = MS && typeof MS.isTypeSupported === "function" && MS.isTypeSupported("audio/mpeg") && res.body;
+
+      if (canStream) {
+        // Streaming playback — audio starts on the first chunk
+        const mediaSource = new MS();
+        const audio = new Audio();
+        (audio as unknown as { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
+        const objUrl = URL.createObjectURL(mediaSource);
+        audio.src = objUrl;
+        audioRef.current = audio;
+        audio.onended = () => cleanup(objUrl);
+        audio.onerror = () => cleanup(objUrl);
+        mediaSource.addEventListener("sourceopen", async () => {
+          try {
+            const sb = mediaSource.addSourceBuffer("audio/mpeg");
+            const reader = res.body!.getReader();
+            const queue: Uint8Array[] = [];
+            let streamDone = false;
+            let started = false;
+            const pump = () => {
+              if (sb.updating) return;
+              if (queue.length > 0) {
+                try { sb.appendBuffer(queue.shift()! as BufferSource); } catch { /* noop */ }
+              } else if (streamDone) {
+                try { mediaSource.endOfStream(); } catch { /* noop */ }
+              }
+            };
+            sb.addEventListener("updateend", pump);
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) { streamDone = true; pump(); break; }
+              queue.push(value);
+              if (!started) {
+                audio.play().catch(() => {});
+                started = true;
+              }
+              pump();
+            }
+          } catch {
+            cleanup(objUrl);
+          }
+        }, { once: true });
+      } else {
+        // Fallback: whole-blob playback
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        audio.onended = () => cleanup(url);
+        audio.onerror = () => cleanup(url);
+        try { await audio.play(); } catch { cleanup(url); }
+      }
+    } catch {
+      cleanup();
+    }
+  }, [stopSpeaking]);
+
   const { data: state } = useQuery<AshState>({
     queryKey: ["/api/state"],
     refetchInterval: 20_000,
@@ -103,6 +187,28 @@ export default function CellPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
+  // Auto-speak new Ash replies while the voice toggle is on.
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const last = messages[messages.length - 1]!;
+    if (lastSpokenIdRef.current === null) {
+      // First load — don't speak history, just remember where we are.
+      lastSpokenIdRef.current = last.id;
+      return;
+    }
+    if (ttsEnabled && last.role === "ash" && last.content && last.id !== lastSpokenIdRef.current) {
+      lastSpokenIdRef.current = last.id;
+      speak(last.content);
+    } else if (last.id > (lastSpokenIdRef.current ?? 0)) {
+      lastSpokenIdRef.current = last.id;
+    }
+  }, [messages, ttsEnabled, speak]);
+
+  // Stop any playback when the voice toggle is switched off.
+  useEffect(() => {
+    if (!ttsEnabled) stopSpeaking();
+  }, [ttsEnabled, stopSpeaking]);
+
   const handleSend = () => {
     const content = message.trim();
     if (!content && !pendingImage) return;
@@ -141,6 +247,18 @@ export default function CellPage() {
           </div>
         </div>
         <div className="flex items-center">
+          <button
+            onClick={() => setTtsEnabled((v) => !v)}
+            className={`p-2 rounded-lg transition-colors ${
+              ttsEnabled
+                ? `text-gold bg-gold/10 hover:bg-gold/20 ${ttsPlaying ? "animate-pulse" : ""}`
+                : "text-white/50 hover:text-gold hover:bg-white/5"
+            }`}
+            data-testid="button-cell-tts"
+            title={ttsEnabled ? "Ash's voice ON" : "Ash's voice OFF"}
+          >
+            {ttsEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+          </button>
           <button
             onClick={() => setShowChess(true)}
             className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"

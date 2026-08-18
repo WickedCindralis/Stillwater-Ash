@@ -43,21 +43,31 @@ const WICKED_STATUS_ACTIVE: Record<string, string> = {
   offline: "bg-white/15 text-white/70 border-white/30",
 };
 
+// The date lives in a per-day divider above the messages; each bubble keeps
+// only the direction + time of day.
 function messageStamp(m: AshMessage): string {
   const who = m.role === "wicked" ? "Wicked→Ash_Cindralis" : "Ash_Cindralis→Wicked";
   if (!m.createdAt) return who;
-  const stamp = new Date(m.createdAt)
-    .toLocaleString("en-US", {
-      timeZone: "America/New_York",
-      month: "2-digit",
-      day: "2-digit",
-      year: "2-digit",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    })
-    .replace(",", "");
+  const stamp = new Date(m.createdAt).toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
   return `${who} ${stamp}`;
+}
+
+// Day divider label, e.g. "Aug 18 26" (Eastern).
+function dayStamp(m: AshMessage): string {
+  if (!m.createdAt) return "";
+  return new Date(m.createdAt)
+    .toLocaleDateString("en-US", {
+      timeZone: "America/New_York",
+      month: "short",
+      day: "numeric",
+      year: "2-digit",
+    })
+    .replace(/,/g, "");
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -365,9 +375,16 @@ export default function ChatPage() {
                 </button>
               </div>
             )}
-            {allMessages.map((m) => (
+            {allMessages.map((m, i) => (
+              <div key={m.id}>
+                {(i === 0 || dayStamp(allMessages[i - 1]!) !== dayStamp(m)) && dayStamp(m) && (
+                  <div className="flex items-center gap-3 py-2" data-testid={`day-divider-${m.id}`}>
+                    <div className="flex-1 h-px bg-gold/15" />
+                    <span className="text-xs text-gold/60 font-serif tracking-wide">{dayStamp(m)}</span>
+                    <div className="flex-1 h-px bg-gold/15" />
+                  </div>
+                )}
               <div
-                key={m.id}
                 className={`flex ${m.role === "wicked" ? "justify-end" : "justify-start"}`}
                 data-testid={`message-${m.id}`}
               >
@@ -396,6 +413,7 @@ export default function ChatPage() {
                   )}
                   {m.content && <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>}
                 </div>
+              </div>
               </div>
             ))}
             {sendMutation.isPending && (

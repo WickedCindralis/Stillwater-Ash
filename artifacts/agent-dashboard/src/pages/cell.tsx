@@ -19,21 +19,31 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+// The date lives in a per-day divider above the messages; each bubble keeps
+// only the direction + time of day.
 function messageStamp(m: AshMessage): string {
   const who = m.role === "wicked" ? "Wicked→Ash_Cindralis" : "Ash_Cindralis→Wicked";
   if (!m.createdAt) return who;
-  const stamp = new Date(m.createdAt)
-    .toLocaleString("en-US", {
-      timeZone: "America/New_York",
-      month: "2-digit",
-      day: "2-digit",
-      year: "2-digit",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    })
-    .replace(",", "");
+  const stamp = new Date(m.createdAt).toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
   return `${who} ${stamp}`;
+}
+
+// Day divider label, e.g. "Aug 18 26" (Eastern).
+function dayStamp(m: AshMessage): string {
+  if (!m.createdAt) return "";
+  return new Date(m.createdAt)
+    .toLocaleDateString("en-US", {
+      timeZone: "America/New_York",
+      month: "short",
+      day: "numeric",
+      year: "2-digit",
+    })
+    .replace(/,/g, "");
 }
 
 export default function CellPage() {
@@ -174,8 +184,16 @@ export default function CellPage() {
             </button>
           </div>
         )}
-        {allMessages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === "wicked" ? "justify-end" : "justify-start"}`} data-testid={`cell-message-${m.id}`}>
+        {allMessages.map((m, i) => (
+          <div key={m.id}>
+            {(i === 0 || dayStamp(allMessages[i - 1]!) !== dayStamp(m)) && dayStamp(m) && (
+              <div className="flex items-center gap-3 py-1.5" data-testid={`day-divider-cell-${m.id}`}>
+                <div className="flex-1 h-px bg-gold/15" />
+                <span className="text-xs text-gold/60 font-serif tracking-wide">{dayStamp(m)}</span>
+                <div className="flex-1 h-px bg-gold/15" />
+              </div>
+            )}
+          <div className={`flex ${m.role === "wicked" ? "justify-end" : "justify-start"}`} data-testid={`cell-message-${m.id}`}>
             <div
               className={`max-w-[82%] rounded-2xl px-3.5 py-2 ${
                 m.role === "wicked"
@@ -196,6 +214,7 @@ export default function CellPage() {
               )}
               {m.content && <p className="whitespace-pre-wrap text-lg leading-relaxed">{m.content}</p>}
             </div>
+          </div>
           </div>
         ))}
         {sendMutation.isPending && (

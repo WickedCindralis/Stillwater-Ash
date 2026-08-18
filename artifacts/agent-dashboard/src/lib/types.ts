@@ -14,6 +14,22 @@ export interface AshState {
   voiceId: string;
   wickedStatus: string;
   wickedStatusMessage: string;
+  tiktokUsername: string;
+}
+
+export interface HeraldComment {
+  id: number;
+  commentId: string;
+  videoId: string;
+  videoDesc: string;
+  videoUrl: string;
+  author: string;
+  text: string;
+  commentCreatedAt: string | null;
+  fetchedAt: string;
+  status: "new" | "answered" | "ignored" | "saved";
+  draft: string;
+  seenByAsh: number;
 }
 
 export interface AshActivity {

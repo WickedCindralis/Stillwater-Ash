@@ -431,8 +431,33 @@ RULES FOR YOUR REPLY:
 
   // ── Public entry: Wicked sends a private message ──
   async handleWickedMessage(content: string, imageDataUrl?: string, requestImage = false): Promise<{ text: string; imageUrl: string }> {
-    const prompt = maybeAddImageInstruction(content, requestImage);
-    const rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl);
+    let prompt = maybeAddImageInstruction(content, requestImage);
+    // Court Herald: sweep the TikTok walls (cooldown-limited) and route any
+    // fresh comments to Ash inside this same live call. Comments are claimed
+    // atomically and released again if the model call fails, so none are lost.
+    let heraldIds: number[] = [];
+    let releaseClaim: ((ids: number[]) => Promise<void>) | null = null;
+    try {
+      const { sweepTheWalls, claimHeraldPacket, releaseHeraldClaim } = await import("./herald");
+      await sweepTheWalls();
+      const { packet, ids } = await claimHeraldPacket();
+      if (packet) {
+        prompt = `${packet}\n\n[Wicked's message follows]\n${prompt}`;
+        heraldIds = ids;
+        releaseClaim = releaseHeraldClaim;
+      }
+    } catch (e) {
+      this.error("herald sweep failed:", e instanceof Error ? e.message : String(e));
+    }
+    let rawReply = "";
+    try {
+      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl);
+    } finally {
+      if (!rawReply && heraldIds.length > 0 && releaseClaim) {
+        // Kill switch / API failure — Ash never saw the comments; put them back.
+        await releaseClaim(heraldIds).catch(() => {});
+      }
+    }
     if (!rawReply) return { text: "", imageUrl: "" }; // kill switch engaged
     const cleaned = await this.parseAll(rawReply);
     const { text, imageUrl } = await processImageRequest({ requestImage, cleanedReply: cleaned });

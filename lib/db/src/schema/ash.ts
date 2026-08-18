@@ -40,6 +40,25 @@ export const ashState = pgTable("ash_state", {
   personaIdentity: text("persona_identity").notNull().default(""),
   personaSoulSheet: text("persona_soul_sheet").notNull().default(""),
   personaCoreAnchors: text("persona_core_anchors").notNull().default(""),
+  // Court Herald: TikTok account to watch (read-only, via scraper service).
+  tiktokUsername: text("tiktok_username").notNull().default(""),
+});
+
+// Court Herald: TikTok comments fetched read-only from a scraper service.
+// Status is Wicked's triage: "new" | "answered" | "ignored" | "saved".
+export const ashTiktokComments = pgTable("ash_tiktok_comments", {
+  id: serial("id").primaryKey(),
+  commentId: text("comment_id").notNull().unique(),
+  videoId: text("video_id").notNull(),
+  videoDesc: text("video_desc").notNull().default(""),
+  videoUrl: text("video_url").notNull().default(""),
+  author: text("author").notNull().default(""),
+  text: text("text").notNull(),
+  commentCreatedAt: timestamp("comment_created_at"),
+  fetchedAt: timestamp("fetched_at").notNull().defaultNow(),
+  status: text("status").notNull().default("new"),
+  draft: text("draft").notNull().default(""),
+  seenByAsh: integer("seen_by_ash").notNull().default(0),
 });
 
 export const ashMessages = pgTable("ash_messages", {
@@ -151,6 +170,7 @@ export const updateSettingsSchema = z.object({
   voiceId: z.string().optional(),
   wickedStatus: z.enum(["online", "away", "busy", "asleep", "offline"]).optional(),
   wickedStatusMessage: z.string().max(500).optional(),
+  tiktokUsername: z.string().max(100).optional(),
 });
 export type UpdateSettingsPayload = z.infer<typeof updateSettingsSchema>;
 
@@ -163,3 +183,12 @@ export const updatePersonaSchema = z.object({
   coreAnchors: z.string().max(PERSONA_SECTION_MAX).optional(),
 });
 export type UpdatePersonaPayload = z.infer<typeof updatePersonaSchema>;
+
+// Court Herald
+export type AshTiktokComment = typeof ashTiktokComments.$inferSelect;
+export type InsertTiktokComment = Omit<AshTiktokComment, "id" | "fetchedAt" | "status" | "draft" | "seenByAsh">;
+export const updateHeraldCommentSchema = z.object({
+  status: z.enum(["new", "answered", "ignored", "saved"]).optional(),
+  draft: z.string().max(4000).optional(),
+});
+export type UpdateHeraldCommentPayload = z.infer<typeof updateHeraldCommentSchema>;

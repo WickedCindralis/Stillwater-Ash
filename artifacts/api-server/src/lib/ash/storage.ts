@@ -14,6 +14,8 @@ import {
   type AshDiaryEntry,
   type InsertDiaryEntry,
   type AshActivity,
+  ashTiktokComments,
+  type AshTiktokComment,
 } from "@workspace/db";
 import { eq, desc, inArray, and, like, lt } from "drizzle-orm";
 
@@ -47,6 +49,13 @@ export interface IStorage {
     id: number,
     patch: Partial<Omit<AshConnect4Game, "id" | "createdAt">>,
   ): Promise<AshConnect4Game>;
+  listTiktokComments(limit?: number): Promise<AshTiktokComment[]>;
+  updateTiktokComment(
+    id: number,
+    patch: Partial<Pick<AshTiktokComment, "status" | "draft">>,
+  ): Promise<AshTiktokComment | null>;
+  claimUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]>;
+  releaseTiktokCommentsClaim(ids: number[]): Promise<void>;
 }
 
 export class DbStorage implements IStorage {
@@ -258,7 +267,60 @@ export class DbStorage implements IStorage {
       .returning();
     return rows[0]!;
   }
+
+  // ── Court Herald (TikTok comments, read-only) ──
+  async listTiktokComments(limit = 500): Promise<AshTiktokComment[]> {
+    return db
+      .select()
+      .from(ashTiktokComments)
+      .orderBy(desc(ashTiktokComments.commentCreatedAt), desc(ashTiktokComments.id))
+      .limit(limit);
+  }
+
+  async updateTiktokComment(
+    id: number,
+    patch: Partial<Pick<AshTiktokComment, "status" | "draft">>,
+  ): Promise<AshTiktokComment | null> {
+    const rows = await db
+      .update(ashTiktokComments)
+      .set(patch)
+      .where(eq(ashTiktokComments.id, id))
+      .returning();
+    return rows[0] ?? null;
+  }
+
+  // Atomically claim unseen comments for delivery to Ash: the UPDATE ...
+  // WHERE seen_by_ash = 0 RETURNING guarantees two concurrent messages can't
+  // both grab the same rows.
+  async claimUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]> {
+    const candidates = await db
+      .select({ id: ashTiktokComments.id })
+      .from(ashTiktokComments)
+      .where(eq(ashTiktokComments.seenByAsh, 0))
+      .orderBy(ashTiktokComments.id)
+      .limit(limit);
+    if (candidates.length === 0) return [];
+    const rows = await db
+      .update(ashTiktokComments)
+      .set({ seenByAsh: 1 })
+      .where(and(
+        inArray(ashTiktokComments.id, candidates.map((c) => c.id)),
+        eq(ashTiktokComments.seenByAsh, 0),
+      ))
+      .returning();
+    return rows.sort((a, b) => a.id - b.id);
+  }
+
+  // Delivery failed — put the comments back so the next message carries them.
+  async releaseTiktokCommentsClaim(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    await db
+      .update(ashTiktokComments)
+      .set({ seenByAsh: 0 })
+      .where(inArray(ashTiktokComments.id, ids));
+  }
 }
 
 export const storage = new DbStorage();
+
 

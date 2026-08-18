@@ -5,7 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
-  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
 import throneDamask from "@/assets/throne-damask.jpg";
@@ -249,6 +249,14 @@ export default function ChatPage() {
             <Trash2 className="w-4 h-4" />
             <span className="hidden sm:inline">Purge</span>
           </button>
+          <Link
+            href="/herald"
+            className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+            data-testid="link-herald"
+            title="The Court Herald (TikTok comments)"
+          >
+            <Megaphone className="w-5 h-5" />
+          </Link>
           <Link
             href="/persona"
             className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"

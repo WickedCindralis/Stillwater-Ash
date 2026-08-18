@@ -5,7 +5,8 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
+import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
@@ -307,6 +308,55 @@ router.post("/tts", requireAuth, async (req, res): Promise<void> => {
       res.end();
     }
   }
+});
+
+// ── Court Herald (TikTok comments, read-only) ──
+router.get("/herald/comments", requireAuth, async (_req, res): Promise<void> => {
+  const comments = await storage.listTiktokComments();
+  const state = await storage.getState();
+  res.json({
+    comments,
+    tiktokUsername: state.tiktokUsername,
+    scraperConfigured: !!process.env["SCRAPECREATORS_API_KEY"],
+  });
+});
+
+router.patch("/herald/comments/:id", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Bad comment id" });
+    return;
+  }
+  const parsed = updateHeraldCommentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
+    return;
+  }
+  const updated = await storage.updateTiktokComment(id, parsed.data);
+  if (!updated) {
+    res.status(404).json({ error: "Comment not found" });
+    return;
+  }
+  res.json(updated);
+});
+
+router.post("/herald/refresh", requireAuth, async (_req, res): Promise<void> => {
+  if (!process.env["SCRAPECREATORS_API_KEY"]) {
+    res.status(503).json({ error: "Scraper API key not configured" });
+    return;
+  }
+  const state = await storage.getState();
+  if (!state.tiktokUsername.trim()) {
+    res.status(400).json({ error: "No TikTok username set — give the Herald a name to watch" });
+    return;
+  }
+  const waitMs = manualSweepWaitMs();
+  if (waitMs > 0) {
+    res.status(429).json({ error: `The Herald just swept — try again in ${Math.ceil(waitMs / 1000)}s` });
+    return;
+  }
+  const added = await sweepTheWalls(true);
+  res.json({ added });
 });
 
 // ── Diary ──

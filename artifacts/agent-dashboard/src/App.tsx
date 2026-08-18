@@ -8,6 +8,7 @@ import CellPage from "./pages/cell";
 import ActivityPage from "./pages/activity";
 import NorthflankPage from "./pages/northflank";
 import PersonaPage from "./pages/persona";
+import HeraldPage from "./pages/herald";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { data, isLoading } = useQuery<{ authenticated: boolean }>({
@@ -42,6 +43,11 @@ function Router() {
       <Route path="/ash">
         <AuthGate>
           <ChatPage />
+        </AuthGate>
+      </Route>
+      <Route path="/herald">
+        <AuthGate>
+          <HeraldPage />
         </AuthGate>
       </Route>
       <Route path="/persona">

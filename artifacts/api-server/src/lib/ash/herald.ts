@@ -133,7 +133,7 @@ export async function sweepTheWalls(force = false): Promise<number> {
  * delivered on the next message instead of being silently lost.
  */
 export async function claimHeraldPacket(): Promise<{ packet: string; ids: number[] }> {
-  const claimed = await storage.claimUnseenTiktokComments(40);
+  const claimed = await storage.claimUnseenTiktokComments(10);
   if (claimed.length === 0) return { packet: "", ids: [] };
   const sanitize = (s: string, max: number) => s.replace(/\s+/g, " ").trim().substring(0, max);
   const byVideo = new Map<string, typeof claimed>();

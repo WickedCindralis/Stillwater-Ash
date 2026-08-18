@@ -422,10 +422,39 @@ RULES FOR YOUR REPLY:
     return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
+  // HERALD <id>: <text> lines — Ash suggesting a TikTok reply draft for
+  // Wicked to copy out by hand. Saved to the Herald's draft boxes (only if
+  // empty; never clobbers Wicked's own writing). Lines are stripped from the
+  // visible reply.
+  private async parseHeraldDrafts(reply: string): Promise<string> {
+    if (!reply || !/^\s*HERALD\s*#?\d+\s*:/im.test(reply)) return reply;
+    const kept: string[] = [];
+    let saved = 0;
+    for (const line of reply.split("\n")) {
+      const m = line.match(/^\s*HERALD\s*#?(\d+)\s*:\s*(.+)$/i);
+      if (m) {
+        try {
+          const { saveAshDraft } = await import("./herald");
+          if (await saveAshDraft(parseInt(m[1], 10), m[2])) saved++;
+        } catch (e) {
+          this.error("Failed to save herald draft:", e);
+        }
+        continue;
+      }
+      kept.push(line);
+    }
+    if (saved > 0) {
+      this.log(`Herald drafts saved: ${saved}`);
+      await storage.logActivity("herald", `Ash drafted ${saved} TikTok repl${saved === 1 ? "y" : "ies"}`).catch(() => {});
+    }
+    return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+
   private async parseAll(reply: string): Promise<string> {
     let cleaned = await this.parseStatusChanges(reply);
     cleaned = await this.parsePingToggles(cleaned);
     cleaned = await this.parseDiaryEntries(cleaned);
+    cleaned = await this.parseHeraldDrafts(cleaned);
     return cleaned;
   }
 

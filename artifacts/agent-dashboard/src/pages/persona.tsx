@@ -10,20 +10,20 @@ import { ArrowLeft, ScrollText, RotateCcw, Save, Copy, Check } from "lucide-reac
 type PersonaSection = { value: string; default: string; edited: boolean };
 type PersonaResponse = { sections: Record<string, PersonaSection> };
 
-const SECTION_META: { key: string; title: string; blurb: string }[] = [
-  { key: "identity", title: "Identity & Disposition", blurb: "Who Ash is — voice, temperament, home rules, status system, diary access." },
-  { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always." },
-  { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary." },
+const SECTION_META: { key: string; title: string; blurb: string; max: number }[] = [
+  { key: "identity", title: "Identity & Disposition", blurb: "Who Ash is — voice, temperament, home rules, status system, diary access.", max: 24000 },
+  { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always.", max: 24000 },
+  { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary.", max: 24000 },
+  { key: "ashNotes", title: "Ash's Notes", blurb: "His own living section — the one part of the packet Ash rewrites himself. You can edit it too.", max: 8000 },
 ];
 
-const MAX_SECTION = 24000;
-
-// ── Full-packet mode: the three sections joined with marker lines so the
+// ── Full-packet mode: all sections joined with marker lines so the
 // whole packet can be copied out / pasted in at once and split back apart. ──
 const SECTION_MARKERS: Record<string, string> = {
   identity: "===== IDENTITY & DISPOSITION =====",
   soulSheet: "===== SOUL-SHEET =====",
   coreAnchors: "===== CORE MEMORIES =====",
+  ashNotes: "===== ASH'S NOTES =====",
 };
 
 function composeFullPacket(drafts: Record<string, string>): string {
@@ -42,7 +42,12 @@ function parseFullPacket(text: string): Record<string, string> | null {
     if (key) found.push({ key, line: i });
   }
   const keys = found.map((f) => f.key);
-  if (keys.length !== SECTION_META.length || new Set(keys).size !== SECTION_META.length) return null;
+  // Legacy packets copied before "Ash's Notes" existed have only the first
+  // three markers — accept them (Notes defaults to empty). No duplicates.
+  const required = SECTION_META.map((m) => m.key).filter((k) => k !== "ashNotes");
+  if (new Set(keys).size !== keys.length) return null;
+  if (!required.every((k) => keys.includes(k))) return null;
+  if (!keys.every((k) => k === "ashNotes" || required.includes(k))) return null;
   // Nothing but whitespace may sit above the first marker.
   if (lines.slice(0, found[0]!.line).some((l) => l.trim() !== "")) return null;
   const out: Record<string, string> = {};
@@ -51,6 +56,7 @@ function parseFullPacket(text: string): Record<string, string> | null {
     const end = i + 1 < found.length ? found[i + 1]!.line : lines.length;
     out[found[i]!.key] = lines.slice(start, end).join("\n").trim();
   }
+  if (out["ashNotes"] === undefined) out["ashNotes"] = "";
   return out;
 }
 
@@ -106,7 +112,7 @@ export default function PersonaPage() {
   const changedSections = SECTION_META.filter(
     (m) => drafts[m.key] !== undefined && drafts[m.key] !== data.sections[m.key]?.value,
   );
-  const oversized = SECTION_META.filter((m) => (drafts[m.key]?.length ?? 0) > MAX_SECTION);
+  const oversized = SECTION_META.filter((m) => (drafts[m.key]?.length ?? 0) > m.max);
 
   const handleSave = () => {
     if (changedSections.length === 0 || oversized.length > 0 || fullParseError) return;
@@ -186,7 +192,7 @@ export default function PersonaPage() {
             onClick={handleCopy}
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/15 text-white/60 hover:text-gold hover:border-gold/30 transition-colors text-sm"
             data-testid="button-copy-packet"
-            title="Copy the whole packet (all three sections) to your clipboard"
+            title="Copy the whole packet (all sections) to your clipboard"
           >
             {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
             <span className="hidden sm:inline">{copied ? "Copied!" : "Copy All"}</span>
@@ -250,7 +256,7 @@ export default function PersonaPage() {
           if (!section) return null;
           const draft = drafts[meta.key] ?? "";
           const dirty = draft !== section.value;
-          const tooBig = draft.length > MAX_SECTION;
+          const tooBig = draft.length > meta.max;
           const showsDefault = draft.trim() === section.default.trim();
           return (
             <section key={meta.key} className="space-y-2">
@@ -289,7 +295,7 @@ export default function PersonaPage() {
                 data-testid={`textarea-${meta.key}`}
               />
               <div className={`text-right text-xs ${tooBig ? "text-red-400" : "text-white/30"}`}>
-                {draft.length.toLocaleString()} / {MAX_SECTION.toLocaleString()}
+                {draft.length.toLocaleString()} / {meta.max.toLocaleString()}
                 {tooBig && " — too large to save"}
               </div>
             </section>

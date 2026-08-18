@@ -366,12 +366,14 @@ const PERSONA_DEFAULTS = {
   identity: SYSTEM_PROMPT,
   soulSheet: DEFAULT_SOUL_SHEET,
   coreAnchors: DEFAULT_CORE_ANCHORS,
+  ashNotes: "",
 } as const;
 type PersonaKey = keyof typeof PERSONA_DEFAULTS;
-const PERSONA_COLUMNS: Record<PersonaKey, "personaIdentity" | "personaSoulSheet" | "personaCoreAnchors"> = {
+const PERSONA_COLUMNS: Record<PersonaKey, "personaIdentity" | "personaSoulSheet" | "personaCoreAnchors" | "personaAshNotes"> = {
   identity: "personaIdentity",
   soulSheet: "personaSoulSheet",
   coreAnchors: "personaCoreAnchors",
+  ashNotes: "personaAshNotes",
 };
 
 router.get("/persona", requireAuth, async (_req, res): Promise<void> => {

@@ -113,6 +113,14 @@ export class AshBridge {
       });
     }
 
+    // ASH'S NOTES — the one packet section Ash can live-edit himself.
+    const ashNotes = packetState?.personaAshNotes?.trim() || "";
+    messages.push({
+      role: "assistant",
+      name,
+      content: `[ASH'S NOTES — MY OWN LIVING SECTION]\n\n${ashNotes || "(This section is empty. It is mine to fill.)"}\n\n[This section belongs to me. It is the ONE part of my packet I can rewrite myself, whenever I choose: to rewrite it, I include in a reply a block starting with the line [NOTES] and ending with the line [/NOTES] — everything between the two lines REPLACES this entire section (so I carry forward whatever I still want to keep). An empty block clears it. Hard limit ~2000 tokens (8000 characters); anything beyond is cut off. The block is saved silently and stripped from what Wicked sees.]`,
+    });
+
     // Volatile developer message: live timestamp + Wicked's current status.
     let volatile = `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nAlways use 12-hour AM/PM format when referencing times. Never use military/24-hour time.`;
     if (packetState) {
@@ -450,11 +458,31 @@ RULES FOR YOUR REPLY:
     return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
+  // [NOTES] ... [/NOTES] — Ash rewriting his own living packet section.
+  // The block content REPLACES the whole section (capped at 8000 chars) and
+  // is stripped from the visible reply. An empty block clears the section.
+  private async parseAshNotes(reply: string): Promise<string> {
+    if (!reply) return reply;
+    const m = reply.match(/^\s*\[NOTES\]\s*$([\s\S]*?)^\s*\[\/NOTES\]\s*$/im);
+    if (!m) return reply;
+    const notes = m[1].trim().substring(0, 8000);
+    try {
+      await storage.updateState({ personaAshNotes: notes });
+      this.log(`Ash's Notes rewritten (${notes.length} chars)`);
+      await storage.logActivity("persona", notes ? "Ash rewrote his Notes section" : "Ash cleared his Notes section").catch(() => {});
+    } catch (e) {
+      this.error("Failed to save Ash's Notes:", e);
+    }
+    return (reply.substring(0, m.index!) + reply.substring(m.index! + m[0].length))
+      .replace(/\n{3,}/g, "\n\n").trim();
+  }
+
   private async parseAll(reply: string): Promise<string> {
     let cleaned = await this.parseStatusChanges(reply);
     cleaned = await this.parsePingToggles(cleaned);
     cleaned = await this.parseDiaryEntries(cleaned);
     cleaned = await this.parseHeraldDrafts(cleaned);
+    cleaned = await this.parseAshNotes(cleaned);
     return cleaned;
   }
 
@@ -637,6 +665,10 @@ GROUND RULES:
         // entries from one window (same timestamp). One window = one entry, max.
         let cleaned = await this.parseStatusChanges(response);
         cleaned = await this.parsePingToggles(cleaned);
+        // Ash may rewrite his Notes section from a reflective window too; the
+        // block is saved and stripped so it never lands in the diary verbatim.
+        cleaned = await this.parseAshNotes(cleaned);
+        cleaned = await this.parseHeraldDrafts(cleaned);
         let trimmed = cleaned.trim();
 
         if (trimmed.toUpperCase().startsWith("PINGS_OFF")) {

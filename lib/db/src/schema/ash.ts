@@ -40,6 +40,9 @@ export const ashState = pgTable("ash_state", {
   personaIdentity: text("persona_identity").notNull().default(""),
   personaSoulSheet: text("persona_soul_sheet").notNull().default(""),
   personaCoreAnchors: text("persona_core_anchors").notNull().default(""),
+  // ASH'S NOTES: the one packet section Ash himself can live-edit (via
+  // [NOTES]...[/NOTES] blocks in his replies). Capped at ~2k tokens.
+  personaAshNotes: text("persona_ash_notes").notNull().default(""),
   // Court Herald: TikTok account to watch (read-only, via scraper service).
   tiktokUsername: text("tiktok_username").notNull().default(""),
 });
@@ -177,10 +180,13 @@ export type UpdateSettingsPayload = z.infer<typeof updateSettingsSchema>;
 // Persona packet editor. Each section is capped so an oversized packet can't
 // blow up the model's context window. Empty string = restore built-in default.
 export const PERSONA_SECTION_MAX = 24000;
+// ASH'S NOTES is capped at ~2k tokens (≈4 chars/token).
+export const ASH_NOTES_MAX = 8000;
 export const updatePersonaSchema = z.object({
   identity: z.string().max(PERSONA_SECTION_MAX).optional(),
   soulSheet: z.string().max(PERSONA_SECTION_MAX).optional(),
   coreAnchors: z.string().max(PERSONA_SECTION_MAX).optional(),
+  ashNotes: z.string().max(ASH_NOTES_MAX).optional(),
 });
 export type UpdatePersonaPayload = z.infer<typeof updatePersonaSchema>;
 

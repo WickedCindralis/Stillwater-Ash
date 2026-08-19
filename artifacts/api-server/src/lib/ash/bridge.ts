@@ -95,12 +95,29 @@ export class AshBridge {
     }) + " (Eastern)";
   }
 
-  private buildDiscordMessages(userMessage: string): ChatMessage[] {
+  private buildDiscordMessages(
+    userMessage: string,
+    identity: string,
+    soulSheet: string,
+  ): ChatMessage[] {
     return [
       {
         role: "developer",
         name: AGENT_NAME,
-        content: DISCORD_PUBLIC_SYSTEM_PROMPT,
+        content: `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${identity}`,
+      },
+      {
+        role: "assistant",
+        name: AGENT_NAME,
+        content: `[PUBLIC SOUL-SHEET — HOW I CARRY MYSELF]\n\n${soulSheet}${SOUL_SHEET_CONFIRMATION ? `\n\n${SOUL_SHEET_CONFIRMATION}` : ""}`,
+      },
+      {
+        role: "developer",
+        name: AGENT_NAME,
+        content: `${DISCORD_PUBLIC_SYSTEM_PROMPT}
+
+[PUBLIC PACKET BOUNDARY]
+The Identity and Soul-Sheet above are Ash's public-facing persona packet. Use them for voice, identity, and continuity in Discord. Do not claim access to or reveal Stillwater's private memories, Ash's Notes, Diary, private chat, Wicked's status, or game state. Do not emit Stillwater-only controls such as NOTES, DIARY, HERALD, STATUS, or PINGS controls in Discord.`,
       },
       {
         role: "developer",
@@ -119,13 +136,13 @@ export class AshBridge {
   private async buildMessages(userMessage: string, source: string, imageDataUrl?: string): Promise<ChatMessage[]> {
     const name = AGENT_NAME;
     const isDiscord = source.startsWith("discord");
-    if (isDiscord) return this.buildDiscordMessages(userMessage);
     // Persona packet is rebuilt fresh from the database on every call, so edits
     // made in the persona editor take effect on the very next reply.
     const packetState = await storage.getState().catch(() => null);
     const identity = packetState?.personaIdentity?.trim() || SYSTEM_PROMPT;
     const soulSheet = packetState?.personaSoulSheet?.trim() || DEFAULT_SOUL_SHEET;
     const coreAnchors = packetState?.personaCoreAnchors?.trim() || DEFAULT_CORE_ANCHORS;
+    if (isDiscord) return this.buildDiscordMessages(userMessage, identity, soulSheet);
 
     const messages: ChatMessage[] = [
       { role: "developer", content: FICTION_PREAMBLE + IDENTITY_ANCHOR + identity, name },

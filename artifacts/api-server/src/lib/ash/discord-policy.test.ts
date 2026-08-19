@@ -109,6 +109,17 @@ test("a queued member call is processed while private pings are paused", async (
   assert.equal(delivered, true);
 });
 
+test("the Discord bridge switch blocks queued processing independently", () => {
+  assert.equal(
+    discordBatchEnabled({ apiKillSwitch: 0, discordKillSwitch: 1, selfPromptPaused: 0 }),
+    false,
+  );
+  assert.equal(
+    discordBatchEnabled({ apiKillSwitch: 0, discordKillSwitch: 0, selfPromptPaused: 1 }),
+    true,
+  );
+});
+
 test("Discord continuity carries Wicked memory and stays within the 5k context budget", () => {
   const call = {
     id: 501,

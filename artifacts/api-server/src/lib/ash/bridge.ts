@@ -437,7 +437,7 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
 
     const state = await storage.getState();
     if (state.apiKillSwitch === 1 || (source.startsWith("discord") && state.discordKillSwitch === 1)) {
-      this.log(`[KILL-SWITCH] API kill switch engaged — skipping ${source} call`);
+      this.log(`[KILL-SWITCH] ${source} call skipped`);
       return "";
     }
 
@@ -741,7 +741,12 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
         "discord_owner",
       );
       if (!rawReply) {
-        await storage.requeueDiscordMessages([message.id], leaseId);
+        const currentState = await storage.getState();
+        if (currentState.discordKillSwitch === 1) {
+          await storage.markDiscordMessagesSkipped([message.id], leaseId);
+        } else {
+          await storage.requeueDiscordMessages([message.id], leaseId);
+        }
         return;
       }
       await this.parseDiscordDrafts(rawReply, allowed, leaseId);

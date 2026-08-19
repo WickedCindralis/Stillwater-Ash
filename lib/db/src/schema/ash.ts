@@ -7,6 +7,7 @@ import {
   varchar,
   json,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -63,6 +64,53 @@ export const ashTiktokComments = pgTable("ash_tiktok_comments", {
   draft: text("draft").notNull().default(""),
   seenByAsh: integer("seen_by_ash").notNull().default(0),
 });
+
+// Discord Court Herald: Wicked explicitly selects these halls. No Discord
+// message is retained or delivered to Ash unless its channel appears here.
+export const ashDiscordChannels = pgTable(
+  "ash_discord_channels",
+  {
+    id: serial("id").primaryKey(),
+    guildId: text("guild_id").notNull(),
+    guildName: text("guild_name").notNull().default(""),
+    channelId: text("channel_id").notNull(),
+    channelName: text("channel_name").notNull().default(""),
+    selectedAt: timestamp("selected_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ash_discord_channels_channel_id_unique").on(table.channelId),
+    index("ash_discord_channels_guild_id_idx").on(table.guildId),
+  ],
+);
+
+// Bounded public Discord evidence and delivery state. `id` is an internal
+// packet identifier; Discord message IDs are never model-authorized directly.
+export const ashDiscordMessages = pgTable(
+  "ash_discord_messages",
+  {
+    id: serial("id").primaryKey(),
+    discordMessageId: text("discord_message_id").notNull().unique(),
+    guildId: text("guild_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    channelName: text("channel_name").notNull().default(""),
+    authorId: text("author_id").notNull(),
+    authorName: text("author_name").notNull().default(""),
+    content: text("content").notNull(),
+    kind: text("kind").notNull().default("context"), // context | call | owner_call
+    deliveryStatus: text("delivery_status").notNull().default("context"), // context | queued | processing | sending | replied | skipped | failed
+    deliveryLeaseId: text("delivery_lease_id").notNull().default(""),
+    deliveryLeaseExpiresAt: timestamp("delivery_lease_expires_at"),
+    replyDiscordMessageId: text("reply_discord_message_id").notNull().default(""),
+    deliveryError: text("delivery_error").notNull().default(""),
+    createdAt: timestamp("created_at").notNull(),
+    recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("ash_discord_messages_channel_created_idx").on(table.channelId, table.createdAt),
+    index("ash_discord_messages_delivery_idx").on(table.deliveryStatus, table.id),
+  ],
+);
 
 export const ashMessages = pgTable("ash_messages", {
   id: serial("id").primaryKey(),
@@ -136,6 +184,8 @@ export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type AshDiaryEntry = typeof ashDiaryEntries.$inferSelect;
 export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
 export type AshActivity = typeof ashActivity.$inferSelect;
+export type AshDiscordChannel = typeof ashDiscordChannels.$inferSelect;
+export type AshDiscordMessage = typeof ashDiscordMessages.$inferSelect;
 
 export type AshChessGame = typeof ashChessGames.$inferSelect;
 
@@ -198,3 +248,13 @@ export const updateHeraldCommentSchema = z.object({
   draft: z.string().max(4000).optional(),
 });
 export type UpdateHeraldCommentPayload = z.infer<typeof updateHeraldCommentSchema>;
+
+export const updateDiscordChannelsSchema = z.object({
+  channels: z.array(z.object({
+    guildId: z.string().min(1).max(64),
+    guildName: z.string().max(200),
+    channelId: z.string().min(1).max(64),
+    channelName: z.string().max(200),
+  })).max(100),
+});
+export type UpdateDiscordChannelsPayload = z.infer<typeof updateDiscordChannelsSchema>;

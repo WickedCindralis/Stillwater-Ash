@@ -16,8 +16,13 @@ import {
   type AshActivity,
   ashTiktokComments,
   type AshTiktokComment,
+  ashDiscordChannels,
+  ashDiscordMessages,
+  type AshDiscordChannel,
+  type AshDiscordMessage,
 } from "@workspace/db";
-import { eq, desc, inArray, and, like, lt, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { eq, desc, inArray, and, like, lt, gt, isNull, notInArray, or, sql } from "drizzle-orm";
 
 const ASH_ID = "ash";
 
@@ -58,6 +63,24 @@ export interface IStorage {
   getUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]>;
   claimTiktokComments(ids: number[]): Promise<AshTiktokComment[]>;
   releaseTiktokCommentsClaim(ids: number[]): Promise<void>;
+  listDiscordChannels(): Promise<AshDiscordChannel[]>;
+  replaceDiscordChannels(channels: Array<Omit<AshDiscordChannel, "id" | "selectedAt">>): Promise<AshDiscordChannel[]>;
+  isDiscordChannelConfigured(channelId: string): Promise<boolean>;
+  recordDiscordMessage(
+    message: Omit<AshDiscordMessage, "id" | "recordedAt" | "updatedAt" | "replyDiscordMessageId" | "deliveryError">,
+  ): Promise<{ message: AshDiscordMessage; created: boolean }>;
+  getDiscordMessageById(id: number): Promise<AshDiscordMessage | null>;
+  claimDiscordMentions(limit: number): Promise<{ leaseId: string; messages: AshDiscordMessage[] }>;
+  requeueDiscordMessages(ids: number[], leaseId: string): Promise<void>;
+  recoverDiscordDeliveries(): Promise<void>;
+  markDiscordMessagesSkipped(ids: number[], leaseId: string): Promise<void>;
+  beginDiscordDelivery(id: number, leaseId: string): Promise<AshDiscordMessage | null>;
+  completeDiscordDelivery(id: number, leaseId: string, replyDiscordMessageId: string): Promise<boolean>;
+  failDiscordDelivery(id: number, leaseId: string, error: string): Promise<boolean>;
+  withDiscordChannelLock<T>(channelId: string, work: () => Promise<T>): Promise<T>;
+  getRecentDiscordContext(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
+  getRecentDiscordActivity(limit?: number): Promise<AshDiscordMessage[]>;
+  pruneDiscordMessages(maxRows?: number): Promise<void>;
 }
 
 export class DbStorage implements IStorage {
@@ -342,6 +365,317 @@ export class DbStorage implements IStorage {
       .update(ashTiktokComments)
       .set({ seenByAsh: 0 })
       .where(inArray(ashTiktokComments.id, ids));
+  }
+
+  // ── Discord Court Herald ──
+  async listDiscordChannels(): Promise<AshDiscordChannel[]> {
+    return db
+      .select()
+      .from(ashDiscordChannels)
+      .orderBy(ashDiscordChannels.guildName, ashDiscordChannels.channelName);
+  }
+
+  async replaceDiscordChannels(
+    channels: Array<Omit<AshDiscordChannel, "id" | "selectedAt">>,
+  ): Promise<AshDiscordChannel[]> {
+    await db.transaction(async (tx) => {
+      // One global config lock serializes concurrent settings saves. Per-channel
+      // locks then make the save wait for already-authorized intake/delivery.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-discord-config'))`);
+      const current = await tx
+        .select({ channelId: ashDiscordChannels.channelId })
+        .from(ashDiscordChannels);
+      const lockIds = [...new Set([
+        ...current.map((channel) => channel.channelId),
+        ...channels.map((channel) => channel.channelId),
+      ])].sort();
+      for (const channelId of lockIds) {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${channelId}))`);
+      }
+
+      await tx.delete(ashDiscordChannels);
+      if (channels.length > 0) {
+        await tx.insert(ashDiscordChannels).values(channels);
+      }
+
+      // Revoking a hall also revokes and erases its retained public context.
+      // This makes the opt-in boundary true for both future and historic reads.
+      if (channels.length === 0) {
+        await tx.delete(ashDiscordMessages);
+      } else {
+        const selectedIds = channels.map((channel) => channel.channelId);
+        await tx.delete(ashDiscordMessages).where(
+          notInArray(ashDiscordMessages.channelId, selectedIds),
+        );
+      }
+    });
+    return this.listDiscordChannels();
+  }
+
+  async isDiscordChannelConfigured(channelId: string): Promise<boolean> {
+    const rows = await db
+      .select({ id: ashDiscordChannels.id })
+      .from(ashDiscordChannels)
+      .where(eq(ashDiscordChannels.channelId, channelId))
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async recordDiscordMessage(
+    message: Omit<AshDiscordMessage, "id" | "recordedAt" | "updatedAt" | "replyDiscordMessageId" | "deliveryError">,
+  ): Promise<{ message: AshDiscordMessage; created: boolean }> {
+    const rows = await db
+      .insert(ashDiscordMessages)
+      .values(message)
+      .onConflictDoNothing({ target: ashDiscordMessages.discordMessageId })
+      .returning();
+    if (rows[0]) return { message: rows[0], created: true };
+    const existing = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(eq(ashDiscordMessages.discordMessageId, message.discordMessageId))
+      .limit(1);
+    if (!existing[0]) throw new Error("Discord message insert conflicted without an existing row");
+    return { message: existing[0], created: false };
+  }
+
+  async getDiscordMessageById(id: number): Promise<AshDiscordMessage | null> {
+    const rows = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(eq(ashDiscordMessages.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async claimDiscordMentions(limit: number): Promise<{ leaseId: string; messages: AshDiscordMessage[] }> {
+    const firstPending = await db
+      .select({ guildId: ashDiscordMessages.guildId })
+      .from(ashDiscordMessages)
+      .where(eq(ashDiscordMessages.deliveryStatus, "queued"))
+      .orderBy(ashDiscordMessages.id)
+      .limit(1);
+    if (!firstPending[0]) return { leaseId: "", messages: [] };
+    const pending = await db
+      .select({ id: ashDiscordMessages.id })
+      .from(ashDiscordMessages)
+      .where(and(
+        eq(ashDiscordMessages.deliveryStatus, "queued"),
+        eq(ashDiscordMessages.guildId, firstPending[0].guildId),
+      ))
+      .orderBy(ashDiscordMessages.id)
+      .limit(limit);
+    if (pending.length === 0) return { leaseId: "", messages: [] };
+    const ids = pending.map((row) => row.id);
+    const leaseId = randomUUID();
+    const leaseExpiresAt = new Date(Date.now() + 10 * 60_000);
+    const claimed = await db
+      .update(ashDiscordMessages)
+      .set({
+        deliveryStatus: "processing",
+        deliveryError: "",
+        deliveryLeaseId: leaseId,
+        deliveryLeaseExpiresAt: leaseExpiresAt,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        inArray(ashDiscordMessages.id, ids),
+        eq(ashDiscordMessages.deliveryStatus, "queued"),
+      ))
+      .returning();
+    return { leaseId, messages: claimed.sort((a, b) => a.id - b.id) };
+  }
+
+  async requeueDiscordMessages(ids: number[], leaseId: string): Promise<void> {
+    if (ids.length === 0) return;
+    await db
+      .update(ashDiscordMessages)
+      .set({
+        deliveryStatus: "queued",
+        deliveryError: "",
+        deliveryLeaseId: "",
+        deliveryLeaseExpiresAt: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        inArray(ashDiscordMessages.id, ids),
+        eq(ashDiscordMessages.deliveryStatus, "processing"),
+        eq(ashDiscordMessages.deliveryLeaseId, leaseId),
+      ));
+  }
+
+  async recoverDiscordDeliveries(): Promise<void> {
+    const now = new Date();
+    const expired = or(
+      isNull(ashDiscordMessages.deliveryLeaseExpiresAt),
+      lt(ashDiscordMessages.deliveryLeaseExpiresAt, now),
+    );
+    await db.transaction(async (tx) => {
+      // Only expired claims are recoverable. An older instance with a live
+      // lease retains ownership and remains the only process allowed to send.
+      await tx
+        .update(ashDiscordMessages)
+        .set({
+          deliveryStatus: "queued",
+          deliveryError: "",
+          deliveryLeaseId: "",
+          deliveryLeaseExpiresAt: null,
+          updatedAt: now,
+        })
+        .where(and(eq(ashDiscordMessages.deliveryStatus, "processing"), expired));
+      // Once sending begins, a crash leaves the remote outcome unknowable. Do
+      // not retry automatically: avoiding a duplicate public reply is safer.
+      await tx
+        .update(ashDiscordMessages)
+        .set({
+          deliveryStatus: "failed",
+          deliveryError: "Delivery outcome unknown after restart; not retried to avoid a duplicate reply",
+          deliveryLeaseId: "",
+          deliveryLeaseExpiresAt: null,
+          updatedAt: now,
+        })
+        .where(and(eq(ashDiscordMessages.deliveryStatus, "sending"), expired));
+    });
+  }
+
+  async markDiscordMessagesSkipped(ids: number[], leaseId: string): Promise<void> {
+    if (ids.length === 0) return;
+    await db
+      .update(ashDiscordMessages)
+      .set({
+        deliveryStatus: "skipped",
+        deliveryLeaseId: "",
+        deliveryLeaseExpiresAt: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        inArray(ashDiscordMessages.id, ids),
+        eq(ashDiscordMessages.deliveryStatus, "processing"),
+        eq(ashDiscordMessages.deliveryLeaseId, leaseId),
+      ));
+  }
+
+  async beginDiscordDelivery(id: number, leaseId: string): Promise<AshDiscordMessage | null> {
+    const rows = await db
+      .update(ashDiscordMessages)
+      .set({ deliveryStatus: "sending", deliveryError: "", updatedAt: new Date() })
+      .where(and(
+        eq(ashDiscordMessages.id, id),
+        eq(ashDiscordMessages.deliveryStatus, "processing"),
+        eq(ashDiscordMessages.deliveryLeaseId, leaseId),
+        gt(ashDiscordMessages.deliveryLeaseExpiresAt, new Date()),
+      ))
+      .returning();
+    return rows[0] ?? null;
+  }
+
+  async completeDiscordDelivery(
+    id: number,
+    leaseId: string,
+    replyDiscordMessageId: string,
+  ): Promise<boolean> {
+    const rows = await db
+      .update(ashDiscordMessages)
+      .set({
+        deliveryStatus: "replied",
+        replyDiscordMessageId,
+        deliveryError: "",
+        deliveryLeaseId: "",
+        deliveryLeaseExpiresAt: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(ashDiscordMessages.id, id),
+        eq(ashDiscordMessages.deliveryStatus, "sending"),
+        eq(ashDiscordMessages.deliveryLeaseId, leaseId),
+      ))
+      .returning({ id: ashDiscordMessages.id });
+    return rows.length === 1;
+  }
+
+  async failDiscordDelivery(id: number, leaseId: string, error: string): Promise<boolean> {
+    const rows = await db
+      .update(ashDiscordMessages)
+      .set({
+        deliveryStatus: "failed",
+        deliveryError: error.slice(0, 500),
+        deliveryLeaseId: "",
+        deliveryLeaseExpiresAt: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(ashDiscordMessages.id, id),
+        inArray(ashDiscordMessages.deliveryStatus, ["processing", "sending"]),
+        eq(ashDiscordMessages.deliveryLeaseId, leaseId),
+      ))
+      .returning({ id: ashDiscordMessages.id });
+    return rows.length === 1;
+  }
+
+  async withDiscordChannelLock<T>(
+    channelId: string,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${channelId}))`);
+      return work();
+    });
+  }
+
+  async getRecentDiscordContext(guildId: string, limit: number): Promise<AshDiscordMessage[]> {
+    const selected = await this.listDiscordChannels();
+    if (selected.length === 0) return [];
+    const rows = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(and(
+        eq(ashDiscordMessages.guildId, guildId),
+        inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+      ))
+      .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  async getRecentDiscordActivity(limit = 100): Promise<AshDiscordMessage[]> {
+    const selected = await this.listDiscordChannels();
+    if (selected.length === 0) return [];
+    const rows = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)))
+      .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  async pruneDiscordMessages(maxRows = 500): Promise<void> {
+    const oldestAllowed = new Date(Date.now() - 7 * 24 * 60 * 60_000);
+    const finalized = notInArray(
+      ashDiscordMessages.deliveryStatus,
+      ["queued", "processing", "sending"],
+    );
+    await db
+      .delete(ashDiscordMessages)
+      .where(and(
+        lt(ashDiscordMessages.recordedAt, oldestAllowed),
+        finalized,
+      ));
+
+    const retained = await db
+      .select({ id: ashDiscordMessages.id })
+      .from(ashDiscordMessages)
+      .where(finalized)
+      .orderBy(desc(ashDiscordMessages.id))
+      .limit(maxRows);
+    if (retained.length === maxRows) {
+      await db
+        .delete(ashDiscordMessages)
+        .where(and(
+          lt(ashDiscordMessages.id, retained[retained.length - 1]!.id),
+          finalized,
+        ));
+    }
   }
 }
 

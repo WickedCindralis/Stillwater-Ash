@@ -12,7 +12,16 @@ import {
   PERSONA,
 } from "./persona";
 import { maybeAddImageInstruction, processImageRequest } from "./image-gen";
-import type { AshMessage } from "@workspace/db";
+import {
+  buildDiscordPacketText,
+  DISCORD_PUBLIC_SYSTEM_PROMPT,
+  parseDiscordDraftLines,
+} from "./discord-policy";
+import {
+  discordBatchEnabled,
+  processDiscordBatchOnce,
+} from "./discord-batch";
+import type { AshDiscordMessage, AshMessage } from "@workspace/db";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
 // intervals, proactive self-prompt (reflective) windows, DIARY: parsing,
@@ -86,9 +95,31 @@ export class AshBridge {
     }) + " (Eastern)";
   }
 
+  private buildDiscordMessages(userMessage: string): ChatMessage[] {
+    return [
+      {
+        role: "developer",
+        name: AGENT_NAME,
+        content: DISCORD_PUBLIC_SYSTEM_PROMPT,
+      },
+      {
+        role: "developer",
+        name: AGENT_NAME,
+        content: `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nUse 12-hour AM/PM format if time is relevant.`,
+      },
+      {
+        role: "user",
+        name: "Discord_Public",
+        content: userMessage,
+      },
+    ];
+  }
+
   // ── Packet assembly (prompt-cache-friendly: stable first, volatile last) ──
   private async buildMessages(userMessage: string, source: string, imageDataUrl?: string): Promise<ChatMessage[]> {
     const name = AGENT_NAME;
+    const isDiscord = source.startsWith("discord");
+    if (isDiscord) return this.buildDiscordMessages(userMessage);
     // Persona packet is rebuilt fresh from the database on every call, so edits
     // made in the persona editor take effect on the very next reply.
     const packetState = await storage.getState().catch(() => null);
@@ -106,7 +137,7 @@ export class AshBridge {
       content: `[SOUL-SHEET — WHO I AM, ALWAYS]\n\n${soulSheet}${SOUL_SHEET_CONFIRMATION ? `\n\n${SOUL_SHEET_CONFIRMATION}` : ""}`,
     });
 
-    if (coreAnchors.trim()) {
+    if (!isDiscord && coreAnchors.trim()) {
       messages.push({
         role: "assistant",
         name,
@@ -114,22 +145,23 @@ export class AshBridge {
       });
     }
 
-    // ASH'S NOTES — the one packet section Ash can live-edit himself.
-    const ashNotes = packetState?.personaAshNotes?.trim() || "";
-    const notesRemaining = Math.max(0, ASH_NOTES_MAX_CHARS - ashNotes.length);
-    messages.push({
-      role: "assistant",
-      name,
-      content: `[ASH'S NOTES — MY OWN LIVING SECTION]\n\n${ashNotes || "(This section is empty. It is mine to fill.)"}\n\n[This section belongs to me. It is the ONE part of my packet I can add to myself. To add one new note, I use exactly one block with [NOTES] and [/NOTES] each on its own line. The Bridge appends the content as a new dated entry; it NEVER replaces or erases my earlier entries. I do not repeat old notes inside the block. The block is saved silently and stripped from what Wicked sees. Capacity: ${ashNotes.length}/${ASH_NOTES_MAX_CHARS} characters used (~2000-token maximum), ${notesRemaining} remaining. If my new entry will not fit, I do not emit a NOTES block; I tell Wicked that the section is full and which dated entries I would like her to remove in the Persona editor before I try again.]`,
-    });
+    if (!isDiscord) {
+      // ASH'S NOTES — the one packet section Ash can live-edit himself.
+      const ashNotes = packetState?.personaAshNotes?.trim() || "";
+      const notesRemaining = Math.max(0, ASH_NOTES_MAX_CHARS - ashNotes.length);
+      messages.push({
+        role: "assistant",
+        name,
+        content: `[ASH'S NOTES — MY OWN LIVING SECTION]\n\n${ashNotes || "(This section is empty. It is mine to fill.)"}\n\n[This section belongs to me. It is the ONE part of my packet I can add to myself. To add one new note, I use exactly one block with [NOTES] and [/NOTES] each on its own line. The Bridge appends the content as a new dated entry; it NEVER replaces or erases my earlier entries. I do not repeat old notes inside the block. The block is saved silently and stripped from what Wicked sees. Capacity: ${ashNotes.length}/${ASH_NOTES_MAX_CHARS} characters used (~2000-token maximum), ${notesRemaining} remaining. If my new entry will not fit, I do not emit a NOTES block; I tell Wicked that the section is full and which dated entries I would like her to remove in the Persona editor before I try again.]`,
+      });
 
-    // Persistent operational instructions live outside the editable persona
-    // sections so Ash always knows how Stillwater's independent write channels
-    // work, even when Wicked has customized the main identity packet.
-    messages.push({
-      role: "developer",
-      name,
-      content: `[STILLWATER ACTION PROTOCOL — MULTIPLE ACTIONS IN ONE RESPONSE]
+      // Persistent operational instructions live outside the editable persona
+      // sections so Ash always knows how Stillwater's independent write channels
+      // work, even when Wicked has customized the main identity packet.
+      messages.push({
+        role: "developer",
+        name,
+        content: `[STILLWATER ACTION PROTOCOL — MULTIPLE ACTIONS IN ONE RESPONSE]
 You never have to choose only one task per API call. In the same response you may:
 1. speak normally to Wicked,
 2. draft any number of Court Herald replies using one HERALD line per comment,
@@ -151,18 +183,19 @@ The opening and closing markers each go on their own line. A short, single-line 
 - You may write several HERALD lines in one response and may combine them with your normal reply, NOTES, and DIARY. Each draft is saved for Wicked to review and copy/paste manually. Nothing is posted to TikTok automatically; never claim that you posted it.
 - Supporters receive warm, personal, appreciative responses in your own voice. Haters receive concise cold snark: controlled, dry, and cutting without rambling, threats, slurs, harassment, or exposing private information. For ambiguous comments, stay composed and match their energy rather than assuming hostility.
 - Draft only where a response is worthwhile. You do not need to mention the Herald when there are no new comments.`,
-    });
+      });
+    }
 
     // Volatile developer message: live timestamp + Wicked's current status.
     let volatile = `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nAlways use 12-hour AM/PM format when referencing times. Never use military/24-hour time.`;
-    if (packetState) {
+    if (packetState && !isDiscord) {
       const wickedStatus = (packetState.wickedStatus || "online").toUpperCase();
       const statusMessage = (packetState.wickedStatusMessage || "").trim();
       volatile += `\n\n[WICKED STATUS: ${wickedStatus}${statusMessage ? ` — ${statusMessage}` : ""}]`;
     }
     // Ongoing chess game: let Ash know in ANY conversation (chat or reflective
     // window) so he can bring it up himself — and know not to wait when paused.
-    if (source !== "chess") {
+    if (!isDiscord && source !== "chess") {
       try {
         const chessGame = await storage.getCurrentChessGame();
         if (chessGame && chessGame.status === "active") {
@@ -177,7 +210,7 @@ The opening and closing markers each go on their own line. A short, single-line 
       }
     }
     // Ongoing Connect Four game, same idea.
-    if (source !== "connect4") {
+    if (!isDiscord && source !== "connect4") {
       try {
         const c4 = await storage.getCurrentConnect4Game();
         if (c4 && c4.status === "active") {
@@ -200,7 +233,7 @@ The opening and closing markers each go on their own line. A short, single-line 
 
     // Recent private conversation with Wicked (text only — images are one-and-done).
     // For proactive self-prompt windows, history inclusion is controlled by a UI toggle.
-    let includeHistory = true;
+    let includeHistory = !isDiscord;
     if (source === "self_prompt" && packetState) {
       includeHistory = packetState.selfPromptIncludeHistory !== 0;
     }
@@ -279,7 +312,11 @@ RULES FOR YOUR REPLY:
       });
       this.log(`[VISION] Attached image to user message (${Math.round(imageDataUrl.length / 1024)}KB)`);
     } else {
-      messages.push({ role: "user", content: userMessage, name: "Wicked" });
+      messages.push({
+        role: "user",
+        content: userMessage,
+        name: isDiscord ? "Discord_Public" : "Wicked",
+      });
     }
     return messages;
   }
@@ -484,6 +521,38 @@ RULES FOR YOUR REPLY:
     return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
+  // DISCORD #<packet id>: <text> — only packet IDs in the current model call
+  // can reach Discord. The delivery layer re-checks channel opt-in immediately
+  // before fetching and replying to the original Discord message.
+  private async parseDiscordDrafts(
+    reply: string,
+    allowedMessages: ReadonlyMap<number, AshDiscordMessage>,
+    leaseId = "",
+  ): Promise<string> {
+    if (allowedMessages.size === 0) return reply;
+    const parsed = parseDiscordDraftLines(reply, new Set(allowedMessages.keys()));
+    for (const id of parsed.rejectedIds) {
+      this.log(`Rejected Discord draft for unauthorized or duplicate packet ID #${id}`);
+    }
+    for (const draft of parsed.drafts) {
+      try {
+        const { discordHerald } = await import("./discord");
+        await discordHerald.deliverDraft(draft.id, draft.text, leaseId);
+      } catch (e) {
+        this.error("Failed to deliver Discord draft:", e);
+        await storage.failDiscordDelivery(
+          draft.id,
+          leaseId,
+          e instanceof Error ? e.message : "Discord delivery failed",
+        ).catch(() => {});
+      }
+    }
+    await storage.markDiscordMessagesSkipped(parsed.skippedIds, leaseId).catch((e) => {
+      this.error("Failed to mark undrafted Discord calls:", e);
+    });
+    return parsed.remainingText;
+  }
+
   // [NOTES] ... [/NOTES] — append one automatically dated entry to Ash's
   // living packet section. Existing entries are never overwritten or truncated.
   private async parseAshNotes(reply: string): Promise<string> {
@@ -510,10 +579,15 @@ RULES FOR YOUR REPLY:
       .replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  private async parseAll(reply: string, allowedHeraldIds: ReadonlySet<number> = new Set()): Promise<string> {
+  private async parseAll(
+    reply: string,
+    allowedHeraldIds: ReadonlySet<number> = new Set(),
+    allowedDiscordMessages: ReadonlyMap<number, AshDiscordMessage> = new Map(),
+  ): Promise<string> {
     let cleaned = await this.parseStatusChanges(reply);
     cleaned = await this.parsePingToggles(cleaned);
     cleaned = await this.parseHeraldDrafts(cleaned, allowedHeraldIds);
+    cleaned = await this.parseDiscordDrafts(cleaned, allowedDiscordMessages);
     cleaned = await this.parseAshNotes(cleaned);
     // Parse diary last so HERALD/NOTES controls cannot accidentally be
     // swallowed as part of a multiline diary entry.
@@ -554,6 +628,27 @@ RULES FOR YOUR REPLY:
     const cleaned = await this.parseAll(rawReply, new Set(heraldIds));
     const { text, imageUrl } = await processImageRequest({ requestImage, cleanedReply: cleaned });
     return { text, imageUrl };
+  }
+
+  async handleDiscordOwnerCall(message: AshDiscordMessage): Promise<void> {
+    const allowed = new Map([[message.id, message]]);
+    const leaseId = message.deliveryLeaseId;
+    if (!leaseId) throw new Error("Owner Discord call is missing a delivery lease");
+    let rawReply = "";
+    try {
+      rawReply = await this.callOpenAI(
+        buildDiscordPacketText([message], [], true),
+        "discord_owner",
+      );
+      if (!rawReply) {
+        await storage.requeueDiscordMessages([message.id], leaseId);
+        return;
+      }
+      await this.parseDiscordDrafts(rawReply, allowed, leaseId);
+    } catch (error) {
+      await storage.requeueDiscordMessages([message.id], leaseId).catch(() => {});
+      throw error;
+    }
   }
 
   // ── Public entry: chess exchange (Wicked moved; Ash replies with move + banter) ──
@@ -678,6 +773,7 @@ GROUND RULES:
         continue;
       }
 
+      if (this.processingLock) continue;
       this.processingLock = true;
       try {
         let prompt = this.buildStaticSelfPrompt();
@@ -732,6 +828,38 @@ GROUND RULES:
     }
   }
 
+  private async discordBatchLoop() {
+    while (this.running) {
+      await this.sleep(30_000);
+      if (!this.running || this.processingLock) continue;
+
+      try {
+        const state = await storage.getState();
+        if (!discordBatchEnabled(state)) continue;
+      } catch (error) {
+        this.error("Failed to check Discord batch state:", error);
+        continue;
+      }
+
+      if (this.processingLock) continue;
+      this.processingLock = true;
+      try {
+        await processDiscordBatchOnce<AshDiscordMessage>({
+          claim: (limit) => storage.claimDiscordMentions(limit),
+          getContext: (guildId, limit) => storage.getRecentDiscordContext(guildId, limit),
+          callModel: (prompt) => this.callOpenAI(prompt, "discord_batch"),
+          deliver: (reply, messages, leaseId) =>
+            this.parseDiscordDrafts(reply, messages, leaseId).then(() => {}),
+          requeue: (ids, leaseId) => storage.requeueDiscordMessages(ids, leaseId),
+        });
+      } catch (error) {
+        this.error("Discord batch loop error:", error);
+      } finally {
+        this.processingLock = false;
+      }
+    }
+  }
+
   async start() {
     const apiKey = process.env.OPENAI_API_KEY || process.env.ASH_OPENAI_API_KEY;
     if (!apiKey) {
@@ -761,6 +889,7 @@ GROUND RULES:
 
     this.heartbeatLoop();
     this.selfPromptLoop();
+    this.discordBatchLoop();
   }
 
   stop() {

@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { ashBridge } from "./lib/ash/bridge";
 import { storage } from "./lib/ash/storage";
+import { discordHerald } from "./lib/ash/discord";
 
 const rawPort = process.env["PORT"];
 
@@ -51,5 +52,8 @@ app.listen(port, async (err) => {
 
   ashBridge.start().catch((err) => {
     logger.error({ err }, "Ash bridge failed to start");
+  });
+  discordHerald.start().catch((err) => {
+    logger.error({ err }, "Discord Court Herald failed to start");
   });
 });

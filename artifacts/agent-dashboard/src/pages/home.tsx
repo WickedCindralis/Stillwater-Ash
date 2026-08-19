@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshState, SystemInfo } from "@/lib/types";
 import { Flame, Smartphone, Activity, Server, LogOut } from "lucide-react";
+import { SiDiscord } from "react-icons/si";
 
 const STATUS_COLORS: Record<string, string> = {
   alert: "bg-red-500",
@@ -114,6 +115,16 @@ export default function HomePage() {
                 ? `Ping: ${system.selfPromptPaused === 1 ? "paused" : pingMinutes > 0 ? `every ${pingMinutes} min` : "off"} • ${system.buildName}`
                 : "..."}
             </span>
+          </Link>
+
+          <Link
+            href="/discord"
+            className="group border border-gold/50 rounded-2xl bg-black/60 hover:bg-gold/5 transition-colors px-6 py-8 flex flex-col items-center justify-center gap-3"
+            data-testid="link-home-discord"
+          >
+            <SiDiscord className="w-5 h-5 text-gold/70 self-end -mb-6" />
+            <span className="font-serif text-2xl text-gold">Discord</span>
+            <span className="text-xs text-white/40">Court Herald & Server Comms</span>
           </Link>
         </div>
       </div>

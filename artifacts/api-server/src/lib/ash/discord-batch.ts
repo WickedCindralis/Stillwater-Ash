@@ -1,0 +1,52 @@
+import {
+  buildDiscordPacketText,
+  type DiscordPacketMessage,
+} from "./discord-policy";
+
+export function discordBatchEnabled(state: {
+  apiKillSwitch: number;
+  selfPromptPaused?: number;
+}): boolean {
+  // The API kill switch is global. Private reflection pause is deliberately
+  // absent from this decision: public Discord queue service is independent.
+  return state.apiKillSwitch !== 1;
+}
+
+export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
+  dependencies: {
+    claim: (limit: number) => Promise<{ leaseId: string; messages: T[] }>;
+    getContext: (guildId: string, limit: number) => Promise<T[]>;
+    callModel: (prompt: string) => Promise<string>;
+    deliver: (
+      reply: string,
+      messages: ReadonlyMap<number, T>,
+      leaseId: string,
+    ) => Promise<void>;
+    requeue: (ids: number[], leaseId: string) => Promise<void>;
+  },
+): Promise<"idle" | "requeued" | "processed"> {
+  const claim = await dependencies.claim(8);
+  if (claim.messages.length === 0) return "idle";
+
+  const ids = claim.messages.map((message) => message.id);
+  try {
+    const guildId = claim.messages[0]!.guildId;
+    const context = await dependencies.getContext(guildId, 30);
+    const response = await dependencies.callModel(
+      buildDiscordPacketText(claim.messages, context, false),
+    );
+    if (!response) {
+      await dependencies.requeue(ids, claim.leaseId);
+      return "requeued";
+    }
+    await dependencies.deliver(
+      response,
+      new Map(claim.messages.map((message) => [message.id, message])),
+      claim.leaseId,
+    );
+    return "processed";
+  } catch (error) {
+    await dependencies.requeue(ids, claim.leaseId).catch(() => {});
+    throw error;
+  }
+}

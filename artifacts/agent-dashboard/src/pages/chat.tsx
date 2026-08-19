@@ -7,6 +7,7 @@ import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
   Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone,
 } from "lucide-react";
+import { SiDiscord } from "react-icons/si";
 import ChessPanel from "@/components/chess-panel";
 import throneDamask from "@/assets/throne-damask.jpg";
 import Connect4Panel from "@/components/connect4-panel";
@@ -256,6 +257,14 @@ export default function ChatPage() {
             title="The Court Herald (TikTok comments)"
           >
             <Megaphone className="w-5 h-5" />
+          </Link>
+          <Link
+            href="/discord"
+            className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+            data-testid="link-discord"
+            title="Discord Court Herald"
+          >
+            <SiDiscord className="w-5 h-5" />
           </Link>
           <Link
             href="/persona"

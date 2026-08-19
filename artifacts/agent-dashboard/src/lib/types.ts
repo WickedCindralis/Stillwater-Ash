@@ -87,3 +87,52 @@ export interface AshDiaryEntry {
   content: string;
   createdAt: string;
 }
+
+export interface DiscordChannel {
+  guildId: string;
+  guildName: string;
+  channelId: string;
+  channelName: string;
+}
+
+export interface AvailableDiscordChannel extends DiscordChannel {
+  canRead: boolean;
+  canReply: boolean;
+  permissionError: string;
+}
+
+export interface SelectedDiscordChannel extends DiscordChannel {
+  id: number;
+  selectedAt: string;
+}
+
+export interface DiscordActivity {
+  id: number;
+  discordMessageId: string;
+  guildId: string;
+  channelId: string;
+  channelName: string;
+  authorId: string;
+  authorName: string;
+  content: string;
+  kind: string;
+  deliveryStatus: string;
+  replyDiscordMessageId: string;
+  deliveryError: string;
+  createdAt: string;
+  recordedAt: string;
+  updatedAt: string;
+}
+
+export interface DiscordStatus {
+  connectionState: "not_configured" | "connecting" | "connected" | "error";
+  connectionError: string;
+  connectedAt: string | null;
+  botUser: string;
+  inviteUrl: string;
+  requiredIntent: string;
+  requiredPermissions: string[];
+  availableChannels: AvailableDiscordChannel[];
+  selectedChannels: SelectedDiscordChannel[];
+  activity: DiscordActivity[];
+}

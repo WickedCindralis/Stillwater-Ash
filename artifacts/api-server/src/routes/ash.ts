@@ -5,13 +5,14 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
 import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
 import { ashBridge } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
+import { discordHerald } from "../lib/ash/discord";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 
 declare module "express-session" {
@@ -357,6 +358,30 @@ router.post("/herald/refresh", requireAuth, async (_req, res): Promise<void> => 
   }
   const added = await sweepTheWalls(true);
   res.json({ added });
+});
+
+// ── Discord Court Herald ──
+router.get("/discord", requireAuth, async (_req, res): Promise<void> => {
+  res.json(await discordHerald.getDashboardState());
+});
+
+router.put("/discord/channels", requireAuth, async (req, res): Promise<void> => {
+  const parsed = updateDiscordChannelsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: parsed.error.issues.map((issue) => issue.message).join(", "),
+    });
+    return;
+  }
+  try {
+    await discordHerald.setPermittedChannels(parsed.data.channels);
+    res.json(await discordHerald.getDashboardState());
+  } catch (error) {
+    req.log.warn({ err: error }, "Discord hall selection rejected");
+    res.status(409).json({
+      error: error instanceof Error ? error.message : "Discord halls could not be updated",
+    });
+  }
 });
 
 // ── Diary ──

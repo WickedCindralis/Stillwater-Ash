@@ -9,7 +9,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only; required before first run in a fresh environment)
 - Required env: `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD` (login password), `OPENAI_API_KEY` (OpenAI key for chat + image gen; matches the NorthFlank naming — `ASH_OPENAI_API_KEY` still works as a fallback)
-- Optional env: `ELEVENLABS_API_KEY` (voice/TTS; the `/api/tts` route returns an error until it is set, plus a voice ID in settings)
+- Optional env: `ELEVENLABS_API_KEY` (voice/TTS; the `/api/tts` route returns an error until it is set, plus a voice ID in settings), `DISCORD_BOT_TOKEN` (Discord Court Herald; requires the Message Content intent)
 
 ## Stack
 
@@ -46,6 +46,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - `/` — main chat with Ash: status display, settings (models, kill switch, ping interval, voice ID), diary reader, image attach + "picture mode" generation
 - `/cell` — mobile-styled chat view with optional TTS playback
 - During proactive (status-timed) reflective windows, Ash writes to his private Diary and may change his own status; he does not post to the chat. The chat is only for live conversation between Wicked and Ash.
+- Discord Court Herald: `/discord` selects the only guild channels the bot may retain or send to. Guild-owner calls receive an immediate public-only model pass; other member calls are claimed in bounded batches at proactive-window time. Discord model calls exclude private chat, Notes, core memories, diary controls, Wicked status, and game state. Replies use validated `DISCORD #<internal packet id>:` controls and are rechecked against current channel opt-in before delivery.
 
 - Chess: Wicked (White) vs Ash (Black) — `ash_chess_games` table, server-side rules via chess.js in `api-server/src/lib/ash/chess.ts`. Ash's move comes back as a `[MOVE: <san>]` tag; illegal/missing moves are retried up to 3 times with the legal-move list, then a legal move is auto-played so the board never wedges. Connect Four follows the identical pattern (`ash_connect4_games`, `lib/ash/connect4.ts`, `/api/connect4/*` routes, `connect4-panel.tsx` UI, source "connect4", `[MOVE: <column>]` tag) — Wicked drops gold discs first, Ash ember. Move + banter travel through the normal private-message chat path. UI: `chess-panel.tsx`, opened from the header on `/` and `/cell`. Any active game is surfaced in Ash's packet (volatile section of `buildMessages`) in normal chat AND reflective windows so he can bring it up himself; a `paused` flag (UI "Pause game" button, `POST /api/chess/pause`) tells him Wicked stepped away so he doesn't wait on a move. Making a move auto-resumes.
 

@@ -17,13 +17,14 @@ import {
   ashTiktokComments,
   type AshTiktokComment,
 } from "@workspace/db";
-import { eq, desc, inArray, and, like, lt } from "drizzle-orm";
+import { eq, desc, inArray, and, like, lt, sql } from "drizzle-orm";
 
 const ASH_ID = "ash";
 
 export interface IStorage {
   getState(): Promise<AshState>;
   updateState(patch: Partial<Omit<AshState, "id">>): Promise<AshState>;
+  appendAshNote(entry: string, maxChars: number): Promise<{ saved: boolean; length: number }>;
   getMessages(limit?: number, beforeId?: number): Promise<AshMessage[]>;
   getAllMessages(): Promise<AshMessage[]>;
   purgeMessagesKeepLast(keep: number): Promise<number>;
@@ -54,7 +55,8 @@ export interface IStorage {
     id: number,
     patch: Partial<Pick<AshTiktokComment, "status" | "draft">>,
   ): Promise<AshTiktokComment | null>;
-  claimUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]>;
+  getUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]>;
+  claimTiktokComments(ids: number[]): Promise<AshTiktokComment[]>;
   releaseTiktokCommentsClaim(ids: number[]): Promise<void>;
 }
 
@@ -81,6 +83,26 @@ export class DbStorage implements IStorage {
       .where(eq(ashState.id, ASH_ID))
       .returning();
     return rows[0]!;
+  }
+
+  // Append one dated entry without risking a read/modify/write race. If the
+  // resulting Notes section would exceed its allowance, leave it untouched.
+  async appendAshNote(entry: string, maxChars: number): Promise<{ saved: boolean; length: number }> {
+    const nextNotes = sql<string>`CASE
+      WHEN ${ashState.personaAshNotes} = '' THEN ${entry}
+      ELSE ${ashState.personaAshNotes} || ${"\n\n"} || ${entry}
+    END`;
+    const rows = await db
+      .update(ashState)
+      .set({ personaAshNotes: nextNotes })
+      .where(and(
+        eq(ashState.id, ASH_ID),
+        sql`char_length(${nextNotes}) <= ${maxChars}`,
+      ))
+      .returning({ notes: ashState.personaAshNotes });
+    if (rows[0]) return { saved: true, length: rows[0].notes.length };
+    const state = await this.getState();
+    return { saved: false, length: state.personaAshNotes.length };
   }
 
   async getMessages(limit = 200, beforeId?: number): Promise<AshMessage[]> {
@@ -289,22 +311,24 @@ export class DbStorage implements IStorage {
     return rows[0] ?? null;
   }
 
-  // Atomically claim unseen comments for delivery to Ash: the UPDATE ...
-  // WHERE seen_by_ash = 0 RETURNING guarantees two concurrent messages can't
-  // both grab the same rows.
-  async claimUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]> {
-    const candidates = await db
-      .select({ id: ashTiktokComments.id })
+  async getUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]> {
+    return db
+      .select()
       .from(ashTiktokComments)
       .where(eq(ashTiktokComments.seenByAsh, 0))
       .orderBy(ashTiktokComments.id)
       .limit(limit);
-    if (candidates.length === 0) return [];
+  }
+
+  // Atomically claim only the rows already selected for the packet. The
+  // seen=0 guard guarantees concurrent messages cannot claim the same comment.
+  async claimTiktokComments(ids: number[]): Promise<AshTiktokComment[]> {
+    if (ids.length === 0) return [];
     const rows = await db
       .update(ashTiktokComments)
       .set({ seenByAsh: 1 })
       .where(and(
-        inArray(ashTiktokComments.id, candidates.map((c) => c.id)),
+        inArray(ashTiktokComments.id, ids),
         eq(ashTiktokComments.seenByAsh, 0),
       ))
       .returning();

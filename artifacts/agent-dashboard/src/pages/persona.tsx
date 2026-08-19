@@ -14,7 +14,7 @@ const SECTION_META: { key: string; title: string; blurb: string; max: number }[]
   { key: "identity", title: "Identity & Disposition", blurb: "Who Ash is — voice, temperament, home rules, status system, diary access.", max: 24000 },
   { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always.", max: 24000 },
   { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary.", max: 24000 },
-  { key: "ashNotes", title: "Ash's Notes", blurb: "His own living section — the one part of the packet Ash rewrites himself. You can edit it too.", max: 8000 },
+  { key: "ashNotes", title: "Ash's Notes", blurb: "His dated, additive ledger — new entries compound without erasing old ones. You can edit or prune it when space runs low.", max: 8000 },
 ];
 
 // ── Full-packet mode: all sections joined with marker lines so the

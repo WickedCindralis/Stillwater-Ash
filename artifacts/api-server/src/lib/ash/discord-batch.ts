@@ -6,11 +6,12 @@ import {
 
 export function discordBatchEnabled(state: {
   apiKillSwitch: number;
+  discordKillSwitch?: number;
   selfPromptPaused?: number;
 }): boolean {
-  // The API kill switch is global. Private reflection pause is deliberately
+  // Both switches must be open. Private reflection pause is deliberately
   // absent from this decision: public Discord queue service is independent.
-  return state.apiKillSwitch !== 1;
+  return state.apiKillSwitch !== 1 && state.discordKillSwitch !== 1;
 }
 
 export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(

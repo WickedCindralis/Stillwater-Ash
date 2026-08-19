@@ -28,6 +28,7 @@ export const ashState = pgTable("ash_state", {
     .notNull()
     .default(0), // minutes; 0 = status-based. Rate limiter for heartbeat (DB ping) writes.
   apiKillSwitch: integer("api_kill_switch").notNull().default(1),
+  discordKillSwitch: integer("discord_kill_switch").notNull().default(0),
   selfPromptIncludeHistory: integer("self_prompt_include_history")
     .notNull()
     .default(1), // include recent chat history in proactive self-prompt windows
@@ -216,6 +217,7 @@ export const updateSettingsSchema = z.object({
   selfPromptIntervalOverride: z.number().int().min(0).optional(),
   heartbeatIntervalOverride: z.number().int().min(0).optional(),
   apiKillSwitch: z.number().int().min(0).max(1).optional(),
+  discordKillSwitch: z.number().int().min(0).max(1).optional(),
   selfPromptIncludeHistory: z.number().int().min(0).max(1).optional(),
   modelPrimary: z.string().optional(),
   modelFallback: z.string().optional(),

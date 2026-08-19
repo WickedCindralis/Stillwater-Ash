@@ -5,7 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { DiscordStatus, AvailableDiscordChannel } from "@/lib/types";
 import { 
   ArrowLeft, Activity, Radio, AlertTriangle, CheckCircle2, 
-  Settings2, Loader2, Save, XCircle, Clock
+  Settings2, Loader2, Save, XCircle, Clock, Power
 } from "lucide-react";
 import { SiDiscord } from "react-icons/si";
 
@@ -41,6 +41,28 @@ export default function DiscordPage() {
       setSelectedChannelIds(new Set(next.selectedChannels.map(c => c.channelId)));
     },
   });
+
+  const discordKillSwitchMutation = useMutation({
+    mutationFn: async (discordKillSwitch: number) => {
+      const response = await apiRequest("PATCH", "/api/state", { discordKillSwitch });
+      return (await response.json()) as { discordKillSwitch: number };
+    },
+    onSuccess: (next) => {
+      queryClient.setQueryData<DiscordStatus>(["/api/discord"], (current) =>
+        current ? { ...current, discordKillSwitch: next.discordKillSwitch } : current,
+      );
+    },
+  });
+
+  const discordOff = discord?.discordKillSwitch === 1;
+
+  const handleDiscordSwitch = useCallback(() => {
+    if (!discord) return;
+    if (discordOff && !window.confirm("Turn the Discord bridge back on? Ash will resume observing selected channels and may answer queued calls.")) {
+      return;
+    }
+    discordKillSwitchMutation.mutate(discordOff ? 0 : 1);
+  }, [discord, discordOff, discordKillSwitchMutation]);
 
   const handleToggleChannel = useCallback((channelId: string) => {
     setSelectedChannelIds(prev => {
@@ -128,6 +150,54 @@ export default function DiscordPage() {
 
         {discord && (
           <>
+            {/* EMERGENCY DISCORD SHUT-OFF */}
+            <section
+              className={`rounded-2xl overflow-hidden border ${
+                discordOff
+                  ? "border-red-500/50 bg-red-500/10"
+                  : "border-amber-500/30 bg-amber-500/5"
+              }`}
+              data-testid="section-discord-kill-switch"
+            >
+              <div className="p-5 flex items-start justify-between gap-5">
+                <div className="flex items-start gap-3">
+                  <Power className={`w-5 h-5 mt-0.5 ${discordOff ? "text-red-400" : "text-amber-400"}`} />
+                  <div>
+                    <h2 className={`font-serif text-xl ${discordOff ? "text-red-300" : "text-amber-300"}`}>
+                      Discord Bridge {discordOff ? "OFF" : "ON"}
+                    </h2>
+                    <p className="text-sm text-white/60 mt-1 max-w-2xl">
+                      {discordOff
+                        ? "Emergency stop is active. Ash will not retain new Discord messages, call OpenAI, or send Discord replies."
+                        : "Emergency stop is open. Ash may observe selected channels, process calls, and send approved replies."}
+                    </p>
+                    <p className="text-xs text-white/40 mt-2">
+                      This affects Discord only; private Stillwater chat and Ash's other controls are unchanged.
+                    </p>
+                    {discordKillSwitchMutation.isError && (
+                      <p className="text-xs text-red-300 mt-2" data-testid="text-discord-switch-error">
+                        {discordKillSwitchMutation.error instanceof Error
+                          ? discordKillSwitchMutation.error.message
+                          : "The Discord bridge switch could not be changed."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={handleDiscordSwitch}
+                  disabled={discordKillSwitchMutation.isPending}
+                  className={`shrink-0 px-4 py-2 rounded-lg text-sm font-semibold transition-colors border ${
+                    discordOff
+                      ? "bg-red-500/20 text-red-300 border-red-500/50 hover:bg-red-500/30"
+                      : "bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25"
+                  } disabled:opacity-50 disabled:cursor-wait`}
+                  data-testid="button-discord-kill-switch"
+                >
+                  {discordKillSwitchMutation.isPending ? "Saving..." : discordOff ? "ENABLE DISCORD" : "TURN DISCORD OFF"}
+                </button>
+              </div>
+            </section>
+
             {/* CONNECTION HEALTH */}
             <section className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
               <div className="p-5 border-b border-white/10 flex items-center gap-3 bg-black/40">

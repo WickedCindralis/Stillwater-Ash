@@ -178,11 +178,13 @@ class DiscordHerald {
     availableChannels: DiscordAvailableChannel[];
     selectedChannels: AshDiscordChannel[];
     activity: AshDiscordMessage[];
+    discordKillSwitch: number;
   }> {
     const availableChannels = this.availableChannels();
-    const [selectedChannels, activity] = await Promise.all([
+    const [selectedChannels, activity, state] = await Promise.all([
       storage.listDiscordChannels(),
       storage.getRecentDiscordActivity(100),
+      storage.getState(),
     ]);
     let inviteUrl = "";
     if (this.client?.isReady()) {
@@ -206,6 +208,7 @@ class DiscordHerald {
       availableChannels,
       selectedChannels,
       activity,
+      discordKillSwitch: state.discordKillSwitch,
     };
   }
 
@@ -260,6 +263,8 @@ class DiscordHerald {
       const result = await storage.withDiscordChannelLock(message.channelId, async () => {
         // Intake and preference changes share this lock. A completed opt-out
         // therefore leaves no newly retained message behind.
+        const state = await storage.getState();
+        if (state.discordKillSwitch === 1) return null;
         if (!await storage.isDiscordChannelConfigured(message.channelId)) return null;
         const called = this.calledAsh(message);
         const kind = classifyDiscordMessage(called, message.author.id, message.guild.ownerId);
@@ -327,6 +332,11 @@ class DiscordHerald {
           || current.deliveryStatus !== "sending"
           || current.deliveryLeaseId !== leaseId
         ) return false;
+        const state = await storage.getState();
+        if (state.discordKillSwitch === 1) {
+          await storage.failDiscordDelivery(message.id, leaseId, "Discord bridge is switched off");
+          return false;
+        }
         if (!await storage.isDiscordChannelConfigured(message.channelId)) {
           await storage.failDiscordDelivery(message.id, leaseId, "Channel is no longer selected");
           return false;

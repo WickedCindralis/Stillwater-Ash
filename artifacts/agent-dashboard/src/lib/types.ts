@@ -7,6 +7,7 @@ export interface AshState {
   selfPromptPaused: number;
   selfPromptIntervalOverride: number;
   apiKillSwitch: number;
+  discordKillSwitch: number;
   selfPromptIncludeHistory: number;
   modelPrimary: string;
   modelFallback: string;
@@ -48,6 +49,7 @@ export interface SystemInfo {
   heartbeatIntervalOverrideMinutes: number;
   selfPromptPaused: number;
   apiKillSwitch: number;
+  discordKillSwitch: number;
   lastHeartbeat: string | null;
   tokensUsed: number;
 }
@@ -135,4 +137,5 @@ export interface DiscordStatus {
   availableChannels: AvailableDiscordChannel[];
   selectedChannels: SelectedDiscordChannel[];
   activity: DiscordActivity[];
+  discordKillSwitch: number;
 }

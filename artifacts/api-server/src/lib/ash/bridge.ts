@@ -358,7 +358,7 @@ RULES FOR YOUR REPLY:
   private async summarizeStillwaterForDiscord(): Promise<string> {
     if (!this.openai) return "";
     const state = await storage.getState();
-    if (state.apiKillSwitch === 1) return "";
+    if (state.apiKillSwitch === 1 || state.discordKillSwitch === 1) return "";
 
     const history = await storage.getRecentHistory(DISCORD_SUMMARY_HISTORY_LIMIT);
     const relevant = history.filter((message) => message.content.trim().length > 0);
@@ -436,7 +436,7 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
     if (!this.openai) throw new Error("OpenAI client not initialized");
 
     const state = await storage.getState();
-    if (state.apiKillSwitch === 1) {
+    if (state.apiKillSwitch === 1 || (source.startsWith("discord") && state.discordKillSwitch === 1)) {
       this.log(`[KILL-SWITCH] API kill switch engaged — skipping ${source} call`);
       return "";
     }

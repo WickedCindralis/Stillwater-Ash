@@ -597,6 +597,7 @@ router.get("/system", requireAuth, async (_req, res): Promise<void> => {
     heartbeatIntervalOverrideMinutes: state.heartbeatIntervalOverride,
     selfPromptPaused: state.selfPromptPaused,
     apiKillSwitch: state.apiKillSwitch,
+    discordKillSwitch: state.discordKillSwitch,
     lastHeartbeat: state.lastHeartbeat,
     tokensUsed: state.tokensUsed,
   });

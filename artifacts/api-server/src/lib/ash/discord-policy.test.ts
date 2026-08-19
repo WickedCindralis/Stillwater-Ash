@@ -42,6 +42,7 @@ test("a Discord model packet cannot mix context from another guild", () => {
   );
   const packet = buildDiscordPacketText([call], [{ ...call, id: 3 }], false);
   assert.match(packet, /from one server/);
+  assert.match(packet, /"playerName":"Member"/);
   assert.doesNotMatch(packet, /guild-b|private to B/);
 });
 

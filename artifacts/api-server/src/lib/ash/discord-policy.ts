@@ -92,6 +92,7 @@ export function buildDiscordPacketText(
   const eligible = calls.map((message) => JSON.stringify({
     packetId: message.id,
     channel: message.channelName,
+    playerName: message.authorName,
     author: message.authorName,
     text: message.content,
     sentAt: message.createdAt.toISOString(),

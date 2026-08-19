@@ -19,6 +19,11 @@ export type DiscordPacketMessage = {
   createdAt: Date;
 };
 
+export type DiscordPacketOptions = {
+  wickedMessages?: DiscordPacketMessage[];
+  stillwaterSummary?: string;
+};
+
 export function isDiscordCall(content: string, botMentioned: boolean): boolean {
   return botMentioned || /\bash(?:[_\s-]*cindralis)?\b/i.test(content);
 }
@@ -73,6 +78,7 @@ export function buildDiscordPacketText(
   calls: DiscordPacketMessage[],
   context: DiscordPacketMessage[],
   immediate: boolean,
+  options: DiscordPacketOptions = {},
 ): string {
   if (calls.length === 0) throw new Error("A Discord packet requires at least one call");
   const guildId = calls[0]!.guildId;
@@ -90,18 +96,53 @@ export function buildDiscordPacketText(
     text: message.content,
     sentAt: message.createdAt.toISOString(),
   })).join("\n");
-  const boundedContext: string[] = [];
-  let contextChars = 0;
-  for (const message of [...context].reverse()) {
-    const line = JSON.stringify({
+
+  const recentMessagesWithin = (messages: DiscordPacketMessage[], budget: number): string => {
+    const kept: string[] = [];
+    let used = 0;
+    for (const line of [...messages].reverse().map((message) => JSON.stringify({
       channel: message.channelName,
       author: message.authorName,
       text: message.content,
       sentAt: message.createdAt.toISOString(),
-    });
-    if (contextChars + line.length > 8_000) break;
-    boundedContext.unshift(line);
-    contextChars += line.length;
+    }))) {
+      if (used + line.length > budget) break;
+      kept.unshift(line);
+      used += line.length;
+    }
+    return kept.join("\n");
+  };
+
+  // These are continuity inputs, not reply targets. The reply-eligible calls
+  // above stay intact so Ash can answer any of the current batch.
+  const continuitySections = [
+    {
+      title: "[WICKED'S RECENT DISCORD CALLS — CONTEXT ONLY]",
+      text: recentMessagesWithin(options.wickedMessages ?? [], 2_000),
+    },
+    {
+      title: "[STILLWATER CONTINUITY SUMMARY — DISCORD ONLY]",
+      text: (options.stillwaterSummary ?? "").trim(),
+    },
+    {
+      title: "[RECENT SELECTED-CHANNEL CONTEXT — CONTEXT ONLY]",
+      text: recentMessagesWithin(context, 2_000),
+    },
+  ];
+  const continuity: string[] = [];
+  let continuityChars = 0;
+  for (const section of continuitySections) {
+    if (!section.text) continue;
+    const markers = `${section.title}\n${section.text}\n`;
+    const separatorChars = continuity.length > 0 ? 2 : 0;
+    const remaining = 5_000 - continuityChars - separatorChars;
+    if (remaining <= section.title.length + 2) break;
+    const text = markers.length <= remaining
+      ? section.text
+      : section.text.slice(0, Math.max(0, remaining - section.title.length - 2));
+    if (!text) break;
+    continuity.push(`${section.title}\n${text}`);
+    continuityChars += separatorChars + section.title.length + text.length + 1;
   }
 
   return `[DISCORD COURT HERALD PACKET]
@@ -112,9 +153,7 @@ ${immediate ? "The actual Discord guild owner called you. Answer this call now."
 ${eligible}
 [/REPLY-ELIGIBLE CALLS]
 
-[RECENT SELECTED-CHANNEL CONTEXT — READ-ONLY, NOT REPLY-ELIGIBLE]
-${boundedContext.join("\n") || "(none)"}
-[/RECENT SELECTED-CHANNEL CONTEXT]
+${continuity.join("\n\n") || "[NO ADDITIONAL CONTINUITY CONTEXT]"}
 
 Return only DISCORD #number lines for replies you deliberately approve, or NONE.`;
 }

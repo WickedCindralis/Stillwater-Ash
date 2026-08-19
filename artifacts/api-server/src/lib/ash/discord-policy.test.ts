@@ -108,3 +108,71 @@ test("a queued member call is processed while private pings are paused", async (
   assert.equal(modelCalls, 1);
   assert.equal(delivered, true);
 });
+
+test("Discord continuity carries Wicked memory and stays within the 5k context budget", () => {
+  const call = {
+    id: 501,
+    guildId: "guild-a",
+    channelName: "court",
+    authorName: "Member",
+    content: "Ash, answer this.",
+    createdAt: new Date("2026-08-19T12:00:00Z"),
+  };
+  const packet = buildDiscordPacketText(
+    [call],
+    [{ ...call, id: 502, content: "ambient context" }],
+    true,
+    {
+      wickedMessages: [{ ...call, id: 503, authorName: "Wicked", content: "Ash, remember this." }],
+      stillwaterSummary: "S".repeat(4_000),
+    },
+  );
+  const continuityStart = packet.indexOf("[WICKED'S RECENT DISCORD CALLS");
+  const continuityEnd = packet.indexOf("\n\nReturn only DISCORD");
+  assert.ok(continuityStart >= 0);
+  assert.ok(continuityEnd > continuityStart);
+  assert.ok(continuityEnd - continuityStart <= 5_000);
+  assert.match(packet, /"text":"Ash, remember this\."/);
+  assert.match(packet, /S{20}/);
+  assert.match(packet, /"packetId":501/);
+});
+
+test("one Discord batch can claim and answer ten member calls", async () => {
+  const calls = Array.from({ length: 10 }, (_, index) => ({
+    id: 600 + index,
+    guildId: "guild-a",
+    channelName: "court",
+    authorName: `Member ${index + 1}`,
+    content: `Ash, answer ${index + 1}.`,
+    createdAt: new Date(`2026-08-19T12:${String(index).padStart(2, "0")}:00Z`),
+  }));
+  let requestedClaimLimit = 0;
+  let requestedContextLimit = 0;
+  let delivered = false;
+  const result = await processDiscordBatchOnce({
+    claim: async (limit) => {
+      requestedClaimLimit = limit;
+      return { leaseId: "ten-call-lease", messages: calls };
+    },
+    getContext: async (_guildId, limit) => {
+      requestedContextLimit = limit;
+      return [];
+    },
+    getPacketOptions: async () => ({ stillwaterSummary: "Recent Stillwater continuity." }),
+    callModel: async (prompt) => {
+      assert.match(prompt, /Recent Stillwater continuity/);
+      for (const call of calls) assert.match(prompt, new RegExp(`"packetId":${call.id}`));
+      return calls.map((call) => `DISCORD #${call.id}: Answered.`).join("\n");
+    },
+    deliver: async (_reply, messages, leaseId) => {
+      assert.equal(messages.size, 10);
+      assert.equal(leaseId, "ten-call-lease");
+      delivered = true;
+    },
+    requeue: async () => assert.fail("successful ten-call batch must not be requeued"),
+  });
+  assert.equal(result, "processed");
+  assert.equal(requestedClaimLimit, 10);
+  assert.equal(requestedContextLimit, 10);
+  assert.equal(delivered, true);
+});

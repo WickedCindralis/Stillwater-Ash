@@ -1,6 +1,7 @@
 import {
   buildDiscordPacketText,
   type DiscordPacketMessage,
+  type DiscordPacketOptions,
 } from "./discord-policy";
 
 export function discordBatchEnabled(state: {
@@ -16,6 +17,7 @@ export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
   dependencies: {
     claim: (limit: number) => Promise<{ leaseId: string; messages: T[] }>;
     getContext: (guildId: string, limit: number) => Promise<T[]>;
+    getPacketOptions?: (guildId: string) => Promise<DiscordPacketOptions>;
     callModel: (prompt: string) => Promise<string>;
     deliver: (
       reply: string,
@@ -25,15 +27,18 @@ export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
     requeue: (ids: number[], leaseId: string) => Promise<void>;
   },
 ): Promise<"idle" | "requeued" | "processed"> {
-  const claim = await dependencies.claim(8);
+  const claim = await dependencies.claim(10);
   if (claim.messages.length === 0) return "idle";
 
   const ids = claim.messages.map((message) => message.id);
   try {
     const guildId = claim.messages[0]!.guildId;
-    const context = await dependencies.getContext(guildId, 30);
+    const context = await dependencies.getContext(guildId, 10);
+    const packetOptions = dependencies.getPacketOptions
+      ? await dependencies.getPacketOptions(guildId)
+      : {};
     const response = await dependencies.callModel(
-      buildDiscordPacketText(claim.messages, context, false),
+      buildDiscordPacketText(claim.messages, context, false, packetOptions),
     );
     if (!response) {
       await dependencies.requeue(ids, claim.leaseId);

@@ -79,6 +79,7 @@ export interface IStorage {
   failDiscordDelivery(id: number, leaseId: string, error: string): Promise<boolean>;
   withDiscordChannelLock<T>(channelId: string, work: () => Promise<T>): Promise<T>;
   getRecentDiscordContext(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
+  getRecentDiscordOwnerCalls(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
   getRecentDiscordActivity(limit?: number): Promise<AshDiscordMessage[]>;
   pruneDiscordMessages(maxRows?: number): Promise<void>;
 }
@@ -630,6 +631,22 @@ export class DbStorage implements IStorage {
       .from(ashDiscordMessages)
       .where(and(
         eq(ashDiscordMessages.guildId, guildId),
+        inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+      ))
+      .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  async getRecentDiscordOwnerCalls(guildId: string, limit: number): Promise<AshDiscordMessage[]> {
+    const selected = await this.listDiscordChannels();
+    if (selected.length === 0) return [];
+    const rows = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(and(
+        eq(ashDiscordMessages.guildId, guildId),
+        eq(ashDiscordMessages.kind, "owner_call"),
         inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
       ))
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))

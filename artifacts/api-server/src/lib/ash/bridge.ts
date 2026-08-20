@@ -15,10 +15,10 @@ import { maybeAddImageInstruction, processImageRequest } from "./image-gen";
 import {
   buildDiscordPacketText,
   DISCORD_PUBLIC_SYSTEM_PROMPT,
-  DISCORD_SERVER_RULES,
   parseDiscordDraftLines,
   type DiscordPacketOptions,
 } from "./discord-policy";
+import { DISCORD_SERVER_RULES } from "./discord-rules";
 import {
   discordBatchEnabled,
   processDiscordBatchOnce,
@@ -124,6 +124,14 @@ export class AshBridge {
 
 [PUBLIC PACKET BOUNDARY]
 The Identity and Soul-Sheet above are Ash's public-facing persona packet. Use them for voice, identity, and continuity in Discord. Do not claim access to or reveal Stillwater's private memories, Ash's Notes, Diary, private chat, Wicked's status, or game state. Do not emit Stillwater-only controls such as NOTES, DIARY, HERALD, STATUS, or PINGS controls in Discord.`,
+      },
+      {
+        role: "developer",
+        name: AGENT_NAME,
+        content: `[DISCORD SERVER RULES — COMPLETE, DISCORD-ONLY BLOCK]
+${DISCORD_SERVER_RULES}
+
+[END COMPLETE DISCORD SERVER RULES]`,
       },
       {
         role: "developer",

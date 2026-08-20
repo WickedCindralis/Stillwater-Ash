@@ -5,6 +5,7 @@ import {
   buildDiscordPacketText,
   DISCORD_PUBLIC_SYSTEM_PROMPT,
   isDiscordCall,
+  isDiscordPlayerTicketChannel,
   parseDiscordDraftLines,
 } from "./discord-policy";
 import {
@@ -16,6 +17,13 @@ test("only the actual guild owner's call is immediate", () => {
   assert.equal(classifyDiscordMessage(true, "owner-1", "owner-1"), "owner_call");
   assert.equal(classifyDiscordMessage(true, "member-1", "owner-1"), "call");
   assert.equal(classifyDiscordMessage(false, "owner-1", "owner-1"), "context");
+});
+
+test("numbered Discord channels are player-ticket channels", () => {
+  assert.equal(isDiscordPlayerTicketChannel("2024-holiday-art"), true);
+  assert.equal(isDiscordPlayerTicketChannel("211-wickedsinlover"), true);
+  assert.equal(isDiscordPlayerTicketChannel("general-chat"), false);
+  assert.equal(isDiscordPlayerTicketChannel("ticket-2024"), false);
 });
 
 test("the public model prompt is immutable and contains no private packet material", () => {

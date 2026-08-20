@@ -15,6 +15,7 @@ import { maybeAddImageInstruction, processImageRequest } from "./image-gen";
 import {
   buildDiscordPacketText,
   DISCORD_PUBLIC_SYSTEM_PROMPT,
+  DISCORD_SERVER_RULES,
   parseDiscordDraftLines,
   type DiscordPacketOptions,
 } from "./discord-policy";

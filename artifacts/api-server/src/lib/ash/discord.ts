@@ -11,7 +11,11 @@ import { randomUUID } from "node:crypto";
 import type { AshDiscordChannel, AshDiscordMessage } from "@workspace/db";
 import { logger } from "../logger";
 import { ashBridge } from "./bridge";
-import { classifyDiscordMessage, isDiscordCall } from "./discord-policy";
+import {
+  classifyDiscordMessage,
+  isDiscordCall,
+  isDiscordPlayerTicketChannel,
+} from "./discord-policy";
 import { storage } from "./storage";
 
 const MESSAGE_CHARS = 1_600;
@@ -141,6 +145,7 @@ class DiscordHerald {
           channel.type !== ChannelType.GuildText
           && channel.type !== ChannelType.GuildAnnouncement
         ) continue;
+        if (isDiscordPlayerTicketChannel(channel.name)) continue;
         const permissions = me ? channel.permissionsFor(me) : null;
         const canRead = !!permissions?.has([
           PermissionsBitField.Flags.ViewChannel,
@@ -181,8 +186,14 @@ class DiscordHerald {
     discordKillSwitch: number;
   }> {
     const availableChannels = this.availableChannels();
-    const [selectedChannels, activity, state] = await Promise.all([
-      storage.listDiscordChannels(),
+    let selectedChannels = await storage.listDiscordChannels();
+    const permittedChannels = selectedChannels.filter(
+      (channel) => !isDiscordPlayerTicketChannel(channel.channelName),
+    );
+    if (permittedChannels.length !== selectedChannels.length) {
+      selectedChannels = await storage.replaceDiscordChannels(permittedChannels);
+    }
+    const [activity, state] = await Promise.all([
       storage.getRecentDiscordActivity(100),
       storage.getState(),
     ]);

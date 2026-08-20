@@ -23,6 +23,7 @@ import {
 } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 import { eq, desc, inArray, and, like, lt, gt, isNull, notInArray, or, sql } from "drizzle-orm";
+import { isDiscordPlayerTicketChannel } from "./discord-policy";
 
 const ASH_ID = "ash";
 
@@ -379,6 +380,9 @@ export class DbStorage implements IStorage {
   async replaceDiscordChannels(
     channels: Array<Omit<AshDiscordChannel, "id" | "selectedAt">>,
   ): Promise<AshDiscordChannel[]> {
+    const permittedChannels = channels.filter(
+      (channel) => !isDiscordPlayerTicketChannel(channel.channelName),
+    );
     await db.transaction(async (tx) => {
       // One global config lock serializes concurrent settings saves. Per-channel
       // locks then make the save wait for already-authorized intake/delivery.
@@ -388,23 +392,23 @@ export class DbStorage implements IStorage {
         .from(ashDiscordChannels);
       const lockIds = [...new Set([
         ...current.map((channel) => channel.channelId),
-        ...channels.map((channel) => channel.channelId),
+        ...permittedChannels.map((channel) => channel.channelId),
       ])].sort();
       for (const channelId of lockIds) {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${channelId}))`);
       }
 
       await tx.delete(ashDiscordChannels);
-      if (channels.length > 0) {
-        await tx.insert(ashDiscordChannels).values(channels);
+      if (permittedChannels.length > 0) {
+        await tx.insert(ashDiscordChannels).values(permittedChannels);
       }
 
       // Revoking a hall also revokes and erases its retained public context.
       // This makes the opt-in boundary true for both future and historic reads.
-      if (channels.length === 0) {
+      if (permittedChannels.length === 0) {
         await tx.delete(ashDiscordMessages);
       } else {
-        const selectedIds = channels.map((channel) => channel.channelId);
+        const selectedIds = permittedChannels.map((channel) => channel.channelId);
         await tx.delete(ashDiscordMessages).where(
           notInArray(ashDiscordMessages.channelId, selectedIds),
         );
@@ -415,11 +419,14 @@ export class DbStorage implements IStorage {
 
   async isDiscordChannelConfigured(channelId: string): Promise<boolean> {
     const rows = await db
-      .select({ id: ashDiscordChannels.id })
+      .select({
+        id: ashDiscordChannels.id,
+        channelName: ashDiscordChannels.channelName,
+      })
       .from(ashDiscordChannels)
       .where(eq(ashDiscordChannels.channelId, channelId))
       .limit(1);
-    return rows.length > 0;
+    return rows.length > 0 && !isDiscordPlayerTicketChannel(rows[0]!.channelName);
   }
 
   async recordDiscordMessage(

@@ -28,6 +28,10 @@ export function isDiscordCall(content: string, botMentioned: boolean): boolean {
   return botMentioned || /\bash(?:[_\s-]*cindralis)?\b/i.test(content);
 }
 
+export function isDiscordPlayerTicketChannel(channelName: string): boolean {
+  return /^\d/.test(channelName.trim());
+}
+
 export function classifyDiscordMessage(
   called: boolean,
   authorId: string,

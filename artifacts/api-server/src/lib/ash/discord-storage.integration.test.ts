@@ -121,6 +121,17 @@ test("delivery leases fence stale workers and channel revocation waits for intak
     });
     await entered;
 
+    const visibleActivity = await storage.getRecentDiscordActivity(100);
+    assert.ok(
+      visibleActivity.some((activity) => activity.id === inserted.message.id),
+      "a Discord call should remain visible in the activity feed",
+    );
+    assert.equal(
+      visibleActivity.some((activity) => activity.content === "bounded public context"),
+      false,
+      "non-triggering Discord context should stay out of the activity feed",
+    );
+
     let revocationSettled = false;
     const revocation = storage.replaceDiscordChannels(originalInput).then(() => {
       revocationSettled = true;

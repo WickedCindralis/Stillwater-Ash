@@ -660,7 +660,10 @@ export class DbStorage implements IStorage {
     const rows = await db
       .select()
       .from(ashDiscordMessages)
-      .where(inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)))
+      .where(and(
+        inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+        inArray(ashDiscordMessages.kind, ["call", "owner_call"]),
+      ))
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
       .limit(limit);
     return rows.reverse();

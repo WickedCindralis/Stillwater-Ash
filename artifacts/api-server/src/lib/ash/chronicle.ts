@@ -33,10 +33,24 @@ function parseChronicles(payload: unknown): UpstreamChronicle[] {
   return values.map((value) => {
     if (!value || typeof value !== "object") throw new Error("Blackthorn chronicle entry is malformed");
     const item = value as Record<string, unknown>;
-    const id = typeof item.id === "string" ? item.id : typeof item.chronicleId === "string" ? item.chronicleId : "";
+    const rawId = item.id ?? item.chronicleId;
+    const id =
+      typeof rawId === "string"
+        ? rawId
+        : typeof rawId === "number" && Number.isFinite(rawId)
+          ? String(rawId)
+          : "";
     const content = typeof item.content === "string" ? item.content : typeof item.text === "string" ? item.text : "";
     if (!id.trim() || !content.trim()) throw new Error("Blackthorn chronicle entry lacks id or content");
-    return { id: id.trim(), content, metadata: item.metadata };
+    return {
+      id: id.trim(),
+      content,
+      metadata: {
+        ...(item.metadata && typeof item.metadata === "object" ? item.metadata : {}),
+        ...(typeof item.chronicleDate === "string" ? { chronicleDate: item.chronicleDate } : {}),
+        ...(typeof item.approvedAt === "string" ? { approvedAt: item.approvedAt } : {}),
+      },
+    };
   });
 }
 

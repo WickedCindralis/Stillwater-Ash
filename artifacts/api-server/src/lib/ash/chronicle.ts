@@ -14,7 +14,12 @@ type UpstreamChronicle = {
 
 function configured(): { baseUrl: string; token: string } | null {
   const baseUrl = process.env.BLACKTHORN_BASE_URL?.trim().replace(/\/+$/, "");
-  const token = (process.env.BLACKTHORN_BEARER_TOKEN || process.env.BLACKTHORN_API_TOKEN || "").trim();
+  const token = (
+    process.env.STILLWATER_CHRONICLE_TOKEN ||
+    process.env.BLACKTHORN_BEARER_TOKEN ||
+    process.env.BLACKTHORN_API_TOKEN ||
+    ""
+  ).trim();
   return baseUrl && token ? { baseUrl, token } : null;
 }
 

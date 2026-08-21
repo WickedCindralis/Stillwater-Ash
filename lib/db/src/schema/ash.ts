@@ -128,6 +128,28 @@ export const ashDiaryEntries = pgTable("ash_diary_entries", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Chronicles delivered by Blackthorn's approved Stillwater inbox. The upstream
+// ID is the idempotency key; delivery is not complete until the proactive diary
+// write has succeeded and the Stillwater-only acknowledgement has been sent.
+export const ashChronicles = pgTable(
+  "ash_chronicles",
+  {
+    id: serial("id").primaryKey(),
+    chronicleId: text("chronicle_id").notNull(),
+    content: text("content").notNull(),
+    source: text("source").notNull().default("blackthorn_stillwater"),
+    sourceMetadata: json("source_metadata"),
+    status: text("status").notNull().default("received"), // received | acknowledged
+    receivedAt: timestamp("received_at").notNull().defaultNow(),
+    acknowledgedAt: timestamp("acknowledged_at"),
+    lastError: text("last_error").notNull().default(""),
+  },
+  (table) => [
+    uniqueIndex("ash_chronicles_chronicle_id_unique").on(table.chronicleId),
+    index("ash_chronicles_status_idx").on(table.status, table.id),
+  ],
+);
+
 // Activity feed: diary entries, bridge crossings (restarts), status changes, ping toggles.
 export const ashActivity = pgTable("ash_activity", {
   id: serial("id").primaryKey(),
@@ -178,12 +200,19 @@ export const insertDiaryEntrySchema = createInsertSchema(ashDiaryEntries).omit({
   id: true,
   createdAt: true,
 });
+export const insertChronicleSchema = createInsertSchema(ashChronicles).omit({
+  id: true,
+  receivedAt: true,
+  acknowledgedAt: true,
+});
 
 export type AshState = typeof ashState.$inferSelect;
 export type AshMessage = typeof ashMessages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type AshDiaryEntry = typeof ashDiaryEntries.$inferSelect;
 export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
+export type AshChronicle = typeof ashChronicles.$inferSelect;
+export type InsertChronicle = z.infer<typeof insertChronicleSchema>;
 export type AshActivity = typeof ashActivity.$inferSelect;
 export type AshDiscordChannel = typeof ashDiscordChannels.$inferSelect;
 export type AshDiscordMessage = typeof ashDiscordMessages.$inferSelect;

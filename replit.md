@@ -10,6 +10,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only; required before first run in a fresh environment)
 - Required env: `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD` (login password), `OPENAI_API_KEY` (OpenAI key for chat + image gen; matches the NorthFlank naming — `ASH_OPENAI_API_KEY` still works as a fallback)
 - Optional env: `ELEVENLABS_API_KEY` (voice/TTS; the `/api/tts` route returns an error until it is set, plus a voice ID in settings), `DISCORD_BOT_TOKEN` (Discord Court Herald; requires the Message Content intent)
+- Optional env: `BLACKTHORN_BASE_URL` and `BLACKTHORN_BEARER_TOKEN` (approved Stillwater chronicle inbox; chronicles are fetched only during eligible proactive windows)
 
 ## Stack
 

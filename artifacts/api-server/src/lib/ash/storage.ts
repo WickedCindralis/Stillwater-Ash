@@ -3,6 +3,7 @@ import {
   ashState,
   ashMessages,
   ashDiaryEntries,
+  ashChronicles,
   ashActivity,
   ashChessGames,
   ashConnect4Games,
@@ -13,6 +14,8 @@ import {
   type InsertMessage,
   type AshDiaryEntry,
   type InsertDiaryEntry,
+  type AshChronicle,
+  type InsertChronicle,
   type AshActivity,
   ashTiktokComments,
   type AshTiktokComment,
@@ -40,6 +43,10 @@ export interface IStorage {
   getRecentHistory(limit: number): Promise<AshMessage[]>;
   getDiaryEntries(): Promise<AshDiaryEntry[]>;
   createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry>;
+  saveChronicle(entry: InsertChronicle): Promise<{ chronicle: AshChronicle; created: boolean }>;
+  getPendingChronicles(): Promise<AshChronicle[]>;
+  markChronicleAcknowledged(chronicleId: string): Promise<void>;
+  recordChronicleError(chronicleId: string, error: string): Promise<void>;
   deleteDiaryEntry(id: number): Promise<void>;
   logActivity(kind: string, message: string): Promise<void>;
   getActivity(limit?: number): Promise<AshActivity[]>;
@@ -204,6 +211,41 @@ export class DbStorage implements IStorage {
   async createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry> {
     const rows = await db.insert(ashDiaryEntries).values(entry).returning();
     return rows[0]!;
+  }
+
+  async saveChronicle(entry: InsertChronicle): Promise<{ chronicle: AshChronicle; created: boolean }> {
+    const existing = await db
+      .select()
+      .from(ashChronicles)
+      .where(eq(ashChronicles.chronicleId, entry.chronicleId))
+      .limit(1);
+    if (existing[0]) return { chronicle: existing[0], created: false };
+    const rows = await db.insert(ashChronicles).values(entry).onConflictDoNothing({
+      target: ashChronicles.chronicleId,
+    }).returning();
+    if (rows[0]) return { chronicle: rows[0], created: true };
+    const retried = await db.select().from(ashChronicles)
+      .where(eq(ashChronicles.chronicleId, entry.chronicleId)).limit(1);
+    if (!retried[0]) throw new Error("Chronicle insert was not visible after conflict");
+    return { chronicle: retried[0], created: false };
+  }
+
+  async getPendingChronicles(): Promise<AshChronicle[]> {
+    return db.select().from(ashChronicles)
+      .where(eq(ashChronicles.status, "received"))
+      .orderBy(ashChronicles.id);
+  }
+
+  async markChronicleAcknowledged(chronicleId: string): Promise<void> {
+    await db.update(ashChronicles)
+      .set({ status: "acknowledged", acknowledgedAt: new Date(), lastError: "" })
+      .where(eq(ashChronicles.chronicleId, chronicleId));
+  }
+
+  async recordChronicleError(chronicleId: string, error: string): Promise<void> {
+    await db.update(ashChronicles)
+      .set({ lastError: error.slice(0, 1000) })
+      .where(eq(ashChronicles.chronicleId, chronicleId));
   }
 
   async deleteDiaryEntry(id: number): Promise<void> {

@@ -23,7 +23,12 @@ import {
   discordBatchEnabled,
   processDiscordBatchOnce,
 } from "./discord-batch";
-import type { AshDiscordMessage, AshMessage } from "@workspace/db";
+import {
+  acknowledgeBlackthornChronicle,
+  buildChronicleContext,
+  receiveBlackthornChronicles,
+} from "./chronicle";
+import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
 // intervals, proactive self-prompt (reflective) windows, DIARY: parsing,
@@ -891,6 +896,21 @@ GROUND RULES:
       this.processingLock = true;
       try {
         let prompt = this.buildStaticSelfPrompt();
+        // Blackthorn delivery is deliberately limited to the approved
+        // Stillwater inbox. A failed fetch must not prevent a normal
+        // reflective window or strand already-saved chronicles.
+        try {
+          await receiveBlackthornChronicles();
+        } catch (error) {
+          this.error("Blackthorn chronicle fetch failed; keeping local pending deliveries:", error);
+        }
+        let pendingChronicles: AshChronicle[] = [];
+        try {
+          pendingChronicles = await storage.getPendingChronicles();
+          prompt += buildChronicleContext(pendingChronicles);
+        } catch (error) {
+          this.error("Failed to load local Blackthorn chronicles:", error);
+        }
 
         const state = await storage.getState().catch(() => null);
         const currentStatus = state?.status?.toLowerCase() || "online";
@@ -932,6 +952,20 @@ GROUND RULES:
             await storage.createDiaryEntry({ content: trimmed });
             this.log(`Self-prompt reflection saved to diary (${trimmed.length} chars)`);
             await storage.logActivity("diary_entry", "Ash reflected in his diary").catch(() => {});
+            // Only acknowledge after the diary write succeeds. Each
+            // acknowledgement is independent so a transient failure leaves
+            // only that chronicle eligible for a safe retry next window.
+            for (const chronicle of pendingChronicles) {
+              try {
+                await acknowledgeBlackthornChronicle(chronicle);
+              } catch (error) {
+                await storage.recordChronicleError(
+                  chronicle.chronicleId,
+                  error instanceof Error ? error.message : "Chronicle acknowledgement failed",
+                ).catch(() => {});
+                this.error(`Failed to acknowledge Blackthorn chronicle ${chronicle.chronicleId}:`, error);
+              }
+            }
           }
         }
       } catch (e) {

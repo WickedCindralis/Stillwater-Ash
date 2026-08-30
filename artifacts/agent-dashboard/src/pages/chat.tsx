@@ -12,6 +12,22 @@ import ChessPanel from "@/components/chess-panel";
 import throneDamask from "@/assets/throne-damask.jpg";
 import Connect4Panel from "@/components/connect4-panel";
 
+type SendMessageResponse = {
+  wickedMessage: AshMessage;
+  ashMessage: AshMessage | null;
+};
+
+function mergeLatestMessages(
+  current: AshMessage[] | undefined,
+  incoming: Array<AshMessage | null>,
+): AshMessage[] {
+  const byId = new Map((current ?? []).map((message) => [message.id, message]));
+  for (const message of incoming) {
+    if (message) byId.set(message.id, message);
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id).slice(-300);
+}
+
 const STATUS_LABELS: Record<string, string> = {
   alert: "Searching",
   standby: "Guarding",
@@ -130,12 +146,16 @@ export default function ChatPage() {
 
   const sendMutation = useMutation({
     mutationFn: async (payload: { content: string; imageDataUrl?: string; requestImage: boolean }) => {
-      await apiRequest("POST", "/api/messages", payload);
+      const response = await apiRequest("POST", "/api/messages", payload);
+      return (await response.json()) as SendMessageResponse;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/state"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/diary"] });
+    onSuccess: ({ wickedMessage, ashMessage }) => {
+      queryClient.setQueryData<AshMessage[]>(["/api/messages"], (current) =>
+        mergeLatestMessages(current, [wickedMessage, ashMessage]),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/state"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/diary"] });
     },
   });
 
@@ -175,9 +195,10 @@ export default function ChatPage() {
     },
   });
 
+  const latestMessageId = allMessages[allMessages.length - 1]?.id ?? 0;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [latestMessageId, sendMutation.isPending]);
 
   const handleSend = () => {
     const content = message.trim();

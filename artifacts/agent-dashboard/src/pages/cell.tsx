@@ -3,6 +3,22 @@ import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState } from "@/lib/types";
+
+type SendMessageResponse = {
+  wickedMessage: AshMessage;
+  ashMessage: AshMessage | null;
+};
+
+function mergeLatestMessages(
+  current: AshMessage[] | undefined,
+  incoming: Array<AshMessage | null>,
+): AshMessage[] {
+  const byId = new Map((current ?? []).map((message) => [message.id, message]));
+  for (const message of incoming) {
+    if (message) byId.set(message.id, message);
+  }
+  return [...byId.values()].sort((a, b) => a.id - b.id).slice(-300);
+}
 import {
   Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords, CircleDot,
   Volume2, VolumeX,
@@ -199,16 +215,21 @@ export default function CellPage() {
 
   const sendMutation = useMutation({
     mutationFn: async (payload: { content: string; imageDataUrl?: string; requestImage: boolean }) => {
-      await apiRequest("POST", "/api/messages", payload);
+      const response = await apiRequest("POST", "/api/messages", payload);
+      return (await response.json()) as SendMessageResponse;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
+    onSuccess: ({ wickedMessage, ashMessage }) => {
+      queryClient.setQueryData<AshMessage[]>(["/api/messages"], (current) =>
+        mergeLatestMessages(current, [wickedMessage, ashMessage]),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
     },
   });
 
+  const latestMessageId = allMessages[allMessages.length - 1]?.id ?? 0;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [latestMessageId, sendMutation.isPending]);
 
   // Auto-speak new Ash replies while the voice toggle is on.
   useEffect(() => {

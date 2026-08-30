@@ -3,4 +3,4 @@
 - [Replit deploy health probe](replit-deploy-health.md) — platform probes the bare service path (/api), not just configured /api/healthz; answer 200 at base path or logs show healthcheck 500s (also transient on cold starts).
 - [Blackthorn chronicle endpoint](blackthorn-chronicle-endpoint.md) — Stillwater-only route is live; verify exact payload and acknowledgement flow without touching Summer Palace.
 - [Replit VM URL change](replit-vm-url-change.md) — Reserved VM can receive a new generated hostname while keeping the same app image and run configuration.
-- [Capped chat visibility](capped-chat-visibility.md) — a fixed-size message window must react to newest IDs, not array length, or persisted sends appear dropped after the cap.
+- [Background chat refresh](background-chat-refresh.md) — Stillwater must refresh messages on tab focus/reconnect and continue polling while backgrounded; history paging is not retention.

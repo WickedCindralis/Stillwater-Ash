@@ -25,7 +25,7 @@ function mergeLatestMessages(
   for (const message of incoming) {
     if (message) byId.set(message.id, message);
   }
-  return [...byId.values()].sort((a, b) => a.id - b.id).slice(-300);
+  return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -108,12 +108,14 @@ export default function ChatPage() {
   const { data: state } = useQuery<AshState>({
     queryKey: ["/api/state"],
     refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
   });
   const { data: messages = [], isLoading: messagesLoading } = useQuery<AshMessage[]>({
     queryKey: ["/api/messages"],
     refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
   });
-  // Older history loaded on demand (the main query only carries the latest 300)
+  // Older history is loaded on demand; no messages are removed from storage.
   const [olderMessages, setOlderMessages] = useState<AshMessage[]>([]);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -153,7 +155,6 @@ export default function ChatPage() {
       queryClient.setQueryData<AshMessage[]>(["/api/messages"], (current) =>
         mergeLatestMessages(current, [wickedMessage, ashMessage]),
       );
-      void queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/state"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/diary"] });
     },

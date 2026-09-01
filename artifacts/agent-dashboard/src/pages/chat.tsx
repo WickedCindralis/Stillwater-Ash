@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
-  Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings,
+  Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings, Monitor, Copy,
   Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone,
 } from "lucide-react";
 import { SiDiscord } from "react-icons/si";
@@ -102,6 +102,7 @@ export default function ChatPage() {
   const [imageMode, setImageMode] = useState(false);
   const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess" | "connect4">("none");
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
+  const [pairingToken, setPairingToken] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -165,6 +166,27 @@ export default function ChatPage() {
       await apiRequest("PATCH", "/api/state", patch);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/state"] }),
+  });
+
+  const pairScreenCaptureMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/screen-capture/pair");
+      return (await response.json()) as { token: string; companionId: string };
+    },
+    onSuccess: ({ token }) => {
+      setPairingToken(token);
+      queryClient.invalidateQueries({ queryKey: ["/api/state"] });
+    },
+  });
+
+  const revokeScreenCaptureMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/screen-capture/revoke");
+    },
+    onSuccess: () => {
+      setPairingToken(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/state"] });
+    },
   });
 
   const deleteDiaryMutation = useMutation({
@@ -775,6 +797,88 @@ export default function ChatPage() {
                   data-testid="input-ping-override"
                 />
               </label>
+              <div className="border-t border-white/10 pt-3 mt-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2">
+                    <Monitor className="w-4 h-4 text-gold/70 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-sm text-white/80">Desktop screenshots</span>
+                      <p className="text-white/40 text-xs">Fresh full-desktop capture on each scheduled proactive ping</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => settingsMutation.mutate({ screenCaptureEnabled: state.screenCaptureEnabled === 1 ? 0 : 1 })}
+                    disabled={!state.screenCaptureCompanionId || settingsMutation.isPending}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                      state.screenCaptureEnabled === 1
+                        ? "bg-gold/15 text-gold border border-gold/30"
+                        : "bg-white/10 text-white/40 border border-white/15"
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    data-testid="button-screenshots-toggle"
+                    title={state.screenCaptureCompanionId ? "Turn automatic screenshots on or off" : "Pair the Windows companion first"}
+                  >
+                    {state.screenCaptureEnabled === 1 ? "ON" : "OFF"}
+                  </button>
+                </div>
+                <p className="text-white/35 text-xs mt-2">
+                  ON runs automatically after pairing—there is no approval prompt for each screenshot. OFF stops new captures.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 mt-3">
+                  <a
+                    href="/api/screen-capture/companion"
+                    download
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white/70 border border-white/20 hover:bg-white/5"
+                    data-testid="link-download-companion"
+                  >
+                    Download Windows companion
+                  </a>
+                  <button
+                    onClick={() => pairScreenCaptureMutation.mutate()}
+                    disabled={pairScreenCaptureMutation.isPending}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-gold border border-gold/30 hover:bg-gold/10 disabled:opacity-50"
+                    data-testid="button-pair-screenshots"
+                  >
+                    {pairScreenCaptureMutation.isPending ? "Creating..." : state.screenCaptureCompanionId ? "Pair new companion" : "Pair Windows companion"}
+                  </button>
+                  {state.screenCaptureCompanionId && (
+                    <button
+                      onClick={() => revokeScreenCaptureMutation.mutate()}
+                      disabled={revokeScreenCaptureMutation.isPending}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-400 border border-red-500/30 hover:bg-red-500/10 disabled:opacity-50"
+                      data-testid="button-revoke-screenshots"
+                    >
+                      Revoke pairing
+                    </button>
+                  )}
+                </div>
+                {pairingToken && (
+                  <div className="mt-3 rounded-lg bg-black/60 border border-gold/20 p-3">
+                    <p className="text-xs text-gold/80 mb-1">Copy this one-time pairing token into the Windows companion:</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        readOnly
+                        value={pairingToken}
+                        className="min-w-0 flex-1 bg-black border border-white/15 rounded px-2 py-1.5 text-[11px] text-white/80 font-mono"
+                        data-testid="input-pairing-token"
+                      />
+                      <button
+                        onClick={() => void navigator.clipboard?.writeText(pairingToken)}
+                        className="p-2 rounded text-gold hover:bg-gold/10"
+                        title="Copy pairing token"
+                        data-testid="button-copy-pairing-token"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <p className="text-white/35 text-[11px] mt-2">This token is shown only once. Pairing again replaces the previous token.</p>
+                  </div>
+                )}
+                <div className="text-[11px] text-white/35 mt-2 space-y-0.5">
+                  <p>Companion: {state.screenCaptureCompanionId ? "paired" : "not paired"}{state.screenCaptureLastSeen ? ` • last seen ${new Date(state.screenCaptureLastSeen).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}</p>
+                  {state.screenCaptureLastCaptureAt && <p>Last capture: {new Date(state.screenCaptureLastCaptureAt).toLocaleString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}</p>}
+                  {state.screenCaptureLastError && <p className="text-red-300/70">{state.screenCaptureLastError}</p>}
+                </div>
+              </div>
             </div>
 
             {/* Stats */}

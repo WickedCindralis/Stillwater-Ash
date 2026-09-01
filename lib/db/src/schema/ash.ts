@@ -32,6 +32,13 @@ export const ashState = pgTable("ash_state", {
   selfPromptIncludeHistory: integer("self_prompt_include_history")
     .notNull()
     .default(1), // include recent chat history in proactive self-prompt windows
+  screenCaptureEnabled: integer("screen_capture_enabled").notNull().default(0),
+  screenCaptureTokenHash: text("screen_capture_token_hash").notNull().default(""),
+  screenCaptureTokenCreatedAt: timestamp("screen_capture_token_created_at"),
+  screenCaptureCompanionId: text("screen_capture_companion_id").notNull().default(""),
+  screenCaptureLastSeen: timestamp("screen_capture_last_seen"),
+  screenCaptureLastCaptureAt: timestamp("screen_capture_last_capture_at"),
+  screenCaptureLastError: text("screen_capture_last_error").notNull().default(""),
   modelPrimary: text("model_primary").notNull().default("gpt-5.1"),
   modelFallback: text("model_fallback").notNull().default("gpt-5-mini"),
   activeModel: text("active_model").notNull().default("primary"), // "primary" | "fallback"
@@ -248,6 +255,7 @@ export const updateSettingsSchema = z.object({
   apiKillSwitch: z.number().int().min(0).max(1).optional(),
   discordKillSwitch: z.number().int().min(0).max(1).optional(),
   selfPromptIncludeHistory: z.number().int().min(0).max(1).optional(),
+  screenCaptureEnabled: z.number().int().min(0).max(1).optional(),
   modelPrimary: z.string().optional(),
   modelFallback: z.string().optional(),
   activeModel: z.enum(["primary", "fallback"]).optional(),

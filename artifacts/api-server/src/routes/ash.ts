@@ -5,7 +5,7 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema, type AshState } from "@workspace/db";
 import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
@@ -13,7 +13,17 @@ import { ashBridge } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
 import { discordHerald } from "../lib/ash/discord";
+import {
+  acceptCapture,
+  authenticateScreenCaptureToken,
+  cancelPendingScreenCapture,
+  getPendingCaptureRequest,
+  pairScreenCapture,
+  resumeScreenCaptureRequests,
+  revokeScreenCapture,
+} from "../lib/ash/screen-capture";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
+import path from "node:path";
 
 declare module "express-session" {
   interface SessionData {
@@ -37,6 +47,11 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
     return;
   }
   res.status(401).json({ error: "Not authenticated" });
+}
+
+function publicState(state: AshState): Omit<AshState, "screenCaptureTokenHash"> {
+  const { screenCaptureTokenHash: _tokenHash, ...safeState } = state;
+  return safeState;
 }
 
 // ── Auth ──
@@ -66,7 +81,7 @@ router.get("/auth/me", (req, res): void => {
 // ── State / settings ──
 router.get("/state", requireAuth, async (_req, res): Promise<void> => {
   const state = await storage.getState();
-  res.json(state);
+  res.json(publicState(state));
 });
 
 router.patch("/state", requireAuth, async (req, res): Promise<void> => {
@@ -77,8 +92,68 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
       .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     return;
   }
+  if (parsed.data.screenCaptureEnabled === 1) {
+    const current = await storage.getState();
+    if (!current.screenCaptureTokenHash) {
+      res.status(409).json({ error: "Pair the Windows companion before turning screenshots on" });
+      return;
+    }
+  } else if (parsed.data.screenCaptureEnabled === 0) {
+    cancelPendingScreenCapture();
+  }
   const state = await storage.updateState(parsed.data);
-  res.json(state);
+  if (parsed.data.screenCaptureEnabled === 1) {
+    resumeScreenCaptureRequests();
+  }
+  res.json(publicState(state));
+});
+
+// ── Desktop screen capture companion ──
+router.post("/screen-capture/pair", requireAuth, async (_req, res): Promise<void> => {
+  const pairing = await pairScreenCapture();
+  res.json(pairing);
+});
+
+router.post("/screen-capture/revoke", requireAuth, async (_req, res): Promise<void> => {
+  await revokeScreenCapture();
+  res.json({ ok: true });
+});
+
+router.get("/screen-capture/companion", requireAuth, (_req, res): void => {
+  const companionPath = path.resolve(
+    __dirname,
+    "../../../desktop-companion/stillwater-screen-capture.ps1",
+  );
+  res.download(companionPath, "stillwater-screen-capture.ps1");
+});
+
+function companionToken(req: Request): string {
+  const header = req.get("authorization") || "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+}
+
+router.get("/screen-capture/request", async (req, res): Promise<void> => {
+  const token = companionToken(req);
+  if (!(await authenticateScreenCaptureToken(token))) {
+    res.status(401).json({ error: "Invalid companion token" });
+    return;
+  }
+  const request = await getPendingCaptureRequest(token);
+  res.json(request ? { requestId: request.requestId, expiresAt: request.expiresAt } : { requestId: null });
+});
+
+router.post("/screen-capture/request/:id", async (req, res): Promise<void> => {
+  const token = companionToken(req);
+  if (!(await authenticateScreenCaptureToken(token))) {
+    res.status(401).json({ error: "Invalid companion token" });
+    return;
+  }
+  const result = await acceptCapture(token, String(req.params.id), req.body?.imageDataUrl);
+  if (!result.accepted) {
+    res.status(409).json({ error: result.error || "Capture was not accepted" });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 // ── Chat ──

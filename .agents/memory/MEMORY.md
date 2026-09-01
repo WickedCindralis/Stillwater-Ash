@@ -4,3 +4,4 @@
 - [Blackthorn chronicle endpoint](blackthorn-chronicle-endpoint.md) — Stillwater-only route is live; verify exact payload and acknowledgement flow without touching Summer Palace.
 - [Replit VM URL change](replit-vm-url-change.md) — Reserved VM can receive a new generated hostname while keeping the same app image and run configuration.
 - [Background chat refresh](background-chat-refresh.md) — Stillwater must refresh messages on tab focus/reconnect and continue polling while backgrounded; history paging is not retention.
+- [Ephemeral capture generations](ephemeral-capture-generations.md) — OFF/revoke must invalidate pending and delivered images through the final provider boundary, including OFF→ON races.

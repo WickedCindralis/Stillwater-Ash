@@ -9,6 +9,12 @@ export interface AshState {
   apiKillSwitch: number;
   discordKillSwitch: number;
   selfPromptIncludeHistory: number;
+  screenCaptureEnabled: number;
+  screenCaptureTokenCreatedAt: string | null;
+  screenCaptureCompanionId: string;
+  screenCaptureLastSeen: string | null;
+  screenCaptureLastCaptureAt: string | null;
+  screenCaptureLastError: string;
   modelPrimary: string;
   modelFallback: string;
   activeModel: string;

@@ -122,9 +122,13 @@ router.post("/screen-capture/revoke", requireAuth, async (_req, res): Promise<vo
 router.get("/screen-capture/companion", requireAuth, (_req, res): void => {
   const companionPath = path.resolve(
     __dirname,
-    "../../../desktop-companion/stillwater-screen-capture.ps1",
+    "../../../desktop-companion/release/Stillwater.Companion.exe",
   );
-  res.download(companionPath, "stillwater-screen-capture.ps1");
+  res.download(companionPath, "Stillwater.Companion.exe", (error) => {
+    if (error && !res.headersSent) {
+      res.status(503).json({ error: "The Windows app package is not available yet" });
+    }
+  });
 });
 
 function companionToken(req: Request): string {

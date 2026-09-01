@@ -823,6 +823,9 @@ export default function ChatPage() {
                 <p className="text-white/35 text-xs mt-2">
                   ON runs automatically after pairing—there is no approval prompt for each screenshot. OFF stops new captures.
                 </p>
+                <p className="text-white/45 text-xs mt-2">
+                  Easy setup: download the app, pair it here, paste the one-time token into the app, then click Start.
+                </p>
                 <div className="flex flex-wrap items-center gap-2 mt-3">
                   <a
                     href="/api/screen-capture/companion"
@@ -830,7 +833,7 @@ export default function ChatPage() {
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white/70 border border-white/20 hover:bg-white/5"
                     data-testid="link-download-companion"
                   >
-                    Download Windows companion
+                    Download Windows app
                   </a>
                   <button
                     onClick={() => pairScreenCaptureMutation.mutate()}
@@ -853,7 +856,7 @@ export default function ChatPage() {
                 </div>
                 {pairingToken && (
                   <div className="mt-3 rounded-lg bg-black/60 border border-gold/20 p-3">
-                    <p className="text-xs text-gold/80 mb-1">Copy this one-time pairing token into the Windows companion:</p>
+                    <p className="text-xs text-gold/80 mb-1">Copy this one-time pairing token into the Windows app:</p>
                     <div className="flex items-center gap-2">
                       <input
                         readOnly

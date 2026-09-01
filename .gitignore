@@ -7,6 +7,9 @@ out-tsc
 *.tsbuildinfo
 .expo
 .expo-shared
+desktop-companion/bin/
+desktop-companion/obj/
+desktop-companion/release/
 
 # dependencies
 node_modules

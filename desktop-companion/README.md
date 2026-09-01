@@ -1,5 +1,16 @@
 # Stillwater Windows desktop companion
 
+## Recommended: Windows app
+
+In Stillwater, open **Ash → Settings**, click **Download Windows app**, and
+open the downloaded `Stillwater.Companion.exe`. Enter the Stillwater URL and
+the one-time token from **Pair Windows companion**, click **Save details**, and
+then click **Start**. You do not need PowerShell or a command prompt.
+
+The app remembers the encrypted setup for your Windows user. It can be stopped
+at any time, and the dashboard's **Screenshots ON/OFF** switch remains the final
+control over whether new images are captured.
+
 This companion is a small PowerShell process for Windows 10/11. It captures the
 combined virtual desktop across all connected monitors and uploads a fresh JPEG
 only when Stillwater has an eligible proactive ping waiting.

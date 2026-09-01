@@ -33,6 +33,7 @@ import {
   type FreshScreenCapture,
   waitForFreshScreenCapture,
 } from "./screen-capture";
+import { formatPrivateHistory } from "./history-format";
 import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
@@ -283,24 +284,13 @@ The opening and closing markers each go on their own line. A short, single-line 
         const history = await storage.getRecentHistory(HISTORY_LIMIT);
         const relevant = history.filter((m: AshMessage) => m.content && m.content.trim().length > 0);
         if (relevant.length > 0) {
-          // Stamp Wicked's most recent message with when she actually sent it,
-          // so "the last thing she said" stays anchored in real time.
-          const lastWickedIdx = relevant.map((m) => m.role).lastIndexOf("wicked");
-          const lines = relevant.map((m: AshMessage, i: number) => {
-            const speaker = m.role === "wicked" ? "[Wicked]" : `[${name}]`;
-            const stamp = i === lastWickedIdx && m.createdAt
-              ? ` (sent ${new Date(m.createdAt).toLocaleString("en-US", {
-                  weekday: "long", month: "long", day: "numeric", year: "numeric",
-                  hour: "numeric", minute: "2-digit", hour12: true,
-                  timeZone: "America/New_York",
-                })} Eastern)`
-              : "";
-            return `${speaker}${stamp} ${m.content}`;
-          }).join("\n");
+          // Group the bounded history by Eastern calendar date and keep a
+          // rolling sent-time window for Wicked's four newest messages.
+          const lines = formatPrivateHistory(relevant, name);
           messages.push({
             role: "assistant",
             name,
-            content: `[PRIVATE MESSAGES — WICKED]\nYour recent private conversation with Wicked (oldest first):\n${lines}`,
+            content: `[PRIVATE MESSAGES — WICKED]\nYour recent private conversation with Wicked (oldest first). Messages are grouped by Eastern date; the four newest Wicked messages include their sent time:\n${lines}`,
           });
         }
       } catch (e) {

@@ -183,6 +183,7 @@ export async function acceptCapture(
     return { accepted: false, error: "Capture request was invalidated before delivery" };
   }
   clearPending(validated);
+  await storage.logActivity("screen_capture", "Screenshot taken").catch(() => {});
   return { accepted: true };
 }
 

@@ -9,6 +9,7 @@ const KIND_LABELS: Record<string, string> = {
   status: "Status",
   pings_off: "pings_off",
   pings_on: "pings_on",
+  screen_capture: "Screenshot",
 };
 
 function formatEst(iso: string): string {

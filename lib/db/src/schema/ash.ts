@@ -157,10 +157,10 @@ export const ashChronicles = pgTable(
   ],
 );
 
-// Activity feed: diary entries, bridge crossings (restarts), status changes, ping toggles.
+// Activity feed: diary entries, bridge crossings (restarts), status changes, ping toggles, screenshots.
 export const ashActivity = pgTable("ash_activity", {
   id: serial("id").primaryKey(),
-  kind: text("kind").notNull(), // "diary_entry" | "bridge" | "status" | "pings_off" | "pings_on"
+  kind: text("kind").notNull(), // "diary_entry" | "bridge" | "status" | "pings_off" | "pings_on" | "screen_capture"
   message: text("message").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

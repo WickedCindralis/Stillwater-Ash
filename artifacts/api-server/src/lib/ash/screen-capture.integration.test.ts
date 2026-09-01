@@ -41,11 +41,28 @@ test("screen capture pairing and one-shot delivery stay bounded", async () => {
     assert.ok(pending?.requestId);
     assert.equal(await getPendingCaptureRequest("wrong-token"), null);
 
+    const activityBeforeInvalid = new Set((await storage.getActivity(100)).map((event) => event.id));
     const invalid = await acceptCapture(token, pending.requestId, "not-an-image");
     assert.equal(invalid.accepted, false);
+    assert.equal(
+      (await storage.getActivity(100)).some(
+        (event) => !activityBeforeInvalid.has(event.id) && event.kind === "screen_capture",
+      ),
+      false,
+      "invalid images must not create screenshot activity",
+    );
 
     const accepted = await acceptCapture(token, pending.requestId, ONE_PIXEL_PNG);
     assert.equal(accepted.accepted, true);
+    const activityAfterAccepted = await storage.getActivity(100);
+    assert.ok(
+      activityAfterAccepted.some(
+        (event) => !activityBeforeInvalid.has(event.id) &&
+          event.kind === "screen_capture" &&
+          event.message === "Screenshot taken",
+      ),
+      "accepted screenshots must create a screenshot activity",
+    );
     const capture = await delivered;
     assert.equal(capture?.imageDataUrl, ONE_PIXEL_PNG);
     assert.equal(isFreshScreenCaptureCurrent(capture!), true);

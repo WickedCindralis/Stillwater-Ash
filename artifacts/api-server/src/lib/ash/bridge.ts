@@ -496,6 +496,7 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
 
     try {
       let response;
+      this.log(`OpenAI API call started [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}]`);
       // Retry transient failures (429 rate limits, 5xx) with a growing pause.
       for (let attempt = 1; ; attempt++) {
         try {
@@ -532,6 +533,7 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
           this.error("Failed to track token usage:", e);
         }
       }
+      this.log(`OpenAI API call completed [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, totalTokens=${totalTokens}]`);
       return responseText;
     } catch (e) {
       this.lastApiCallTime = Date.now();
@@ -994,12 +996,14 @@ GROUND RULES:
         if (screenshotDataUrl && (!freshCapture || !isFreshScreenCaptureCurrent(freshCapture))) {
           screenshotDataUrl = null;
         }
+        this.log(`Proactive window: sending OpenAI API call [vision=${Boolean(screenshotDataUrl)}]`);
         const response = await this.callOpenAI(
           prompt,
           "self_prompt",
           screenshotDataUrl || undefined,
           freshCapture,
         );
+        this.log(`Proactive window: OpenAI response received [chars=${response.length}]`);
         if (!response) continue;
 
         // NOTE: do NOT run parseDiaryEntries here. In a reflective window the

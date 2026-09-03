@@ -49,8 +49,14 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
   res.status(401).json({ error: "Not authenticated" });
 }
 
-function publicState(state: AshState): Omit<AshState, "screenCaptureTokenHash"> {
-  const { screenCaptureTokenHash: _tokenHash, ...safeState } = state;
+function publicState(
+  state: AshState,
+): Omit<AshState, "screenCaptureTokenHash" | "discordContinuitySummary"> {
+  const {
+    screenCaptureTokenHash: _tokenHash,
+    discordContinuitySummary: _discordContinuitySummary,
+    ...safeState
+  } = state;
   return safeState;
 }
 

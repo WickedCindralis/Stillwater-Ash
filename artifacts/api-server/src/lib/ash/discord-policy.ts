@@ -24,6 +24,88 @@ export type DiscordPacketOptions = {
   stillwaterSummary?: string;
 };
 
+export const DISCORD_CONTINUITY_MAX_CHARS = 1_200;
+
+const DISCORD_CONTINUITY_OPEN = /^\s*\[DISCORD_CONTINUITY\]\s*$/i;
+const DISCORD_CONTINUITY_CLOSE = /^\s*\[\/DISCORD_CONTINUITY\]\s*$/i;
+const CONTINUITY_VALUES = {
+  tone: new Set(["neutral", "warm", "playful", "focused", "concerned"]),
+  state: new Set(["none", "active", "paused", "resolved"]),
+  topic: new Set(["none", "everyday", "creative", "technical", "games", "plans"]),
+} as const;
+
+export function extractDiscordContinuity(reply: string): {
+  cleanedReply: string;
+  summary: string | null;
+  rejected: boolean;
+} {
+  if (!reply) return { cleanedReply: reply, summary: null, rejected: false };
+  const kept: string[] = [];
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+  let malformed = false;
+
+  for (const line of reply.split("\n")) {
+    if (DISCORD_CONTINUITY_OPEN.test(line)) {
+      if (current !== null) malformed = true;
+      current = [];
+      continue;
+    }
+    if (DISCORD_CONTINUITY_CLOSE.test(line)) {
+      if (current === null) {
+        malformed = true;
+      } else {
+        blocks.push(current);
+        current = null;
+      }
+      continue;
+    }
+    if (current !== null) current.push(line);
+    else kept.push(line);
+  }
+  if (current !== null) malformed = true;
+
+  const cleanedReply = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (blocks.length === 0 && !malformed) {
+    return { cleanedReply, summary: null, rejected: false };
+  }
+  if (malformed || blocks.length !== 1) {
+    return { cleanedReply, summary: null, rejected: true };
+  }
+
+  const lines = blocks[0]!.map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 1 && lines[0]!.toUpperCase() === "NONE") {
+    return { cleanedReply, summary: "", rejected: false };
+  }
+  const values = new Map<string, string>();
+  for (const line of lines) {
+    const match = line.match(/^([a-z]+)=([a-z]+)$/);
+    if (!match) return { cleanedReply, summary: null, rejected: true };
+    const [, key, value] = match;
+    const allowed = CONTINUITY_VALUES[key as keyof typeof CONTINUITY_VALUES];
+    if (!allowed || !allowed.has(value as never) || values.has(key)) {
+      return { cleanedReply, summary: null, rejected: true };
+    }
+    values.set(key, value);
+  }
+  if (values.size !== 3 || !values.has("tone") || !values.has("state") || !values.has("topic")) {
+    return { cleanedReply, summary: null, rejected: true };
+  }
+
+  const tone = values.get("tone")!;
+  const state = values.get("state")!;
+  const topic = values.get("topic")!;
+  if (state === "none" && topic === "none") {
+    return { cleanedReply, summary: "", rejected: false };
+  }
+  const summary = [
+    `Stillwater relationship tone: ${tone}.`,
+    `Conversation state: ${state}.`,
+    topic === "none" ? "" : `Broad shared topic: ${topic}.`,
+  ].filter(Boolean).join(" ");
+  return { cleanedReply, summary, rejected: false };
+}
+
 export function isDiscordCall(content: string, botMentioned: boolean): boolean {
   return botMentioned || /\bash(?:[_\s-]*cindralis)?\b/i.test(content);
 }
@@ -127,7 +209,9 @@ export function buildDiscordPacketText(
     },
     {
       title: "[STILLWATER CONTINUITY SUMMARY — DISCORD ONLY]",
-      text: (options.stillwaterSummary ?? "").trim(),
+      text: (options.stillwaterSummary ?? "")
+        .trim()
+        .slice(0, DISCORD_CONTINUITY_MAX_CHARS),
     },
     {
       title: "[RECENT SELECTED-CHANNEL CONTEXT — CONTEXT ONLY]",

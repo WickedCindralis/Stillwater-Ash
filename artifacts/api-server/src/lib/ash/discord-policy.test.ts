@@ -4,6 +4,7 @@ import {
   classifyDiscordMessage,
   buildDiscordPacketText,
   DISCORD_PUBLIC_SYSTEM_PROMPT,
+  extractDiscordContinuity,
   isDiscordCall,
   isDiscordPlayerTicketChannel,
   parseDiscordDraftLines,
@@ -29,6 +30,59 @@ test("numbered Discord channels are player-ticket channels", () => {
 test("the public model prompt is immutable and contains no private packet material", () => {
   assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /Ash Cindralis/);
   assert.doesNotMatch(DISCORD_PUBLIC_SYSTEM_PROMPT, /Wicked|SOUL-SHEET|CORE ANCHORS|STATUS CHANGED|PINGS_OFF/);
+});
+
+test("Stillwater continuity is stripped from visible output and bounded for Discord", () => {
+  const parsed = extractDiscordContinuity([
+    "Visible reply.",
+    "[DISCORD_CONTINUITY]",
+    "tone=warm",
+    "state=active",
+    "topic=games",
+    "[/DISCORD_CONTINUITY]",
+  ].join("\n"));
+  assert.equal(parsed.cleanedReply, "Visible reply.");
+  assert.equal(
+    parsed.summary,
+    "Stillwater relationship tone: warm. Conversation state: active. Broad shared topic: games.",
+  );
+  assert.equal(parsed.rejected, false);
+});
+
+test("unsafe or malformed Stillwater continuity never reaches a Discord packet", () => {
+  const unsafe = extractDiscordContinuity([
+    "Visible reply.",
+    "[DISCORD_CONTINUITY]",
+    "tone=warm",
+    "state=active",
+    "topic=games",
+    "privateDetail=Something from a screenshot",
+    "[/DISCORD_CONTINUITY]",
+  ].join("\n"));
+  assert.equal(unsafe.cleanedReply, "Visible reply.");
+  assert.equal(unsafe.summary, null);
+  assert.equal(unsafe.rejected, true);
+
+  const duplicate = extractDiscordContinuity([
+    "[DISCORD_CONTINUITY]",
+    "First.",
+    "[/DISCORD_CONTINUITY]",
+    "[DISCORD_CONTINUITY]",
+    "Second.",
+    "[/DISCORD_CONTINUITY]",
+  ].join("\n"));
+  assert.equal(duplicate.summary, null);
+  assert.equal(duplicate.rejected, true);
+
+  const unclosed = extractDiscordContinuity([
+    "Visible reply.",
+    "[DISCORD_CONTINUITY]",
+    "[PINGS_OFF]",
+    "private free text",
+  ].join("\n"));
+  assert.equal(unclosed.cleanedReply, "Visible reply.");
+  assert.equal(unclosed.summary, null);
+  assert.equal(unclosed.rejected, true);
 });
 
 test("a Discord model packet cannot mix context from another guild", () => {

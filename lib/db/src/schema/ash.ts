@@ -52,6 +52,9 @@ export const ashState = pgTable("ash_state", {
   // ASH'S NOTES: the one packet section Ash himself can live-edit (via
   // [NOTES]...[/NOTES] blocks in his replies). Capped at ~2k tokens.
   personaAshNotes: text("persona_ash_notes").notNull().default(""),
+  // Public-safe continuity is produced inside an existing Stillwater call,
+  // then reused by Discord without a second model request.
+  discordContinuitySummary: text("discord_continuity_summary").notNull().default(""),
   // Court Herald: TikTok account to watch (read-only, via scraper service).
   tiktokUsername: text("tiktok_username").notNull().default(""),
 });

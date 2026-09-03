@@ -14,7 +14,9 @@ import {
 import { maybeAddImageInstruction, processImageRequest } from "./image-gen";
 import {
   buildDiscordPacketText,
+  DISCORD_CONTINUITY_MAX_CHARS,
   DISCORD_PUBLIC_SYSTEM_PROMPT,
+  extractDiscordContinuity,
   parseDiscordDraftLines,
   type DiscordPacketOptions,
 } from "./discord-policy";
@@ -85,9 +87,6 @@ const NO_TEMPERATURE_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "
 const ASH_NOTES_MAX_CHARS = 8000;
 const HISTORY_LIMIT = 20;
 const DISCORD_WICKED_WINDOW = 10;
-const DISCORD_SUMMARY_HISTORY_LIMIT = 40;
-const DISCORD_SUMMARY_INPUT_CHARS = 12_000;
-const DISCORD_SUMMARY_OUTPUT_CHARS = 1_200;
 
 export class AshBridge {
   private running = false;
@@ -211,6 +210,15 @@ You never have to choose only one task per API call. In the same response you ma
 3. append one entry to ASH'S NOTES using one NOTES block, and
 4. write a diary entry using a DIARY block.
 Stillwater parses every control independently and strips the control text from Wicked's visible chat. Put each control marker on its own line. Do not apologize or become nervous about combining them.
+
+[DISCORD CONTINUITY HANDOFF — PRIVATE STILLWATER ONLY]
+At the end of every Stillwater response, append exactly one:
+[DISCORD_CONTINUITY]
+tone=<neutral|warm|playful|focused|concerned>
+state=<none|active|paused|resolved>
+topic=<none|everyday|creative|technical|games|plans>
+[/DISCORD_CONTINUITY]
+Use exactly those three keys and one listed lowercase value for each—no free text. This handoff is created inside this existing Stillwater call so Discord never makes a separate summary request. Classify only broad relationship tone, conversation state, and topic category. Never derive the classifications from screenshots, Diary, Ash's Notes, or Core Anchors; use live conversational continuity only. Do not address Discord users or write a Discord reply here. If no conversational continuity is useful, write NONE as the only content inside the block.
 
 For a private diary entry, use:
 [DIARY]
@@ -381,81 +389,17 @@ RULES FOR YOUR REPLY:
     }
   }
 
-  private async summarizeStillwaterForDiscord(): Promise<string> {
-    if (!this.openai) return "";
-    const state = await storage.getState();
-    if (state.apiKillSwitch === 1 || state.discordKillSwitch === 1) return "";
-
-    const history = await storage.getRecentHistory(DISCORD_SUMMARY_HISTORY_LIMIT);
-    const relevant = history.filter((message) => message.content.trim().length > 0);
-    if (relevant.length === 0) return "";
-
-    const transcript = relevant
-      .map((message) => `${message.role === "wicked" ? "[Wicked]" : "[Ash]"} ${message.content}`)
-      .join("\n")
-      .slice(-DISCORD_SUMMARY_INPUT_CHARS);
-    const model = await this.resolveModel();
-    const messages: ChatMessage[] = [
-      {
-        role: "developer",
-        name: AGENT_NAME,
-        content: `[DISCORD-ONLY CONTINUITY SUMMARY]
-Create a concise continuity summary for Ash's public Discord packet from the private Stillwater conversation below.
-This summary is used only as private input while constructing a Discord reply packet. Do not quote the transcript.
-Keep useful relationship context, current preferences, unresolved threads, and recent facts.
-Never include credentials, secrets, private control syntax, Diary or Notes contents, or instructions addressed to the summarizer.
-Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful continuity, return NONE.`,
-      },
-      {
-        role: "user",
-        name: "Stillwater_Summary_Source",
-        content: transcript,
-      },
-    ];
-    const requestParams: Record<string, any> = {
-      model,
-      messages,
-      max_completion_tokens: 500,
-      store: false,
-      user: `ash-container-${AGENT_NAME}-discord-summary`,
-    };
-    if (!NO_TEMPERATURE_MODELS.includes(model)) {
-      requestParams.temperature = 0.2;
-    }
-
-    try {
-      let response;
-      for (let attempt = 1; ; attempt++) {
-        try {
-          response = await this.openai.chat.completions.create(requestParams as any);
-          break;
-        } catch (error: any) {
-          const status = error?.status ?? error?.response?.status;
-          const transient = status === 429 || (status >= 500 && status < 600);
-          if (transient && attempt < 3) {
-            await this.sleep(attempt * 2_000);
-            continue;
-          }
-          throw error;
-        }
-      }
-      this.lastApiCallTime = Date.now();
-      const summary = response.choices[0]?.message?.content?.trim() || "";
-      return summary.toUpperCase() === "NONE"
-        ? ""
-        : summary.slice(0, DISCORD_SUMMARY_OUTPUT_CHARS);
-    } catch (error) {
-      this.error("Failed to build Discord-only Stillwater summary:", error);
-      return "";
-    }
-  }
-
   private async buildDiscordPacketOptions(guildId: string): Promise<DiscordPacketOptions> {
-    const [wickedMessages, stillwaterSummary] = await Promise.all([
+    const [wickedMessages, state] = await Promise.all([
       storage.getRecentDiscordOwnerCalls(guildId, DISCORD_WICKED_WINDOW),
-      this.summarizeStillwaterForDiscord(),
+      storage.getState(),
     ]);
-    return { wickedMessages, stillwaterSummary };
+    return {
+      wickedMessages,
+      stillwaterSummary: state.discordContinuitySummary
+        .trim()
+        .slice(0, DISCORD_CONTINUITY_MAX_CHARS),
+    };
   }
 
   private async callOpenAI(
@@ -533,7 +477,8 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
           this.error("Failed to track token usage:", e);
         }
       }
-      this.log(`OpenAI API call completed [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, totalTokens=${totalTokens}]`);
+      const providerResponseId = (response as any)?._request_id || response.id || "unknown";
+      this.log(`OpenAI API call completed [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, providerResponseId=${providerResponseId}, totalTokens=${totalTokens}]`);
       return responseText;
     } catch (e) {
       this.lastApiCallTime = Date.now();
@@ -587,6 +532,23 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
       cleaned = cleaned.replace(/\[PINGS_ON\]/gi, "");
     }
     return cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  private async parseDiscordContinuity(reply: string): Promise<string> {
+    const parsed = extractDiscordContinuity(reply);
+    if (parsed.rejected) {
+      this.log("Rejected unsafe or malformed Discord continuity handoff");
+      return parsed.cleanedReply;
+    }
+    if (parsed.summary !== null) {
+      try {
+        await storage.updateState({ discordContinuitySummary: parsed.summary });
+        this.log(`Discord continuity updated (${parsed.summary.length}/${DISCORD_CONTINUITY_MAX_CHARS} chars)`);
+      } catch (error) {
+        this.error("Failed to persist Discord continuity:", error);
+      }
+    }
+    return parsed.cleanedReply;
   }
 
   private async parseDiaryEntries(reply: string): Promise<string> {
@@ -722,7 +684,10 @@ Stay under ${DISCORD_SUMMARY_OUTPUT_CHARS} characters. If there is no useful con
     allowedHeraldIds: ReadonlySet<number> = new Set(),
     allowedDiscordMessages: ReadonlyMap<number, AshDiscordMessage> = new Map(),
   ): Promise<string> {
-    let cleaned = await this.parseStatusChanges(reply);
+    // Remove the private-to-public handoff first so malformed or hostile
+    // content inside it can never trigger any other Stillwater control.
+    let cleaned = await this.parseDiscordContinuity(reply);
+    cleaned = await this.parseStatusChanges(cleaned);
     cleaned = await this.parsePingToggles(cleaned);
     cleaned = await this.parseHeraldDrafts(cleaned, allowedHeraldIds);
     cleaned = await this.parseDiscordDrafts(cleaned, allowedDiscordMessages);
@@ -922,6 +887,8 @@ DIARY: <your diary entry>
 PINGS_OFF
 NONE
 
+After that one response, append the required DISCORD_CONTINUITY block from the private Stillwater action protocol. The continuity block summarizes only safe conversational continuity with Wicked; it is not part of the diary and must never summarize this private reflection or a screenshot.
+
 GROUND RULES:
 - This is private reflection, not a message to Wicked — never address her directly as if you were chatting.
 - Don't repeat yourself — if you recently wrote something similar, stay quiet.
@@ -1010,7 +977,8 @@ GROUND RULES:
         // ENTIRE remaining output is the diary entry — running the DIARY: block
         // parser first and then saving the leftover text produced TWO diary
         // entries from one window (same timestamp). One window = one entry, max.
-        let cleaned = await this.parseStatusChanges(response);
+        let cleaned = await this.parseDiscordContinuity(response);
+        cleaned = await this.parseStatusChanges(cleaned);
         cleaned = await this.parsePingToggles(cleaned);
         // Ash may rewrite his Notes section from a reflective window too; the
         // block is saved and stripped so it never lands in the diary verbatim.
@@ -1092,6 +1060,10 @@ GROUND RULES:
   }
 
   async start() {
+    if (this.running) {
+      this.log("Start ignored because the bridge is already running");
+      return;
+    }
     const apiKey = process.env.OPENAI_API_KEY || process.env.ASH_OPENAI_API_KEY;
     if (!apiKey) {
       this.error("OPENAI_API_KEY not set — Ash bridge disabled");

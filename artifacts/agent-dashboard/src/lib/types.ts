@@ -44,6 +44,7 @@ export interface AshActivity {
   kind: string;
   message: string;
   createdAt: string;
+  hasScreenshot: boolean;
 }
 
 export interface SystemInfo {

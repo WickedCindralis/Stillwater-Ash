@@ -168,6 +168,17 @@ export const ashActivity = pgTable("ash_activity", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Screenshot bytes are kept separate so ordinary activity-feed queries never
+// load large base64 payloads. Access is through an authenticated image route.
+export const ashActivityScreenshots = pgTable("ash_activity_screenshots", {
+  activityId: integer("activity_id")
+    .primaryKey()
+    .references(() => ashActivity.id, { onDelete: "cascade" }),
+  imageDataUrl: text("image_data_url").notNull(),
+  ready: integer("ready").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Chess games between Wicked (White) and Ash (Black). One active game at a time.
 export const ashChessGames = pgTable("ash_chess_games", {
   id: serial("id").primaryKey(),
@@ -224,6 +235,7 @@ export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
 export type AshChronicle = typeof ashChronicles.$inferSelect;
 export type InsertChronicle = z.infer<typeof insertChronicleSchema>;
 export type AshActivity = typeof ashActivity.$inferSelect;
+export type AshActivityScreenshot = typeof ashActivityScreenshots.$inferSelect;
 export type AshDiscordChannel = typeof ashDiscordChannels.$inferSelect;
 export type AshDiscordMessage = typeof ashDiscordMessages.$inferSelect;
 

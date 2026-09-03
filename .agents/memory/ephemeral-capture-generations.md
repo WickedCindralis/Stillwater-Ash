@@ -15,3 +15,15 @@ can attach the old desktop image to the new generation.
 **How to apply:** Across every async boundary in capture intake, retain and compare
 the original pending object and generation. Recheck the generation synchronously
 immediately before submitting any image to an external model provider.
+
+Accepted screenshots now become persistent historical activity after delivery.
+Turning capture OFF or revoking the companion invalidates pending delivery and
+provider use, but does not erase screenshots that were already delivered.
+
+**Why:** The activity UI intentionally provides retained, clickable screenshots,
+while OFF/revoke must still prevent an in-flight upload from becoming visible.
+
+**How to apply:** Persist new images as hidden staging rows, recheck the exact
+generation after the database write, delete invalidated stages, and publish the
+row only after synchronous delivery. Serve persisted images only through the
+authenticated activity endpoint.

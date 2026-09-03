@@ -5,6 +5,7 @@ import {
   ashDiaryEntries,
   ashChronicles,
   ashActivity,
+  ashActivityScreenshots,
   ashChessGames,
   ashConnect4Games,
   type AshChessGame,
@@ -25,10 +26,12 @@ import {
   type AshDiscordMessage,
 } from "@workspace/db";
 import { randomUUID } from "node:crypto";
-import { eq, desc, inArray, and, like, lt, gt, isNull, notInArray, or, sql } from "drizzle-orm";
+import { eq, ne, desc, inArray, and, like, lt, gt, isNull, notInArray, or, sql } from "drizzle-orm";
 import { isDiscordPlayerTicketChannel } from "./discord-policy";
 
 const ASH_ID = "ash";
+
+export type ActivityFeedItem = AshActivity & { hasScreenshot: boolean };
 
 export interface IStorage {
   getState(): Promise<AshState>;
@@ -49,7 +52,11 @@ export interface IStorage {
   recordChronicleError(chronicleId: string, error: string): Promise<void>;
   deleteDiaryEntry(id: number): Promise<void>;
   logActivity(kind: string, message: string): Promise<void>;
-  getActivity(limit?: number): Promise<AshActivity[]>;
+  stageScreenCapture(imageDataUrl: string): Promise<number>;
+  publishScreenCapture(activityId: number): Promise<void>;
+  discardScreenCapture(activityId: number): Promise<void>;
+  getActivity(limit?: number): Promise<ActivityFeedItem[]>;
+  getActivityScreenshot(activityId: number): Promise<string | null>;
   migrateReflectionsToDiary(): Promise<number>;
   getCurrentChessGame(): Promise<AshChessGame | null>;
   createChessGame(fen: string): Promise<AshChessGame>;
@@ -256,12 +263,66 @@ export class DbStorage implements IStorage {
     await db.insert(ashActivity).values({ kind, message });
   }
 
-  async getActivity(limit = 100): Promise<AshActivity[]> {
+  async stageScreenCapture(imageDataUrl: string): Promise<number> {
+    return db.transaction(async (tx) => {
+      const [activity] = await tx
+        .insert(ashActivity)
+        .values({ kind: "screen_capture", message: "Screenshot taken" })
+        .returning({ id: ashActivity.id });
+      await tx.insert(ashActivityScreenshots).values({
+        activityId: activity!.id,
+        imageDataUrl,
+      });
+      return activity!.id;
+    });
+  }
+
+  async publishScreenCapture(activityId: number): Promise<void> {
+    await db
+      .update(ashActivityScreenshots)
+      .set({ ready: 1 })
+      .where(eq(ashActivityScreenshots.activityId, activityId));
+  }
+
+  async discardScreenCapture(activityId: number): Promise<void> {
+    await db.delete(ashActivity).where(eq(ashActivity.id, activityId));
+  }
+
+  async getActivity(limit = 100): Promise<ActivityFeedItem[]> {
     return db
-      .select()
+      .select({
+        id: ashActivity.id,
+        kind: ashActivity.kind,
+        message: ashActivity.message,
+        createdAt: ashActivity.createdAt,
+        hasScreenshot: sql<boolean>`${ashActivityScreenshots.ready} = 1`,
+      })
       .from(ashActivity)
+      .leftJoin(
+        ashActivityScreenshots,
+        eq(ashActivityScreenshots.activityId, ashActivity.id),
+      )
+      .where(and(
+        ne(ashActivity.kind, "discord"),
+        or(
+          ne(ashActivity.kind, "screen_capture"),
+          eq(ashActivityScreenshots.ready, 1),
+        ),
+      ))
       .orderBy(desc(ashActivity.id))
       .limit(limit);
+  }
+
+  async getActivityScreenshot(activityId: number): Promise<string | null> {
+    const [row] = await db
+      .select({ imageDataUrl: ashActivityScreenshots.imageDataUrl })
+      .from(ashActivityScreenshots)
+      .where(and(
+        eq(ashActivityScreenshots.activityId, activityId),
+        eq(ashActivityScreenshots.ready, 1),
+      ))
+      .limit(1);
+    return row?.imageDataUrl ?? null;
   }
 
   // One-time, idempotent: move any legacy proactive "reflection" chat rows into the

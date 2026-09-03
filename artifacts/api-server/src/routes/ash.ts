@@ -668,6 +668,28 @@ router.get("/activity", requireAuth, async (_req, res): Promise<void> => {
   res.json(events);
 });
 
+router.get("/activity/:id/screenshot", requireAuth, async (req, res): Promise<void> => {
+  const rawActivityId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const activityId = Number.parseInt(rawActivityId ?? "", 10);
+  if (!Number.isSafeInteger(activityId) || activityId <= 0) {
+    res.status(400).json({ error: "Invalid activity id" });
+    return;
+  }
+  const imageDataUrl = await storage.getActivityScreenshot(activityId);
+  if (!imageDataUrl) {
+    res.status(404).json({ error: "Screenshot not found" });
+    return;
+  }
+  const match = imageDataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]*={0,2})$/);
+  if (!match) {
+    res.status(500).json({ error: "Stored screenshot is invalid" });
+    return;
+  }
+  res.setHeader("Cache-Control", "private, no-store");
+  res.type(`image/${match[1]}`);
+  res.send(Buffer.from(match[2], "base64"));
+});
+
 // ── System info (Northflank panel) ──
 router.get("/system", requireAuth, async (_req, res): Promise<void> => {
   const state = await storage.getState();

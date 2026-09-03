@@ -182,8 +182,20 @@ export async function acceptCapture(
   ) {
     return { accepted: false, error: "Capture request was invalidated before delivery" };
   }
+  const screenshotActivityId = await storage.stageScreenCapture(validated);
+  if (
+    captureBlocked ||
+    captureEpoch !== acceptedPending.epoch ||
+    pendingCapture !== acceptedPending
+  ) {
+    await storage.discardScreenCapture(screenshotActivityId);
+    return { accepted: false, error: "Capture request was invalidated before delivery" };
+  }
+  // Delivery and generation validation are synchronous with respect to one
+  // another. After this point the screenshot is historical data even if OFF
+  // is pressed while its visibility flag is being committed.
   clearPending(validated);
-  await storage.logActivity("screen_capture", "Screenshot taken").catch(() => {});
+  await storage.publishScreenCapture(screenshotActivityId);
   return { accepted: true };
 }
 

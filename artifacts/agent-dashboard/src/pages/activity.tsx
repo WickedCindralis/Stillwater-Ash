@@ -1,7 +1,8 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import type { AshActivity } from "@/lib/types";
-import { ArrowLeft, Clock, Activity as ActivityIcon } from "lucide-react";
+import { ArrowLeft, Clock, Activity as ActivityIcon, X } from "lucide-react";
 
 const KIND_LABELS: Record<string, string> = {
   diary_entry: "diary_entry",
@@ -26,6 +27,7 @@ function formatEst(iso: string): string {
 }
 
 export default function ActivityPage() {
+  const [selectedScreenshot, setSelectedScreenshot] = useState<number | null>(null);
   const { data: events = [], isLoading } = useQuery<AshActivity[]>({
     queryKey: ["/api/activity"],
     refetchInterval: 30_000,
@@ -73,12 +75,51 @@ export default function ActivityPage() {
                   </span>
                 </div>
                 <p className="text-white/70 text-[15px] mt-1">{e.message}</p>
+                {e.kind === "screen_capture" && e.hasScreenshot && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedScreenshot(e.id)}
+                    className="mt-3 block overflow-hidden rounded-lg border border-gold/35 bg-black/60 hover:border-gold/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+                    aria-label={`Open screenshot from ${formatEst(e.createdAt)}`}
+                  >
+                    <img
+                      src={`/api/activity/${e.id}/screenshot`}
+                      alt=""
+                      loading="lazy"
+                      className="h-24 w-40 object-cover object-top transition-transform duration-200 hover:scale-[1.03]"
+                    />
+                  </button>
+                )}
                 <p className="text-white/35 text-xs mt-1">{formatEst(e.createdAt)}</p>
               </div>
             </div>
           ))}
         </div>
       </div>
+      {selectedScreenshot !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Screenshot preview"
+          onClick={() => setSelectedScreenshot(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setSelectedScreenshot(null)}
+            className="absolute right-5 top-5 rounded-full border border-white/20 bg-black/70 p-2 text-white/70 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+            aria-label="Close screenshot"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <img
+            src={`/api/activity/${selectedScreenshot}/screenshot`}
+            alt="Persisted desktop screenshot"
+            className="max-h-[90vh] max-w-[95vw] rounded-lg border border-gold/35 object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -55,13 +55,17 @@ test("screen capture pairing and one-shot delivery stay bounded", async () => {
     const accepted = await acceptCapture(token, pending.requestId, ONE_PIXEL_PNG);
     assert.equal(accepted.accepted, true);
     const activityAfterAccepted = await storage.getActivity(100);
-    assert.ok(
-      activityAfterAccepted.some(
+    const screenshotActivity = activityAfterAccepted.find(
         (event) => !activityBeforeInvalid.has(event.id) &&
           event.kind === "screen_capture" &&
           event.message === "Screenshot taken",
-      ),
-      "accepted screenshots must create a screenshot activity",
+    );
+    assert.ok(screenshotActivity, "accepted screenshots must create a screenshot activity");
+    assert.equal(screenshotActivity.hasScreenshot, true);
+    assert.equal(
+      await storage.getActivityScreenshot(screenshotActivity.id),
+      ONE_PIXEL_PNG,
+      "accepted screenshots must persist their image data",
     );
     const capture = await delivered;
     assert.equal(capture?.imageDataUrl, ONE_PIXEL_PNG);
@@ -134,6 +138,56 @@ test("an in-flight old upload cannot resolve a request created after OFF then ON
   } finally {
     (storage as any).updateState = originalUpdateState;
     releaseOldUpload?.();
+    await revokeScreenCapture();
+  }
+});
+
+test("cancelling while screenshot persistence is in flight leaves no stored image", async () => {
+  await revokeScreenCapture();
+  const originalStageScreenCapture = storage.stageScreenCapture.bind(storage);
+  let releasePersistence!: () => void;
+  let persistenceCommitted!: () => void;
+  const persistenceCommittedPromise = new Promise<void>((resolve) => {
+    persistenceCommitted = resolve;
+  });
+  const releasePersistencePromise = new Promise<void>((resolve) => {
+    releasePersistence = resolve;
+  });
+
+  try {
+    const { token } = await pairScreenCapture();
+    await storage.updateState({ screenCaptureEnabled: 1 });
+    resumeScreenCaptureRequests();
+    const activityBefore = new Set((await storage.getActivity(100)).map((event) => event.id));
+
+    const delivered = waitForFreshScreenCapture();
+    const pending = await waitForPendingRequest(token);
+    assert.ok(pending?.requestId);
+
+    (storage as any).stageScreenCapture = async (imageDataUrl: string) => {
+      const activityId = await originalStageScreenCapture(imageDataUrl);
+      persistenceCommitted();
+      await releasePersistencePromise;
+      return activityId;
+    };
+    const acceptance = acceptCapture(token, pending.requestId, ONE_PIXEL_PNG);
+    await persistenceCommittedPromise;
+
+    cancelPendingScreenCapture();
+    releasePersistence();
+
+    assert.equal((await acceptance).accepted, false);
+    assert.equal(await delivered, null);
+    assert.equal(
+      (await storage.getActivity(100)).some(
+        (event) => !activityBefore.has(event.id) && event.kind === "screen_capture",
+      ),
+      false,
+      "invalidated staged screenshots must be removed from activity and storage",
+    );
+  } finally {
+    (storage as any).stageScreenCapture = originalStageScreenCapture;
+    releasePersistence?.();
     await revokeScreenCapture();
   }
 });

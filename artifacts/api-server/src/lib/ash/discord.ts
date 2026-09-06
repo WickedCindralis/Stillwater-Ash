@@ -84,6 +84,11 @@ class DiscordHerald {
 
     this.connectionState = "connecting";
     this.connectionError = "";
+    if (this.ownerDiscordUserId()) {
+      logger.info("[discord-herald] Owner-only Discord DM route configured");
+    } else {
+      logger.warn("[discord-herald] Owner-only Discord DM route is not configured");
+    }
     const client = new Client({
       intents: [
         GatewayIntentBits.Guilds,

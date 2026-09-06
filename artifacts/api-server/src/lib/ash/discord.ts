@@ -385,6 +385,14 @@ class DiscordHerald {
       });
 
       if (!result || !result.created) return;
+      await storage.createMessage({
+        role: "wicked",
+        content: result.message.content,
+        imageUrl: "",
+        source: "discord_owner",
+      }).catch((error) => {
+        logger.warn({ err: error, discordMessageId: message.id }, "[discord-herald] Failed to record owner DM history");
+      });
       await storage.pruneDiscordMessages();
       await ashBridge.handleDiscordOwnerCall(result.message);
     } catch (error) {
@@ -456,7 +464,17 @@ class DiscordHerald {
           replyId = reply.id;
         }
         this.lastSendAtByChannel.set(message.channelId, Date.now());
-        await storage.completeDiscordDelivery(message.id, leaseId, replyId);
+        const completed = await storage.completeDiscordDelivery(message.id, leaseId, replyId);
+        if (completed && message.guildId === DISCORD_OWNER_DM_GUILD_ID) {
+          await storage.createMessage({
+            role: "ash",
+            content: replyText.trim().slice(0, REPLY_CHARS),
+            imageUrl: "",
+            source: "discord_owner",
+          }).catch((error) => {
+            logger.warn({ err: error, discordMessageId: message.discordMessageId }, "[discord-herald] Failed to record Ash owner DM history");
+          });
+        }
         await storage.logActivity(
           "discord",
           message.guildId === DISCORD_OWNER_DM_GUILD_ID

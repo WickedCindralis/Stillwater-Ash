@@ -47,6 +47,7 @@ export interface IStorage {
   clearWickedPhotos(): Promise<number>;
   createMessage(msg: InsertMessage): Promise<AshMessage>;
   getRecentHistory(limit: number): Promise<AshMessage[]>;
+  getRecentOwnerDiscordHistory(perRole: number): Promise<AshMessage[]>;
   getDiaryEntries(): Promise<AshDiaryEntry[]>;
   createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry>;
   saveChronicle(entry: InsertChronicle): Promise<{ chronicle: AshChronicle; created: boolean }>;
@@ -97,6 +98,7 @@ export interface IStorage {
   failDiscordDelivery(id: number, leaseId: string, error: string): Promise<boolean>;
   withDiscordChannelLock<T>(channelId: string, work: () => Promise<T>): Promise<T>;
   getRecentDiscordContext(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
+  getRecentDiscordCommentHistory(limit: number): Promise<AshDiscordMessage[]>;
   getRecentDiscordOwnerCalls(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
   getRecentDiscordActivity(limit?: number): Promise<AshDiscordMessage[]>;
   pruneDiscordMessages(maxRows?: number): Promise<void>;
@@ -212,6 +214,24 @@ export class DbStorage implements IStorage {
       .orderBy(desc(ashMessages.id))
       .limit(limit);
     return rows.reverse();
+  }
+
+  async getRecentOwnerDiscordHistory(perRole: number): Promise<AshMessage[]> {
+    const [ownerMessages, ashHistory] = await Promise.all([
+      db
+        .select()
+        .from(ashMessages)
+        .where(and(eq(ashMessages.source, "discord_owner"), eq(ashMessages.role, "wicked")))
+        .orderBy(desc(ashMessages.id))
+        .limit(perRole),
+      db
+        .select()
+        .from(ashMessages)
+        .where(and(eq(ashMessages.source, "discord_owner"), eq(ashMessages.role, "ash")))
+        .orderBy(desc(ashMessages.id))
+        .limit(perRole),
+    ]);
+    return [...ownerMessages, ...ashHistory].sort((a, b) => a.id - b.id);
   }
 
   async getDiaryEntries(): Promise<AshDiaryEntry[]> {
@@ -752,6 +772,23 @@ export class DbStorage implements IStorage {
         inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
       ))
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  async getRecentDiscordCommentHistory(limit: number): Promise<AshDiscordMessage[]> {
+    const selected = await db
+      .select({ channelId: ashDiscordChannels.channelId })
+      .from(ashDiscordChannels);
+    if (selected.length === 0) return [];
+    const rows = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(inArray(
+        ashDiscordMessages.channelId,
+        selected.map((channel) => channel.channelId),
+      ))
+      .orderBy(desc(ashDiscordMessages.id))
       .limit(limit);
     return rows.reverse();
   }

@@ -4,7 +4,6 @@ import {
   classifyDiscordMessage,
   buildDiscordPacketText,
   DISCORD_PUBLIC_SYSTEM_PROMPT,
-  extractDiscordContinuity,
   isDiscordCall,
   isDiscordPlayerTicketChannel,
   parseDiscordDraftLines,
@@ -29,60 +28,31 @@ test("numbered Discord channels are player-ticket channels", () => {
 
 test("the public model prompt is immutable and contains no private packet material", () => {
   assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /Ash Cindralis/);
-  assert.doesNotMatch(DISCORD_PUBLIC_SYSTEM_PROMPT, /Wicked|SOUL-SHEET|CORE ANCHORS|STATUS CHANGED|PINGS_OFF/);
+  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /Stillwater conversation history/);
+  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /STATUS CHANGED/);
+  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /PINGS_OFF/);
+  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /SCREENSHOT/);
 });
 
-test("Stillwater continuity is stripped from visible output and bounded for Discord", () => {
-  const parsed = extractDiscordContinuity([
-    "Visible reply.",
-    "[DISCORD_CONTINUITY]",
-    "tone=warm",
-    "state=active",
-    "topic=games",
-    "[/DISCORD_CONTINUITY]",
-  ].join("\n"));
-  assert.equal(parsed.cleanedReply, "Visible reply.");
-  assert.equal(
-    parsed.summary,
-    "Stillwater relationship tone: warm. Conversation state: active. Broad shared topic: games.",
-  );
-  assert.equal(parsed.rejected, false);
-});
-
-test("unsafe or malformed Stillwater continuity never reaches a Discord packet", () => {
-  const unsafe = extractDiscordContinuity([
-    "Visible reply.",
-    "[DISCORD_CONTINUITY]",
-    "tone=warm",
-    "state=active",
-    "topic=games",
-    "privateDetail=Something from a screenshot",
-    "[/DISCORD_CONTINUITY]",
-  ].join("\n"));
-  assert.equal(unsafe.cleanedReply, "Visible reply.");
-  assert.equal(unsafe.summary, null);
-  assert.equal(unsafe.rejected, true);
-
-  const duplicate = extractDiscordContinuity([
-    "[DISCORD_CONTINUITY]",
-    "First.",
-    "[/DISCORD_CONTINUITY]",
-    "[DISCORD_CONTINUITY]",
-    "Second.",
-    "[/DISCORD_CONTINUITY]",
-  ].join("\n"));
-  assert.equal(duplicate.summary, null);
-  assert.equal(duplicate.rejected, true);
-
-  const unclosed = extractDiscordContinuity([
-    "Visible reply.",
-    "[DISCORD_CONTINUITY]",
-    "[PINGS_OFF]",
-    "private free text",
-  ].join("\n"));
-  assert.equal(unclosed.cleanedReply, "Visible reply.");
-  assert.equal(unclosed.summary, null);
-  assert.equal(unclosed.rejected, true);
+test("Discord packets use raw bounded history instead of condensed continuity", () => {
+  const call = {
+    id: 40,
+    guildId: "guild-a",
+    channelName: "court",
+    authorName: "Member",
+    content: "Ash?",
+    createdAt: new Date("2026-08-19T12:00:00Z"),
+  };
+  const packet = buildDiscordPacketText([call], [], false, {
+    stillwaterHistory: [
+      { role: "wicked", content: "A private Stillwater message.", createdAt: call.createdAt },
+      { role: "ash", content: "A private Ash reply.", createdAt: new Date("2026-08-19T12:01:00Z") },
+    ],
+  });
+  assert.doesNotMatch(packet, /STILLWATER CONTINUITY SUMMARY|DISCORD_CONTINUITY/);
+  assert.match(packet, /STILLWATER MESSAGE HISTORY — PRIVATE CONTEXT — NEVER DISCLOSE/);
+  assert.match(packet, /A private Stillwater message/);
+  assert.match(packet, /must never be revealed in a public Discord reply/);
 });
 
 test("a Discord model packet cannot mix context from another guild", () => {
@@ -183,7 +153,7 @@ test("the Discord bridge switch blocks queued processing independently", () => {
   );
 });
 
-test("Discord continuity carries Wicked memory and stays within the 5k context budget", () => {
+test("Discord packet carries raw history and stays within the bounded context budget", () => {
   const call = {
     id: 501,
     guildId: "guild-a",
@@ -198,16 +168,26 @@ test("Discord continuity carries Wicked memory and stays within the 5k context b
     true,
     {
       wickedMessages: [{ ...call, id: 503, authorName: "Wicked", content: "Ash, remember this." }],
-      stillwaterSummary: "S".repeat(4_000),
+      stillwaterHistory: [{
+        role: "wicked",
+        content: "S".repeat(2_000),
+        createdAt: call.createdAt,
+      }],
+      ownerDmHistory: Array.from({ length: 20 }, (_, index) => ({
+        role: index % 2 === 0 ? "wicked" : "ash",
+        content: `owner history ${index}`,
+        createdAt: call.createdAt,
+      })),
     },
   );
   const continuityStart = packet.indexOf("[WICKED'S RECENT DISCORD CALLS");
-  const continuityEnd = packet.indexOf("\n\nReturn only DISCORD");
+  const continuityEnd = packet.indexOf("\n\nReturn only deliberate DISCORD");
   assert.ok(continuityStart >= 0);
   assert.ok(continuityEnd > continuityStart);
-  assert.ok(continuityEnd - continuityStart <= 5_000);
+  assert.ok(continuityEnd - continuityStart <= 10_000);
   assert.match(packet, /"text":"Ash, remember this\."/);
   assert.match(packet, /S{20}/);
+  assert.match(packet, /OWNER DISCORD MESSAGE HISTORY — 10 OWNER \+ 10 ASH/);
   assert.match(packet, /"packetId":501/);
 });
 
@@ -232,9 +212,15 @@ test("one Discord batch can claim and answer ten member calls", async () => {
       requestedContextLimit = limit;
       return [];
     },
-    getPacketOptions: async () => ({ stillwaterSummary: "Recent Stillwater continuity." }),
+    getPacketOptions: async () => ({
+      stillwaterHistory: [{
+        role: "ash",
+        content: "Recent Stillwater history.",
+        createdAt: new Date("2026-08-19T12:00:00Z"),
+      }],
+    }),
     callModel: async (prompt) => {
-      assert.match(prompt, /Recent Stillwater continuity/);
+      assert.match(prompt, /Recent Stillwater history/);
       for (const call of calls) assert.match(prompt, new RegExp(`"packetId":${call.id}`));
       return calls.map((call) => `DISCORD #${call.id}: Answered.`).join("\n");
     },

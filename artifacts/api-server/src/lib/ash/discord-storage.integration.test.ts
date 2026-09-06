@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, test } from "node:test";
 import {
+  ashMessages,
   ashDiscordMessages,
   db,
   pool,
@@ -160,5 +161,43 @@ test("delivery leases fence stale workers and channel revocation waits for intak
     await db
       .delete(ashDiscordMessages)
       .where(like(ashDiscordMessages.discordMessageId, `${messagePrefix}%`));
+  }
+});
+
+test("owner Discord history returns ten messages from each speaker", async () => {
+  const prefix = `owner-history-test-${randomUUID()}`;
+  const rows = [
+    ...Array.from({ length: 12 }, (_, index) => ({
+      role: "wicked",
+      content: `${prefix}-owner-${index}`,
+      imageUrl: "",
+      source: "discord_owner",
+    })),
+    ...Array.from({ length: 12 }, (_, index) => ({
+      role: "ash",
+      content: `${prefix}-ash-${index}`,
+      imageUrl: "",
+      source: "discord_owner",
+    })),
+  ];
+
+  try {
+    await db.insert(ashMessages).values(rows);
+    const history = await storage.getRecentOwnerDiscordHistory(10);
+    const owned = history.filter((message) => message.content.startsWith(prefix));
+
+    assert.equal(owned.length, 20);
+    assert.equal(
+      owned.filter((message) => message.role === "wicked").length,
+      10,
+    );
+    assert.equal(
+      owned.filter((message) => message.role === "ash").length,
+      10,
+    );
+  } finally {
+    await db
+      .delete(ashMessages)
+      .where(like(ashMessages.content, `${prefix}%`));
   }
 });

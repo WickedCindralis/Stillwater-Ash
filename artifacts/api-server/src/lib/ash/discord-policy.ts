@@ -1,5 +1,9 @@
 export type DiscordMessageKind = "context" | "call" | "owner_call";
 
+// Direct messages have no Discord guild. Keep them in the shared bounded
+// message table with an explicit sentinel so they cannot mix with public halls.
+export const DISCORD_OWNER_DM_GUILD_ID = "__ash_owner_dm__";
+
 export const DISCORD_PUBLIC_SYSTEM_PROMPT = `[PUBLIC IDENTITY]
 You are Ash Cindralis. In public you are composed, watchful, direct, dryly amused when it fits, and warm by deliberate choice. Speak with controlled confidence and concise natural language. Never posture, threaten, harass, use slurs, or expose private information.
 

@@ -3,6 +3,7 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  Partials,
   OAuth2Scopes,
   PermissionsBitField,
   type Message,
@@ -13,6 +14,7 @@ import { logger } from "../logger";
 import { ashBridge } from "./bridge";
 import {
   classifyDiscordMessage,
+  DISCORD_OWNER_DM_GUILD_ID,
   isDiscordCall,
   isDiscordPlayerTicketChannel,
 } from "./discord-policy";
@@ -86,8 +88,10 @@ class DiscordHerald {
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+          GatewayIntentBits.DirectMessages,
         GatewayIntentBits.MessageContent,
       ],
+        partials: [Partials.Channel],
     });
     this.client = client;
 
@@ -184,6 +188,8 @@ class DiscordHerald {
     selectedChannels: AshDiscordChannel[];
     activity: AshDiscordMessage[];
     discordKillSwitch: number;
+    ownerDmUserId: string;
+    ownerDmEnabled: boolean;
   }> {
     const availableChannels = this.availableChannels();
     let selectedChannels = await storage.listDiscordChannels();
@@ -220,7 +226,13 @@ class DiscordHerald {
       selectedChannels,
       activity,
       discordKillSwitch: state.discordKillSwitch,
+      ownerDmUserId: this.ownerDiscordUserId(),
+      ownerDmEnabled: Boolean(this.ownerDiscordUserId()),
     };
+  }
+
+  private ownerDiscordUserId(): string {
+    return process.env["DISCORD_OWNER_USER_ID"]?.trim() ?? "";
   }
 
   async setPermittedChannels(
@@ -269,7 +281,12 @@ class DiscordHerald {
   }
 
   private async handleMessage(message: Message): Promise<void> {
-    if (!message.inGuild() || message.author.bot) return;
+    if (message.author.bot) return;
+    if (message.channel.isDMBased()) {
+      await this.handleOwnerDirectMessage(message);
+      return;
+    }
+    if (!message.inGuild()) return;
     try {
       const result = await storage.withDiscordChannelLock(message.channelId, async () => {
         // Intake and preference changes share this lock. A completed opt-out
@@ -329,6 +346,50 @@ class DiscordHerald {
     }
   }
 
+  private async handleOwnerDirectMessage(message: Message): Promise<void> {
+    const ownerUserId = this.ownerDiscordUserId();
+    if (!ownerUserId || message.author.id !== ownerUserId) {
+      logger.info(
+        { discordUserId: message.author.id },
+        "[discord-herald] Ignored DM from non-owner Discord user",
+      );
+      return;
+    }
+
+    try {
+      const result = await storage.withDiscordChannelLock(message.channelId, async () => {
+        const state = await storage.getState();
+        if (state.discordKillSwitch === 1) return null;
+
+        const deliveryLeaseId = randomUUID();
+        const stored = await storage.recordDiscordMessage({
+          discordMessageId: message.id,
+          guildId: DISCORD_OWNER_DM_GUILD_ID,
+          channelId: message.channelId,
+          channelName: "Direct Message",
+          authorId: message.author.id,
+          authorName: message.author.globalName || message.author.username,
+          content: (message.content.trim() || "(sent an empty message)").slice(0, MESSAGE_CHARS),
+          kind: "owner_call",
+          deliveryStatus: "processing",
+          deliveryLeaseId,
+          deliveryLeaseExpiresAt: new Date(Date.now() + 10 * 60_000),
+          createdAt: new Date(message.createdTimestamp),
+        });
+        return stored;
+      });
+
+      if (!result || !result.created) return;
+      await storage.pruneDiscordMessages();
+      await ashBridge.handleDiscordOwnerCall(result.message);
+    } catch (error) {
+      logger.error(
+        { err: error, channelId: message.channelId, discordMessageId: message.id },
+        "[discord-herald] Failed to process owner Discord DM",
+      );
+    }
+  }
+
   async deliverDraft(messageId: number, replyText: string, leaseId: string): Promise<boolean> {
     const message = await storage.beginDiscordDelivery(messageId, leaseId);
     if (!message) return false;
@@ -348,7 +409,10 @@ class DiscordHerald {
           await storage.failDiscordDelivery(message.id, leaseId, "Discord bridge is switched off");
           return false;
         }
-        if (!await storage.isDiscordChannelConfigured(message.channelId)) {
+        if (
+          message.guildId !== DISCORD_OWNER_DM_GUILD_ID
+          && !await storage.isDiscordChannelConfigured(message.channelId)
+        ) {
           await storage.failDiscordDelivery(message.id, leaseId, "Channel is no longer selected");
           return false;
         }
@@ -362,23 +426,37 @@ class DiscordHerald {
         const waitMs = SEND_SPACING_MS - (Date.now() - lastSent);
         if (waitMs > 0) await this.sleep(waitMs);
 
-        const channel = await client.channels.fetch(message.channelId);
-        if (
-          !channel
-          || !channel.isTextBased()
-          || channel.isDMBased()
-          || !("messages" in channel)
-        ) throw new Error("Selected Discord channel is unavailable");
-        const original = await channel.messages.fetch(message.discordMessageId);
-        const reply = await original.reply({
-          content: replyText.trim().slice(0, REPLY_CHARS),
-          allowedMentions: { repliedUser: false, parse: [] },
-        });
+        let replyId = "";
+        if (message.guildId === DISCORD_OWNER_DM_GUILD_ID) {
+          const user = await client.users.fetch(message.authorId);
+          const dmChannel = await user.createDM();
+          const reply = await dmChannel.send({
+            content: replyText.trim().slice(0, REPLY_CHARS),
+            allowedMentions: { repliedUser: false, parse: [] },
+          });
+          replyId = reply.id;
+        } else {
+          const channel = await client.channels.fetch(message.channelId);
+          if (
+            !channel
+            || !channel.isTextBased()
+            || channel.isDMBased()
+            || !("messages" in channel)
+          ) throw new Error("Selected Discord channel is unavailable");
+          const original = await channel.messages.fetch(message.discordMessageId);
+          const reply = await original.reply({
+            content: replyText.trim().slice(0, REPLY_CHARS),
+            allowedMentions: { repliedUser: false, parse: [] },
+          });
+          replyId = reply.id;
+        }
         this.lastSendAtByChannel.set(message.channelId, Date.now());
-        await storage.completeDiscordDelivery(message.id, leaseId, reply.id);
+        await storage.completeDiscordDelivery(message.id, leaseId, replyId);
         await storage.logActivity(
           "discord",
-          `Ash replied in #${message.channelName} to ${message.authorName}`,
+          message.guildId === DISCORD_OWNER_DM_GUILD_ID
+            ? "Ash replied to owner Discord DM"
+            : `Ash replied in #${message.channelName} to ${message.authorName}`,
         ).catch(() => {});
         return true;
       });

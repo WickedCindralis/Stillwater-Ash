@@ -27,7 +27,10 @@ import {
 } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 import { eq, ne, desc, inArray, and, like, lt, gt, isNull, notInArray, or, sql } from "drizzle-orm";
-import { isDiscordPlayerTicketChannel } from "./discord-policy";
+import {
+  DISCORD_OWNER_DM_GUILD_ID,
+  isDiscordPlayerTicketChannel,
+} from "./discord-policy";
 
 const ASH_ID = "ash";
 
@@ -509,11 +512,16 @@ export class DbStorage implements IStorage {
       // Revoking a hall also revokes and erases its retained public context.
       // This makes the opt-in boundary true for both future and historic reads.
       if (permittedChannels.length === 0) {
-        await tx.delete(ashDiscordMessages);
+        await tx.delete(ashDiscordMessages).where(
+          ne(ashDiscordMessages.guildId, DISCORD_OWNER_DM_GUILD_ID),
+        );
       } else {
         const selectedIds = permittedChannels.map((channel) => channel.channelId);
         await tx.delete(ashDiscordMessages).where(
-          notInArray(ashDiscordMessages.channelId, selectedIds),
+          and(
+            ne(ashDiscordMessages.guildId, DISCORD_OWNER_DM_GUILD_ID),
+            notInArray(ashDiscordMessages.channelId, selectedIds),
+          ),
         );
       }
     });
@@ -750,14 +758,19 @@ export class DbStorage implements IStorage {
 
   async getRecentDiscordOwnerCalls(guildId: string, limit: number): Promise<AshDiscordMessage[]> {
     const selected = await this.listDiscordChannels();
-    if (selected.length === 0) return [];
+    if (selected.length === 0 && guildId !== DISCORD_OWNER_DM_GUILD_ID) return [];
+    const scope = guildId === DISCORD_OWNER_DM_GUILD_ID
+      ? eq(ashDiscordMessages.guildId, DISCORD_OWNER_DM_GUILD_ID)
+      : and(
+        eq(ashDiscordMessages.guildId, guildId),
+        inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+      );
     const rows = await db
       .select()
       .from(ashDiscordMessages)
       .where(and(
-        eq(ashDiscordMessages.guildId, guildId),
         eq(ashDiscordMessages.kind, "owner_call"),
-        inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+        scope,
       ))
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
       .limit(limit);

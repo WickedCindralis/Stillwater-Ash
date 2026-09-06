@@ -18,3 +18,16 @@ and do NOT stop the app from serving.
 alongside `GET /healthz`. Distinguish this cosmetic health noise from a real
 publish blocker (e.g. a stuck DB-changes approval). Production schema on Replit
 is publish-flow only — the agent cannot migrate prod; prod SQL is read-only.
+
+The workspace API workflow and the published Replit Live VM are separate
+processes. A workflow restart loads code and secrets for development/preview,
+but the published URL continues serving the previous build until the project
+is published again.
+
+**Why:** Discord bot behavior depends on whichever long-running process owns the
+bot token, so checking the preview logs can falsely suggest a production bot
+has received a code fix.
+
+**How to apply:** after verifying a bot or API change in the workflow, check
+deployment logs separately and publish before testing the public URL. Treat
+Northflank as a separate deployment target with its own image and environment.

@@ -49,6 +49,24 @@ export type AshPacketPreviewMessage = {
   content: unknown;
   name?: string;
 };
+export type AshPacketPreviewRequest = {
+  model: string;
+  messages: AshPacketPreviewMessage[];
+  max_completion_tokens: number;
+  store: boolean;
+  user: string;
+  presence_penalty: number;
+  frequency_penalty: number;
+  temperature?: number;
+};
+export type AshPacketPreview = {
+  generatedAt: string;
+  source: "private_message";
+  input: string;
+  historyIncluded: false;
+  imageIncluded: false;
+  request: AshPacketPreviewRequest;
+};
 
 const STATUS_PING_INTERVALS: Record<string, number> = {
   alert: 8 * 60_000,
@@ -420,13 +438,42 @@ RULES FOR YOUR REPLY:
     return messages;
   }
 
-  async buildPacketPreview(): Promise<AshPacketPreviewMessage[]> {
-    return this.buildMessages(
-      "[PACKET PREVIEW — MESSAGE HISTORY OMITTED]",
-      "private_message",
-      undefined,
-      { includeHistory: false },
-    );
+  private buildOpenAIRequestParams(
+    model: string,
+    messages: ChatMessage[],
+    imageDataUrl?: string,
+  ): Record<string, any> {
+    const requestParams: Record<string, any> = {
+      model,
+      messages,
+      max_completion_tokens: PERSONA.maxTokens,
+      // Desktop screenshots are one-shot context and must not be retained by
+      // the model provider. Ordinary proactive text keeps the existing behavior.
+      store: !imageDataUrl,
+      user: `ash-container-${AGENT_NAME}`,
+      presence_penalty: 0,
+      frequency_penalty: 0,
+    };
+    if (!NO_TEMPERATURE_MODELS.includes(model)) {
+      requestParams.temperature = PERSONA.temperature;
+    }
+    return requestParams;
+  }
+
+  async buildPacketPreview(): Promise<AshPacketPreview> {
+    const input = "[PACKET PREVIEW — MESSAGE HISTORY OMITTED]";
+    const source = "private_message" as const;
+    const model = await this.resolveModel();
+    const messages = await this.buildMessages(input, source, undefined, { includeHistory: false });
+    const request = this.buildOpenAIRequestParams(model, messages) as AshPacketPreviewRequest;
+    return {
+      generatedAt: new Date().toISOString(),
+      source,
+      input,
+      historyIncluded: false,
+      imageIncluded: false,
+      request,
+    };
   }
 
   private async resolveModel(): Promise<string> {
@@ -477,20 +524,7 @@ RULES FOR YOUR REPLY:
       messages = await this.buildMessages(userMessage, source);
     }
 
-    const requestParams: Record<string, any> = {
-      model,
-      messages,
-      max_completion_tokens: PERSONA.maxTokens,
-      // Desktop screenshots are one-shot context and must not be retained by
-      // the model provider. Ordinary proactive text keeps the existing behavior.
-      store: !imageDataUrl,
-      user: `ash-container-${AGENT_NAME}`,
-      presence_penalty: 0,
-      frequency_penalty: 0,
-    };
-    if (!NO_TEMPERATURE_MODELS.includes(model)) {
-      requestParams.temperature = PERSONA.temperature;
-    }
+    const requestParams = this.buildOpenAIRequestParams(model, messages, imageDataUrl);
 
     try {
       let response;

@@ -501,12 +501,8 @@ router.get("/persona", requireAuth, async (_req, res): Promise<void> => {
 });
 
 router.get("/packet-preview", requireAuth, async (_req, res): Promise<void> => {
-  const messages = await ashBridge.buildPacketPreview();
-  res.json({
-    generatedAt: new Date().toISOString(),
-    historyIncluded: false,
-    messages,
-  });
+  const preview = await ashBridge.buildPacketPreview();
+  res.json(preview);
 });
 
 router.post("/persona", requireAuth, async (req, res): Promise<void> => {

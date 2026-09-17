@@ -8,10 +8,24 @@ type PacketMessage = {
   name?: string;
 };
 
+type PacketRequest = {
+  model: string;
+  messages: PacketMessage[];
+  max_completion_tokens: number;
+  store: boolean;
+  user: string;
+  presence_penalty: number;
+  frequency_penalty: number;
+  temperature?: number;
+};
+
 type PacketResponse = {
   generatedAt: string;
+  source: string;
+  input: string;
   historyIncluded: false;
-  messages: PacketMessage[];
+  imageIncluded: false;
+  request: PacketRequest;
 };
 
 function messageText(content: unknown): string {
@@ -21,6 +35,10 @@ function messageText(content: unknown): string {
 
 function roleLabel(role: PacketMessage["role"]): string {
   return role === "developer" ? "DEVELOPER" : role === "assistant" ? "ASSISTANT" : "USER";
+}
+
+function formatBoolean(value: boolean): string {
+  return value ? "true" : "false";
 }
 
 export default function PacketPage() {
@@ -90,8 +108,8 @@ export default function PacketPage() {
                   </p>
                 </div>
                 <div className="rounded border border-[#a99a7e]/50 bg-[#f2eadc]/70 px-4 py-3 text-right text-[11px] text-[#756650]">
-                  <div className="font-bold uppercase tracking-[0.16em] text-[#574a38]">
-                    {data.messages.length} packet entries
+                   <div className="font-bold uppercase tracking-[0.16em] text-[#574a38]">
+                     {data.request.messages.length} packet entries
                   </div>
                   <div className="mt-1">History: omitted</div>
                   <div>{new Date(data.generatedAt).toLocaleString()}</div>
@@ -99,28 +117,96 @@ export default function PacketPage() {
               </div>
             </div>
 
-            <div className="space-y-5 px-4 py-6 sm:px-12 sm:py-10">
-              {data.messages.map((message, index) => (
-                <section
-                  key={`${index}-${message.role}`}
-                  className="overflow-hidden rounded border border-[#b7a98f]/70 bg-[#f5eee2]/80"
-                  data-testid={`packet-entry-${index + 1}`}
-                >
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#c8bca7]/70 bg-[#ded2bd]/55 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#6e604c]">
-                    <span className="text-[#9a7b36]">{String(index + 1).padStart(2, "0")}</span>
-                    <span>{roleLabel(message.role)}</span>
-                    {message.name && <span className="font-normal tracking-[0.08em] text-[#88785f]">/ {message.name}</span>}
-                  </div>
-                  <pre className="whitespace-pre-wrap break-words px-4 py-4 font-mono text-[12px] leading-6 text-[#2d261d] sm:px-5">
-                    {messageText(message.content)}
-                  </pre>
-                </section>
-              ))}
+             <div className="space-y-8 px-4 py-6 sm:px-12 sm:py-10">
+               <section className="overflow-hidden rounded border border-[#b7a98f]/70 bg-[#f5eee2]/80">
+                 <div className="border-b border-[#c8bca7]/70 bg-[#ded2bd]/55 px-4 py-3">
+                   <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#6e604c]">
+                     00 / OPENAI REQUEST ENVELOPE
+                   </p>
+                   <p className="mt-1 text-xs leading-relaxed text-[#756650]">
+                     These are the request-level fields sent alongside the ordered message array. No API
+                     credential or response data is included.
+                   </p>
+                 </div>
+                 <dl className="grid gap-x-6 gap-y-3 px-4 py-4 text-sm sm:grid-cols-2 sm:px-5">
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Model</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">{data.request.model}</dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Source</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">{data.source}</dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Max completion tokens</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">{data.request.max_completion_tokens}</dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Provider storage</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">{formatBoolean(data.request.store)}</dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Request user</dt>
+                     <dd className="mt-1 break-all font-mono text-[#2d261d]">{data.request.user}</dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Temperature</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">
+                       {data.request.temperature === undefined ? "not sent for this model" : data.request.temperature}
+                     </dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Presence penalty</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">{data.request.presence_penalty}</dd>
+                   </div>
+                   <div>
+                     <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Frequency penalty</dt>
+                     <dd className="mt-1 font-mono text-[#2d261d]">{data.request.frequency_penalty}</dd>
+                   </div>
+                 </dl>
+                 <div className="border-t border-[#c8bca7]/70 px-4 py-4 sm:px-5">
+                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#88785f]">Preview input</p>
+                   <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[12px] leading-6 text-[#2d261d]">
+                     {data.input}
+                   </pre>
+                 </div>
+               </section>
+
+               <div className="flex items-end justify-between gap-4 border-b border-[#8f8068]/35 pb-3">
+                 <div>
+                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#78694f]">01 / ORDERED MESSAGE ARRAY</p>
+                   <p className="mt-1 text-xs text-[#756650]">
+                     Every entry below is in the exact order delivered in request.messages.
+                   </p>
+                 </div>
+                 <span className="shrink-0 font-mono text-xs text-[#88785f]">
+                   {data.request.messages.length} messages
+                 </span>
+               </div>
+
+               {data.request.messages.map((message, index) => (
+                 <section
+                   key={`${index}-${message.role}`}
+                   className="overflow-hidden rounded border border-[#b7a98f]/70 bg-[#f5eee2]/80"
+                   data-testid={`packet-entry-${index + 1}`}
+                 >
+                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[#c8bca7]/70 bg-[#ded2bd]/55 px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#6e604c]">
+                     <span className="text-[#9a7b36]">{String(index + 1).padStart(2, "0")}</span>
+                     <span>{roleLabel(message.role)}</span>
+                     {message.name && <span className="font-normal tracking-[0.08em] text-[#88785f]">/ {message.name}</span>}
+                   </div>
+                   <pre className="whitespace-pre-wrap break-words px-4 py-4 font-mono text-[12px] leading-6 text-[#2d261d] sm:px-5">
+                     {messageText(message.content)}
+                   </pre>
+                 </section>
+               ))}
             </div>
 
             <footer className="border-t border-[#8f8068]/35 px-6 py-5 text-xs leading-relaxed text-[#756650] sm:px-12">
-              This document is generated from the same packet assembly path used by Ash's API calls.
-              It is a read-only inspection view; refreshing rebuilds it from the current database-backed persona and state.
+               This document is generated from the same packet assembly and request-parameter path used by
+               Ash's private-message API calls. Conversation history, images, and Discord context are
+               intentionally absent; live status and active game state are included when present. Refreshing
+               rebuilds it from the current database-backed persona and state.
             </footer>
           </article>
         )}

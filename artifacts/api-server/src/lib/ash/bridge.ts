@@ -44,6 +44,11 @@ import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db"
 // every OpenAI call. No census, channels, inter-agent traffic, or alerts.
 
 type ChatMessage = { role: "developer" | "assistant" | "user"; content: any; name?: string };
+export type AshPacketPreviewMessage = {
+  role: "developer" | "assistant" | "user";
+  content: unknown;
+  name?: string;
+};
 
 const STATUS_PING_INTERVALS: Record<string, number> = {
   alert: 8 * 60_000,
@@ -170,7 +175,12 @@ ${DISCORD_SERVER_RULES}
   }
 
   // ── Packet assembly (prompt-cache-friendly: stable first, volatile last) ──
-  private async buildMessages(userMessage: string, source: string, imageDataUrl?: string): Promise<ChatMessage[]> {
+  private async buildMessages(
+    userMessage: string,
+    source: string,
+    imageDataUrl?: string,
+    options: { includeHistory?: boolean } = {},
+  ): Promise<ChatMessage[]> {
     const name = AGENT_NAME;
     const isDiscord = source.startsWith("discord");
     // Persona packet is rebuilt fresh from the database on every call, so edits
@@ -301,7 +311,7 @@ The Bridge removes this marker, asks the paired Windows companion for one fresh 
 
     // Recent private conversation with Wicked (text only — images are one-and-done).
     // For proactive self-prompt windows, history inclusion is controlled by a UI toggle.
-    let includeHistory = !isDiscord;
+    let includeHistory = options.includeHistory ?? !isDiscord;
     if (source === "self_prompt" && packetState) {
       includeHistory = packetState.selfPromptIncludeHistory !== 0;
     }
@@ -408,6 +418,15 @@ RULES FOR YOUR REPLY:
       });
     }
     return messages;
+  }
+
+  async buildPacketPreview(): Promise<AshPacketPreviewMessage[]> {
+    return this.buildMessages(
+      "[PACKET PREVIEW — MESSAGE HISTORY OMITTED]",
+      "private_message",
+      undefined,
+      { includeHistory: false },
+    );
   }
 
   private async resolveModel(): Promise<string> {

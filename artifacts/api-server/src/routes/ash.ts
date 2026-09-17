@@ -500,6 +500,15 @@ router.get("/persona", requireAuth, async (_req, res): Promise<void> => {
   res.json({ sections });
 });
 
+router.get("/packet-preview", requireAuth, async (_req, res): Promise<void> => {
+  const messages = await ashBridge.buildPacketPreview();
+  res.json({
+    generatedAt: new Date().toISOString(),
+    historyIncluded: false,
+    messages,
+  });
+});
+
 router.post("/persona", requireAuth, async (req, res): Promise<void> => {
   const parsed = updatePersonaSchema.safeParse(req.body);
   if (!parsed.success) {

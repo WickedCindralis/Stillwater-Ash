@@ -9,7 +9,7 @@ import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHer
 import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
-import { ashBridge } from "../lib/ash/bridge";
+import { ashBridge, type AshPacketPreview } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
 import { discordHerald } from "../lib/ash/discord";
@@ -47,6 +47,139 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
     return;
   }
   res.status(401).json({ error: "Not authenticated" });
+}
+
+function packetDocumentEscape(value: unknown): string {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function packetDocumentText(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function packetDocumentAccessDenied(): string {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Ash Packet — Sign in required</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #080706; color: #e8dfcd; }
+      body { min-height: 100vh; display: grid; place-items: center; margin: 0; }
+      main { max-width: 34rem; margin: 1.5rem; padding: 2.5rem; border: 1px solid #8e742d; background: #15110d; text-align: center; }
+      h1 { margin: 0 0 .75rem; color: #d7b65b; font: 600 2rem Georgia, serif; }
+      p { color: #b8aa91; line-height: 1.6; }
+      a { display: inline-block; margin-top: 1rem; color: #0d0b08; background: #d7b65b; padding: .7rem 1rem; text-decoration: none; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Ash API Packet</h1>
+      <p>This private document requires an authenticated Stillwater session.</p>
+      <a href="/login">Sign in to open the document</a>
+    </main>
+  </body>
+</html>`;
+}
+
+function packetDocumentHtml(preview: AshPacketPreview): string {
+  const rows: Array<[string, string]> = [
+    ["Model", preview.request.model],
+    ["Source", preview.source],
+    ["Max completion tokens", String(preview.request.max_completion_tokens)],
+    ["Provider storage", String(preview.request.store)],
+    ["Request user", preview.request.user],
+    ["Temperature", preview.request.temperature === undefined ? "not sent for this model" : String(preview.request.temperature)],
+    ["Presence penalty", String(preview.request.presence_penalty)],
+    ["Frequency penalty", String(preview.request.frequency_penalty)],
+  ];
+  const requestRows = rows
+    .map(([label, value]) => `<div class="request-field"><dt>${packetDocumentEscape(label)}</dt><dd>${packetDocumentEscape(value)}</dd></div>`)
+    .join("");
+  const messages = preview.request.messages
+    .map((message, index) => {
+      const role = message.role.toUpperCase();
+      const name = message.name ? ` / ${message.name}` : "";
+      return `<section class="message">
+  <header><span class="number">${String(index + 1).padStart(2, "0")}</span><span>${packetDocumentEscape(role)}</span><span class="name">${packetDocumentEscape(name)}</span></header>
+  <pre>${packetDocumentEscape(packetDocumentText(message.content))}</pre>
+</section>`;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="description" content="Private, live inspection document for Ash's complete API packet.">
+    <title>Ash API Packet — Stillwater</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #080706; color: #211b16; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 2rem 1rem 4rem; background: #080706; }
+      article { max-width: 72rem; margin: 0 auto; overflow: hidden; background: #e8dfcd; border: 1px solid #c6b99f; box-shadow: 0 20px 80px rgba(0,0,0,.45); }
+      .masthead { padding: 2.5rem clamp(1.5rem, 5vw, 4rem); border-bottom: 1px solid rgba(143,128,104,.35); }
+      .eyebrow, .section-label, dt { color: #78694f; font-size: .68rem; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; }
+      h1 { margin: .45rem 0 0; color: #2e251b; font: 600 clamp(2.2rem, 5vw, 3.5rem)/1.05 Georgia, serif; }
+      .intro { max-width: 48rem; margin: .8rem 0 0; color: #665946; font-size: .95rem; line-height: 1.65; }
+      .stamp { float: right; margin: 0 0 1rem 2rem; padding: .8rem 1rem; border: 1px solid rgba(169,154,126,.55); background: rgba(242,234,220,.7); color: #756650; font: .72rem/1.6 ui-monospace, SFMono-Regular, monospace; text-align: right; }
+      .stamp strong { display: block; color: #574a38; letter-spacing: .12em; text-transform: uppercase; }
+      .content { display: grid; gap: 2rem; padding: 2.5rem clamp(1rem, 5vw, 4rem); }
+      .panel { overflow: hidden; border: 1px solid rgba(183,169,143,.7); background: rgba(245,238,226,.8); }
+      .panel-heading, .message header { padding: .85rem 1rem; border-bottom: 1px solid rgba(200,188,167,.7); background: rgba(222,210,189,.55); }
+      .panel-note { margin: .35rem 0 0; color: #756650; font-size: .78rem; line-height: 1.55; }
+      dl { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem 1.5rem; margin: 0; padding: 1.2rem; }
+      .request-field dd { margin: .35rem 0 0; overflow-wrap: anywhere; color: #2d261d; font: .8rem/1.45 ui-monospace, SFMono-Regular, monospace; }
+      .input { padding: 1rem 1.2rem; border-top: 1px solid rgba(200,188,167,.7); }
+      .input pre, .message pre { margin: .6rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #2d261d; font: .78rem/1.7 ui-monospace, SFMono-Regular, monospace; }
+      .message { overflow: hidden; border: 1px solid rgba(183,169,143,.7); background: rgba(245,238,226,.8); }
+      .message header { display: flex; flex-wrap: wrap; gap: .75rem; color: #6e604c; font-size: .68rem; font-weight: 700; letter-spacing: .14em; }
+      .message .number { color: #9a7b36; }
+      .message .name { color: #88785f; font-weight: 400; letter-spacing: .08em; }
+      .message pre { margin: 0; padding: 1rem 1.2rem; }
+      footer { padding: 1.25rem clamp(1.5rem, 5vw, 4rem); border-top: 1px solid rgba(143,128,104,.35); color: #756650; font-size: .78rem; line-height: 1.6; }
+      @media (max-width: 680px) { body { padding: 0; } .stamp { float: none; margin: 0 0 1.25rem; text-align: left; } dl { grid-template-columns: 1fr; } }
+      @media print { body { padding: 0; background: white; } article { border: 0; box-shadow: none; } .message, .panel { break-inside: avoid; } }
+    </style>
+  </head>
+  <body>
+    <article>
+      <header class="masthead">
+        <div class="stamp"><strong>${preview.request.messages.length} packet entries</strong>History: omitted<br>${packetDocumentEscape(preview.generatedAt)}</div>
+        <div class="eyebrow">Stillwater / Internal Document</div>
+        <h1>Ash Cindralis</h1>
+        <p class="intro">The complete live request packet assembled immediately before a private-message API call. This document uses the database-backed persona and operational state, with conversation history intentionally omitted.</p>
+      </header>
+      <main class="content">
+        <section class="panel">
+          <div class="panel-heading">
+            <div class="section-label">00 / OpenAI Request Envelope</div>
+            <p class="panel-note">Request-level fields sent alongside the ordered message array. No API credential or response data is included.</p>
+          </div>
+          <dl>${requestRows}</dl>
+          <div class="input"><div class="section-label">Preview input</div><pre>${packetDocumentEscape(preview.input)}</pre></div>
+        </section>
+        <div class="section-label">01 / Ordered Message Array — ${preview.request.messages.length} messages</div>
+        ${messages}
+      </main>
+      <footer>This document is generated from the same packet assembly and request-parameter path used by Ash's private-message API calls. Conversation history, images, and Discord context are intentionally absent; live status and active game state are included when present. Reload to rebuild it from current state.</footer>
+    </article>
+  </body>
+</html>`;
 }
 
 function publicState(
@@ -503,6 +636,20 @@ router.get("/persona", requireAuth, async (_req, res): Promise<void> => {
 router.get("/packet-preview", requireAuth, async (_req, res): Promise<void> => {
   const preview = await ashBridge.buildPacketPreview();
   res.json(preview);
+});
+
+router.get("/packet-document", async (req, res): Promise<void> => {
+  if (!req.session?.authenticated) {
+    res.status(401).type("html").send(packetDocumentAccessDenied());
+    return;
+  }
+  const preview = await ashBridge.buildPacketPreview();
+  res
+    .status(200)
+    .type("html")
+    .set("Cache-Control", "private, no-store")
+    .set("Content-Disposition", 'inline; filename="ash-packet.html"')
+    .send(packetDocumentHtml(preview));
 });
 
 router.post("/persona", requireAuth, async (req, res): Promise<void> => {

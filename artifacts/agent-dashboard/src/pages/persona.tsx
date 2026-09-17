@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "../lib/queryClient";
-import { ArrowLeft, ScrollText, RotateCcw, Save, Copy, Check } from "lucide-react";
+import { ArrowLeft, ScrollText, RotateCcw, Save, Copy, Check, ExternalLink } from "lucide-react";
 
 // Persona packet editor. Sections live in the database; an empty override
 // falls back to the built-in original. Edits apply on Ash's very next reply.
@@ -68,6 +68,7 @@ export default function PersonaPage() {
   const [fullDraft, setFullDraft] = useState("");
   const [fullParseError, setFullParseError] = useState(false);
   const [copied, setCopied] = useState(false);
+  const packetHref = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/packet`;
 
   // Seed drafts from the server once loaded (and after saves).
   useEffect(() => {
@@ -171,6 +172,17 @@ export default function PersonaPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <a
+            href={packetHref}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-lg border border-gold/30 bg-gold/10 px-3 py-2 text-sm text-gold transition-colors hover:bg-gold/20"
+            data-testid="link-open-api-packet"
+            title="Open the exact API packet order without message history"
+          >
+            <ExternalLink className="h-4 w-4" />
+            <span className="hidden sm:inline">Open API Packet</span>
+          </a>
           {savedFlash && <span className="text-emerald-400/90 text-sm" data-testid="text-saved">Saved ✓</span>}
           <div className="flex rounded-lg border border-white/15 overflow-hidden text-xs">
             <button

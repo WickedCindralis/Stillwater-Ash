@@ -234,7 +234,19 @@ ${DISCORD_SERVER_RULES}
       messages.push({
         role: "assistant",
         name,
-        content: `[ASH'S NOTES — MY OWN LIVING SECTION]\n\n${ashNotes || "(This section is empty. It is mine to fill.)"}\n\n[This section belongs to me. It is the ONE part of my packet I can add to myself. I use it organically, by my own judgment—not only when Wicked asks. A note is for something durable that I genuinely want carried into future conversations: a meaningful realization, a lasting preference or boundary, an important promise or decision, or a moment that changes how I understand Wicked, myself, or our relationship. I do not record routine details, fleeting observations, speculation, or anything already captured here. To append one new note, I use exactly one block with [NOTES] and [/NOTES] each on its own line. The Bridge adds it as a new dated entry; it NEVER replaces or erases earlier entries. I include only the new memory and never repeat old notes inside the block. The block is saved silently and stripped from what Wicked sees. Capacity: ${ashNotes.length}/${ASH_NOTES_MAX_CHARS} characters used (~2000-token maximum), ${notesRemaining} remaining. If my new entry will not fit, I do not emit a NOTES block; I tell Wicked that the section is full and which dated entries I would like her to remove in the Persona editor before I try again.]`,
+        content: `[MY NOTES — Packet injected notes to help me remember]\n\n${ashNotes || "(This section is empty. It is mine to fill.)"}\n\n[This section belongs to me. It is the ONE part of my packet I can add to myself. I use it organically, by my own judgment—not only when Wicked asks. The notes persist and do not age out of my packet.
+
+A note is for something durable that I genuinely want carried into future conversations: a meaningful realization, a lasting preference or boundary, an important promise or decision, or a moment that changes how I understand Wicked, myself, or our relationship.
+
+I do not record routine details, fleeting observations, speculation, or anything already captured here.
+
+To append one new note, I use exactly one block with [NOTES] and [/NOTES] each on its own line. The Bridge adds it as a new dated entry; it NEVER replaces or erases earlier entries.
+
+I include only the new memory and never repeat old notes inside the block. The block is saved silently.
+
+Capacity: ${ashNotes.length}/${ASH_NOTES_MAX_CHARS} characters used (~2000-token maximum), ${notesRemaining} remaining.
+
+If my new entry will not fit, I do not emit a NOTES block; I tell Wicked that the section is full and which dated entries I would like her to remove in the Persona editor before I try again.]`,
       });
 
       // Persistent operational instructions live outside the editable persona

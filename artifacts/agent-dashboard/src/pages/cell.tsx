@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, type ClipboardEvent } from "r
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getClipboardImage } from "@/lib/clipboardImage";
 import type { AshMessage, AshState } from "@/lib/types";
 
 type SendMessageResponse = {
@@ -284,12 +285,14 @@ export default function CellPage() {
   };
 
   const handleImagePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageItem = Array.from(event.clipboardData.items)
-      .find((item) => item.kind === "file" && item.type.startsWith("image/"));
-    const imageFile = imageItem?.getAsFile();
-    if (!imageFile) return;
+    const image = getClipboardImage(event.clipboardData);
+    if (!image) return;
     event.preventDefault();
-    void handleImagePick(imageFile);
+    if (typeof image === "string") {
+      setPendingImage(image);
+      return;
+    }
+    void handleImagePick(image);
   };
 
   return (

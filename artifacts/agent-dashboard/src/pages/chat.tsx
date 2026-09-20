@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type ClipboardEvent } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getClipboardImage } from "@/lib/clipboardImage";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings, Monitor, Copy,
@@ -251,12 +252,14 @@ export default function ChatPage() {
   };
 
   const handleImagePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageItem = Array.from(event.clipboardData.items)
-      .find((item) => item.kind === "file" && item.type.startsWith("image/"));
-    const imageFile = imageItem?.getAsFile();
-    if (!imageFile) return;
+    const image = getClipboardImage(event.clipboardData);
+    if (!image) return;
     event.preventDefault();
-    void handleImagePick(imageFile);
+    if (typeof image === "string") {
+      setPendingImage(image);
+      return;
+    }
+    void handleImagePick(image);
   };
 
   const status = state?.status?.toLowerCase() || "off";

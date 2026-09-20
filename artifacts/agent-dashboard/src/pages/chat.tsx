@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ClipboardEvent } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -244,6 +244,15 @@ export default function ChatPage() {
     }
     const dataUrl = await readFileAsDataUrl(file);
     setPendingImage(dataUrl);
+  };
+
+  const handleImagePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageItem = Array.from(event.clipboardData.items)
+      .find((item) => item.kind === "file" && item.type.startsWith("image/"));
+    const imageFile = imageItem?.getAsFile();
+    if (!imageFile) return;
+    event.preventDefault();
+    void handleImagePick(imageFile);
   };
 
   const status = state?.status?.toLowerCase() || "off";
@@ -515,7 +524,7 @@ export default function ChatPage() {
                 onClick={() => fileInputRef.current?.click()}
                 className="p-2.5 rounded-xl bg-white/5 text-white/50 hover:text-gold hover:bg-white/10 transition-colors"
                 data-testid="button-attach"
-                title="Attach image"
+                title="Attach image or paste one into the message box"
               >
                 <ImagePlus className="w-5 h-5" />
               </button>
@@ -534,13 +543,14 @@ export default function ChatPage() {
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
+                onPaste={handleImagePaste}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
                   }
                 }}
-                placeholder="Message Ash..."
+                placeholder="Message Ash… or paste a picture"
                 rows={1}
                 className="flex-1 bg-white/5 text-white placeholder-white/30 rounded-xl px-4 py-2.5 resize-none outline-none border border-white/10 focus:border-gold/40"
                 style={{ maxHeight: 140 }}

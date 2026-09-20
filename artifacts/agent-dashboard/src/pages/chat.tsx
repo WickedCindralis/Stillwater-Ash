@@ -103,6 +103,7 @@ export default function ChatPage() {
   const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess" | "connect4">("none");
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const [pairingToken, setPairingToken] = useState<string | null>(null);
+  const [voiceIdDraft, setVoiceIdDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -111,6 +112,9 @@ export default function ChatPage() {
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
   });
+  useEffect(() => {
+    setVoiceIdDraft(state?.voiceId ?? "");
+  }, [state?.voiceId]);
   const { data: messages = [], isLoading: messagesLoading } = useQuery<AshMessage[]>({
     queryKey: ["/api/messages"],
     refetchInterval: 10_000,
@@ -735,6 +739,32 @@ export default function ChatPage() {
                   </select>
                 </label>
               </div>
+            </div>
+
+            {/* Voice */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+              <div>
+                <h3 className="text-white font-semibold">Ash’s Voice</h3>
+                <p className="text-white/40 text-xs mt-1">ElevenLabs voice used by TTS in the Cell.</p>
+              </div>
+              <label className="block">
+                <span className="text-xs text-white/40">Voice ID</span>
+                <input
+                  value={voiceIdDraft}
+                  onChange={(event) => setVoiceIdDraft(event.target.value)}
+                  className="w-full mt-1 bg-black/60 border border-white/15 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-gold/40"
+                  placeholder="ElevenLabs voice ID"
+                  data-testid="input-voice-id"
+                />
+              </label>
+              <button
+                onClick={() => settingsMutation.mutate({ voiceId: voiceIdDraft.trim() })}
+                disabled={settingsMutation.isPending || voiceIdDraft.trim() === state.voiceId}
+                className="w-full py-2 rounded-lg bg-gold/15 text-gold border border-gold/30 text-sm font-semibold hover:bg-gold/25 disabled:opacity-40"
+                data-testid="button-save-voice-id"
+              >
+                {settingsMutation.isPending ? "Saving…" : "Save Voice ID"}
+              </button>
             </div>
 
             {/* Status + pings */}

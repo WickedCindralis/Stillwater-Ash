@@ -76,6 +76,7 @@ export default function CellPage() {
   // ── Ash's voice (ElevenLabs TTS) ──
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  const [ttsError, setTtsError] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastSpokenIdRef = useRef<number | null>(null);
   // Each speak() call gets a generation number + abort controller; only the
@@ -102,6 +103,7 @@ export default function CellPage() {
   const speak = useCallback(async (text: string) => {
     if (!text.trim()) return;
     stopSpeaking();
+    setTtsError("");
     const gen = ttsGenRef.current;
     const alive = () => ttsGenRef.current === gen;
     const abort = new AbortController();
@@ -174,7 +176,10 @@ export default function CellPage() {
         audio.onerror = () => cleanup(url);
         try { await audio.play(); } catch { cleanup(url); }
       }
-    } catch {
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : "";
+      const serverMessage = raw.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
+      setTtsError(serverMessage || "Ash’s voice could not be played.");
       cleanup();
     }
   }, [stopSpeaking]);
@@ -331,6 +336,15 @@ export default function CellPage() {
           </button>
         </div>
       </header>
+
+      {ttsError && (
+        <div
+          className="border-b border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-300"
+          data-testid="text-cell-tts-error"
+        >
+          {ttsError}
+        </div>
+      )}
 
       {showChess && <ChessPanel onClose={() => setShowChess(false)} />}
       {showConnect4 && <Connect4Panel onClose={() => setShowConnect4(false)} />}

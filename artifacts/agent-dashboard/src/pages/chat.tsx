@@ -6,7 +6,7 @@ import { getClipboardImage } from "@/lib/clipboardImage";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings, Monitor, Copy,
-  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone, Feather,
 } from "lucide-react";
 import { SiDiscord } from "react-icons/si";
 import ChessPanel from "@/components/chess-panel";
@@ -333,6 +333,14 @@ export default function ChatPage() {
             title="Edit Ash's persona packet"
           >
             <ScrollText className="w-5 h-5" />
+          </Link>
+          <Link
+            href="/story"
+            className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
+            data-testid="link-story"
+            title="The Scriptorium (Story Workspace)"
+          >
+            <Feather className="w-5 h-5" />
           </Link>
           <Link
             href="/cell"

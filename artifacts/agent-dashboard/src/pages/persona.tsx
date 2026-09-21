@@ -15,6 +15,7 @@ const SECTION_META: { key: string; title: string; blurb: string; max: number }[]
   { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always.", max: 24000 },
   { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary.", max: 24000 },
   { key: "ashNotes", title: "Ash's Notes", blurb: "His dated, additive ledger — new entries compound without erasing old ones. You can edit or prune it when space runs low.", max: 8000 },
+  { key: "storyPacket", title: "Story Packet", blurb: "The book Ash is currently writing. Themes, outline, cast, rules of the world.", max: 24000 },
 ];
 
 // ── Full-packet mode: all sections joined with marker lines so the
@@ -24,6 +25,7 @@ const SECTION_MARKERS: Record<string, string> = {
   soulSheet: "===== SOUL-SHEET =====",
   coreAnchors: "===== CORE MEMORIES =====",
   ashNotes: "===== ASH'S NOTES =====",
+  storyPacket: "===== STORY PACKET =====",
 };
 
 function composeFullPacket(drafts: Record<string, string>): string {
@@ -44,10 +46,10 @@ function parseFullPacket(text: string): Record<string, string> | null {
   const keys = found.map((f) => f.key);
   // Legacy packets copied before "Ash's Notes" existed have only the first
   // three markers — accept them (Notes defaults to empty). No duplicates.
-  const required = SECTION_META.map((m) => m.key).filter((k) => k !== "ashNotes");
+  const required = SECTION_META.map((m) => m.key).filter((k) => k !== "ashNotes" && k !== "storyPacket");
   if (new Set(keys).size !== keys.length) return null;
   if (!required.every((k) => keys.includes(k))) return null;
-  if (!keys.every((k) => k === "ashNotes" || required.includes(k))) return null;
+  if (!keys.every((k) => k === "ashNotes" || k === "storyPacket" || required.includes(k))) return null;
   // Nothing but whitespace may sit above the first marker.
   if (lines.slice(0, found[0]!.line).some((l) => l.trim() !== "")) return null;
   const out: Record<string, string> = {};
@@ -57,6 +59,7 @@ function parseFullPacket(text: string): Record<string, string> | null {
     out[found[i]!.key] = lines.slice(start, end).join("\n").trim();
   }
   if (out["ashNotes"] === undefined) out["ashNotes"] = "";
+  if (out["storyPacket"] === undefined) out["storyPacket"] = "";
   return out;
 }
 

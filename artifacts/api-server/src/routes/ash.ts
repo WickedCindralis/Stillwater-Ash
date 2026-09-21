@@ -5,7 +5,7 @@ import {
   type Response,
   type NextFunction,
 } from "express";
-import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema, type AshState } from "@workspace/db";
+import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema, updateStorySchema, writeStorySchema, updateStoryChapterSchema, type AshState } from "@workspace/db";
 import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
@@ -191,6 +191,18 @@ function publicState(
     ...safeState
   } = state;
   return safeState;
+}
+
+function storyManuscript(story: Awaited<ReturnType<typeof storage.getStory>>): {
+  id: string; title: string; storyPacket: string; summary: string; status: string;
+  lastError: string | null; currentChapterId: number | null; updatedAt: Date;
+} {
+  const run = story.run;
+  const status = story.story.runStatus === "complete" ? "idle"
+    : story.story.runStatus === "paused" ? "incomplete"
+      : story.story.runStatus === "failed" ? "error" : story.story.runStatus;
+  return { id: "ash", title: story.story.title, storyPacket: story.story.storyPacket, summary: story.story.rollingSummary,
+    status, lastError: run?.error || null, currentChapterId: run?.chapterId ?? null, updatedAt: story.story.updatedAt };
 }
 
 // ── Auth ──
@@ -610,13 +622,15 @@ const PERSONA_DEFAULTS = {
   soulSheet: DEFAULT_SOUL_SHEET,
   coreAnchors: DEFAULT_CORE_ANCHORS,
   ashNotes: "",
+  storyPacket: "",
 } as const;
 type PersonaKey = keyof typeof PERSONA_DEFAULTS;
-const PERSONA_COLUMNS: Record<PersonaKey, "personaIdentity" | "personaSoulSheet" | "personaCoreAnchors" | "personaAshNotes"> = {
+const PERSONA_COLUMNS: Record<PersonaKey, "personaIdentity" | "personaSoulSheet" | "personaCoreAnchors" | "personaAshNotes" | "personaStoryPacket"> = {
   identity: "personaIdentity",
   soulSheet: "personaSoulSheet",
   coreAnchors: "personaCoreAnchors",
   ashNotes: "personaAshNotes",
+  storyPacket: "personaStoryPacket",
 };
 
 router.get("/persona", requireAuth, async (_req, res): Promise<void> => {
@@ -671,6 +685,9 @@ router.post("/persona", requireAuth, async (req, res): Promise<void> => {
   }
   if (changed.length > 0) {
     await storage.updateState(patch);
+    if (parsed.data.storyPacket !== undefined) {
+      await storage.updateStory({ storyPacket: parsed.data.storyPacket });
+    }
     await storage.logActivity("persona", `Wicked edited Ash's persona packet (${changed.join(", ")})`).catch(() => {});
   }
   const state = await storage.getState();
@@ -702,6 +719,95 @@ router.delete("/diary/:id", requireAuth, async (req, res): Promise<void> => {
   }
   await storage.deleteDiaryEntry(id);
   res.json({ ok: true });
+});
+
+// ── Story workspace ──
+router.get("/story", requireAuth, async (_req, res): Promise<void> => {
+  const story = await storage.getStory();
+  res.json({ manuscript: storyManuscript(story), chapters: story.chapters });
+});
+router.patch("/story", requireAuth, async (req, res): Promise<void> => {
+  const parsed = updateStorySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") }); return; }
+  const patch = { ...parsed.data, ...(parsed.data.summary === undefined ? {} : { rollingSummary: parsed.data.summary }) };
+  delete (patch as Record<string, unknown>).summary;
+  await storage.updateStory(patch);
+  if (parsed.data.storyPacket !== undefined) await storage.updateState({ personaStoryPacket: parsed.data.storyPacket });
+  res.json(storyManuscript(await storage.getStory()));
+});
+router.post("/story/write", requireAuth, async (req, res): Promise<void> => {
+  const parsed = writeStorySchema.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") }); return; }
+  const story = await storage.getStory();
+  if (story.story.runStatus === "running") { res.status(409).json({ error: "A story run is already in progress" }); return; }
+  if ((await storage.getState()).apiKillSwitch === 1) { res.status(503).json({ error: "Story writing is disabled by the API kill switch" }); return; }
+  try {
+    await storage.updateStory({ runStatus: "running" });
+    await ashBridge.startStoryWrite(parsed.data.prompt, parsed.data.resumeRunId);
+    res.status(202).json(storyManuscript(await storage.getStory()));
+  } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Story run failed" }); }
+});
+router.patch("/story/chapters/:id", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params.id), parsed = updateStoryChapterSchema.safeParse(req.body);
+  if (!Number.isInteger(id) || !parsed.success) { res.status(400).json({ error: "Invalid chapter payload" }); return; }
+  const story = await storage.getStory();
+  if (story.story.runStatus === "running") {
+    res.status(409).json({ error: "Chapters cannot be edited while Ash is writing" });
+    return;
+  }
+  const chapter = await storage.updateStoryChapter(id, parsed.data);
+  if (!chapter) { res.status(404).json({ error: "Chapter not found" }); return; }
+  res.json(chapter);
+});
+router.delete("/story/chapters/:id", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid chapter id" }); return; }
+  const story = await storage.getStory();
+  if (story.story.runStatus === "running") {
+    res.status(409).json({ error: "Chapters cannot be deleted while Ash is writing" });
+    return;
+  }
+  if (!(await storage.deleteStoryChapter(id))) { res.status(404).json({ error: "Chapter not found" }); return; }
+  if (story.run?.chapterId === id) {
+    await storage.updateStoryRun(story.run.id, { status: "complete", finishedAt: new Date() });
+    await storage.updateStory({ runStatus: "idle", activeRunId: "" });
+  }
+  res.json({ ok: true });
+});
+router.post("/story/chapters/:id/move", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params.id), direction = req.body?.direction;
+  if (!Number.isInteger(id) || (direction !== "up" && direction !== "down")) { res.status(400).json({ error: "Invalid chapter direction" }); return; }
+  if ((await storage.getStory()).story.runStatus === "running") {
+    res.status(409).json({ error: "Chapters cannot be reordered while Ash is writing" });
+    return;
+  }
+  const chapter = await storage.moveStoryChapterDirection(id, direction);
+  if (!chapter) { res.status(404).json({ error: "Chapter not found" }); return; }
+  res.json(chapter);
+});
+router.get("/story/packet-preview", requireAuth, async (_req, res): Promise<void> => {
+  res.json(await ashBridge.buildStoryPacketPreview());
+});
+router.get("/story/packet-document", requireAuth, async (_req, res): Promise<void> => {
+  const preview = await ashBridge.buildStoryPacketPreview();
+  res.type("html").set("Cache-Control", "private, no-store").send(packetDocumentHtml(preview));
+});
+router.get("/story/export.txt", requireAuth, async (_req, res): Promise<void> => {
+  const { story, chapters } = await storage.getStory();
+  const text = [story.title, ...chapters.map((c) => `Chapter ${c.position}${c.title ? ` — ${c.title}` : ""}\n\n${c.content}${c.continuation ? `\n\n[Unfinished continuation]\n${c.continuation}` : ""}`)].filter(Boolean).join("\n\n");
+  res.type("text/plain").set("Content-Disposition", 'attachment; filename="stillwater-story.txt"').send(text);
+});
+router.get("/story/export.docx", requireAuth, async (_req, res): Promise<void> => {
+  const { story, chapters } = await storage.getStory();
+  const children: Paragraph[] = [new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun(story.title || "Stillwater Story")] })];
+  for (const chapter of chapters) {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun(`Chapter ${chapter.position}${chapter.title ? ` — ${chapter.title}` : ""}`)] }));
+    for (const line of chapter.content.split("\n")) children.push(new Paragraph({ children: [new TextRun(line)] }));
+    if (chapter.continuation) children.push(new Paragraph({ children: [new TextRun({ text: `[Unfinished continuation]\n${chapter.continuation}`, italics: true })] }));
+  }
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  res.setHeader("Content-Disposition", 'attachment; filename="stillwater-story.docx"');
+  res.send(await Packer.toBuffer(new Document({ sections: [{ children }] })));
 });
 
 // ── Chess ──

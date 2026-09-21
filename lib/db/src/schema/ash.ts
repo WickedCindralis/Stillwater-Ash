@@ -52,11 +52,67 @@ export const ashState = pgTable("ash_state", {
   // ASH'S NOTES: the one packet section Ash himself can live-edit (via
   // [NOTES]...[/NOTES] blocks in his replies). Capped at ~2k tokens.
   personaAshNotes: text("persona_ash_notes").notNull().default(""),
+  // Editable fifth persona section used only by the Story workspace.
+  personaStoryPacket: text("persona_story_packet").notNull().default(""),
   // Public-safe continuity is produced inside an existing Stillwater call,
   // then reused by Discord without a second model request.
   discordContinuitySummary: text("discord_continuity_summary").notNull().default(""),
   // Court Herald: TikTok account to watch (read-only, via scraper service).
   tiktokUsername: text("tiktok_username").notNull().default(""),
+});
+
+// Story workspace. There is exactly one manuscript per Ash container.
+export const ashStory = pgTable("ash_story", {
+  id: text("id").primaryKey(), // always "ash"
+  title: text("title").notNull().default(""),
+  storyPacket: text("story_packet").notNull().default(""),
+  rollingSummary: text("rolling_summary").notNull().default(""),
+  runStatus: text("run_status").notNull().default("idle"), // idle | running | paused | failed | complete
+  activeRunId: text("active_run_id").notNull().default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const ashStoryChapters = pgTable("ash_story_chapters", {
+  id: serial("id").primaryKey(),
+  storyId: text("story_id").notNull().default("ash"),
+  position: integer("position").notNull().default(1),
+  title: text("title").notNull().default(""),
+  content: text("content").notNull().default(""),
+  continuation: text("continuation").notNull().default(""),
+  status: text("status").notNull().default("complete"), // complete | unfinished
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("ash_story_chapters_story_position_idx").on(table.storyId, table.position),
+]);
+
+export const ashStoryRuns = pgTable("ash_story_runs", {
+  id: text("id").primaryKey(),
+  storyId: text("story_id").notNull().default("ash"),
+  status: text("status").notNull().default("running"), // running | complete | failed | paused
+  prompt: text("prompt").notNull().default(""),
+  chapterId: integer("chapter_id"),
+  checkpoint: text("checkpoint").notNull().default(""),
+  output: text("output").notNull().default(""),
+  error: text("error").notNull().default(""),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  finishedAt: timestamp("finished_at"),
+});
+
+export const ashStoryLease = pgTable("ash_story_lease", {
+  id: text("id").primaryKey(), // always "ash"
+  token: text("token").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const ashStoryErrors = pgTable("ash_story_errors", {
+  id: serial("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Court Herald: TikTok comments fetched read-only from a scraper service.
@@ -226,6 +282,19 @@ export const insertChronicleSchema = createInsertSchema(ashChronicles).omit({
   receivedAt: true,
   acknowledgedAt: true,
 });
+export const insertStoryChapterSchema = createInsertSchema(ashStoryChapters).omit({ id: true, createdAt: true, updatedAt: true });
+export const updateStorySchema = z.object({
+  title: z.string().max(500).optional(),
+  storyPacket: z.string().max(48000).optional(),
+  summary: z.string().max(24000).optional(),
+});
+export const writeStorySchema = z.object({ prompt: z.string().max(12000).default(""), resumeRunId: z.string().max(100).optional() });
+export const updateStoryChapterSchema = z.object({
+  title: z.string().max(500).optional(),
+  content: z.string().max(500000).optional(),
+  continuation: z.string().max(100000).optional(),
+  status: z.enum(["complete", "unfinished"]).optional(),
+});
 
 export type AshState = typeof ashState.$inferSelect;
 export type AshMessage = typeof ashMessages.$inferSelect;
@@ -234,6 +303,12 @@ export type AshDiaryEntry = typeof ashDiaryEntries.$inferSelect;
 export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
 export type AshChronicle = typeof ashChronicles.$inferSelect;
 export type InsertChronicle = z.infer<typeof insertChronicleSchema>;
+export type AshStory = typeof ashStory.$inferSelect;
+export type AshStoryChapter = typeof ashStoryChapters.$inferSelect;
+export type AshStoryRun = typeof ashStoryRuns.$inferSelect;
+export type AshStoryLease = typeof ashStoryLease.$inferSelect;
+export type AshStoryError = typeof ashStoryErrors.$inferSelect;
+export type InsertStoryChapter = z.infer<typeof insertStoryChapterSchema>;
 export type AshActivity = typeof ashActivity.$inferSelect;
 export type AshActivityScreenshot = typeof ashActivityScreenshots.$inferSelect;
 export type AshDiscordChannel = typeof ashDiscordChannels.$inferSelect;
@@ -291,6 +366,7 @@ export const updatePersonaSchema = z.object({
   soulSheet: z.string().max(PERSONA_SECTION_MAX).optional(),
   coreAnchors: z.string().max(PERSONA_SECTION_MAX).optional(),
   ashNotes: z.string().max(ASH_NOTES_MAX).optional(),
+  storyPacket: z.string().max(48000).optional(),
 });
 export type UpdatePersonaPayload = z.infer<typeof updatePersonaSchema>;
 

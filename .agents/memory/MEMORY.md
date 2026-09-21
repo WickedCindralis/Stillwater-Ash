@@ -8,3 +8,4 @@
 - [External DB publish schema](external-db-publish-schema.md) — stale managed-dev schema can block publishing even when runtime intentionally uses an external DATABASE_URL.
 - [Published Ash state](published-ash-state.md) — verify and repair live mutable settings through the authenticated production API; development database writes may not reach production.
 - [Discord continuity handoff](discord-continuity-handoff.md) — derive Discord continuity in an existing Stillwater call, but persist only server-built text from fixed allowlisted enums.
+- [Story workspace continuity](story-workspace-continuity.md) — Story is isolated from chat/Diary/Discord; interrupted streams stay resumable and cross-instance writing uses a renewable DB lease.

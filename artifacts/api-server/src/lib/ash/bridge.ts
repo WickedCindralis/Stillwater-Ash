@@ -36,7 +36,9 @@ import {
 } from "./screen-capture";
 import { stripScreenCaptureCommand } from "./screen-capture-command";
 import { formatPrivateHistory } from "./history-format";
+import { parseStoryCommand, selectResumeOutput } from "./story-command";
 import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
+import { randomUUID } from "node:crypto";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
 // intervals, proactive self-prompt (reflective) windows, DIARY: parsing,
@@ -111,6 +113,10 @@ const HISTORY_LIMIT = 20;
 const DISCORD_WICKED_WINDOW = 10;
 const DISCORD_COMMENT_HISTORY_LIMIT = 10;
 
+function storyMaxCompletionTokens(model: string): number {
+  return model.startsWith("gpt-5") ? 128_000 : PERSONA.maxTokens;
+}
+
 function formatDiscordCommentHistory(messages: readonly AshDiscordMessage[]): string {
   return messages
     .filter((message) => message.content.trim().length > 0)
@@ -134,6 +140,128 @@ export class AshBridge {
 
   private log(...args: unknown[]) { logger.info([this.tag, ...args.map(String)].join(" ")); }
   private error(...args: unknown[]) { logger.error([this.tag, ...args.map(String)].join(" ")); }
+
+  /** Generate only from the Story packet. This path deliberately excludes chat,
+   * Discord, diary, games, and ordinary history. Durable checkpoints make a
+   * dropped stream resumable without losing the partial chapter. */
+  async writeStory(prompt = "", resumeRunId?: string): Promise<{ runId: string; status: string; output: string }> {
+    if (!this.openai) throw new Error("OpenAI client not initialized");
+    const lease = randomUUID();
+    if (!(await storage.acquireStoryLease(lease, 15 * 60_000))) throw new Error("A story run is already in progress");
+    let activeRunId: string | null = null;
+    let activeChapterId: number | null = null;
+    let output = "";
+    try {
+      const model = await this.resolveModel();
+      const ceiling = storyMaxCompletionTokens(model);
+      const current = await storage.getStory();
+      const state = await storage.getState();
+      if (state.apiKillSwitch === 1) throw new Error("Story writing is disabled by the API kill switch");
+      const effectiveResume = resumeRunId || (current.run && current.run.status !== "complete" ? current.run.id : undefined);
+      const runId = effectiveResume || randomUUID();
+      const run = effectiveResume && current.run?.id === effectiveResume
+        ? current.run
+        : await storage.createStoryRun({ id: runId, prompt });
+      const existingDraft = effectiveResume && run.chapterId ? await storage.getStoryChapter(run.chapterId) : null;
+      const prior = selectResumeOutput(existingDraft?.content, effectiveResume ? run.output : "");
+      const nextPosition = current.chapters.reduce((max, chapter) => Math.max(max, chapter.position), 0) + 1;
+      const draftChapter = existingDraft || await storage.createStoryChapter({ position: nextPosition, content: prior, status: "unfinished" });
+      activeRunId = run.id;
+      activeChapterId = draftChapter.id;
+      output = prior;
+      const packet = [
+        `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${state.personaIdentity?.trim() || SYSTEM_PROMPT}`,
+        `[SOUL]\n${state.personaSoulSheet || DEFAULT_SOUL_SHEET}`,
+        `[CORE VOICE]\n${state.personaCoreAnchors || DEFAULT_CORE_ANCHORS}`,
+        `[STORY PACKET]\n${current.story.storyPacket || state.personaStoryPacket || "(empty)"}`,
+        `[ROLLING SUMMARY]\n${current.story.rollingSummary || "(none)"}`,
+        `[LATEST CHAPTER]\n${effectiveResume ? draftChapter.content : (current.chapters.at(-1)?.content || "(none)")}`,
+        `[UNFINISHED CONTINUATION]\n${effectiveResume ? draftChapter.content.slice(-4000) : (current.chapters.at(-1)?.continuation || "(none)")}`,
+        `[WRITING REQUEST]\n${prompt || (effectiveResume ? "Continue directly from the unfinished ending. Do not repeat existing prose." : "Write the next chapter.")}`,
+      ].join("\n\n");
+      await storage.updateStory({ runStatus: "running", activeRunId: run.id });
+      await storage.updateStoryRun(run.id, {
+        chapterId: draftChapter.id,
+        output,
+        checkpoint: output.slice(-4000),
+        status: "running",
+        error: "",
+        finishedAt: null,
+      });
+      const response = await this.openai.chat.completions.create({
+        model, messages: [{ role: "developer", content: packet }, { role: "user", content: effectiveResume ? "Continue from the saved ending." : (prompt || "Write the next chapter.") }],
+        max_completion_tokens: ceiling, store: false, stream: true,
+      } as any);
+      let lastCheckpoint = Date.now();
+      let finishReason = "";
+      for await (const chunk of response as any) {
+        output += chunk.choices?.[0]?.delta?.content || "";
+        finishReason = chunk.choices?.[0]?.finish_reason || finishReason;
+        if (Date.now() - lastCheckpoint > 2000) {
+          await storage.acquireStoryLease(lease, 15 * 60_000);
+          await storage.updateStoryRun(run.id, { output, checkpoint: output.slice(-4000), status: "running" });
+          await storage.updateStoryChapter(draftChapter.id, { content: output, continuation: output.slice(-4000), status: "unfinished" });
+          lastCheckpoint = Date.now();
+        }
+      }
+      if (finishReason !== "stop") {
+        await storage.updateStoryRun(run.id, { output, checkpoint: output.slice(-4000), status: "paused" });
+        await storage.updateStory({ runStatus: "paused" });
+        await storage.updateStoryChapter(draftChapter.id, { content: output.trim(), continuation: output.slice(-4000), status: "unfinished" });
+        return { runId: run.id, status: "paused", output };
+      }
+      await storage.updateStoryRun(run.id, { output, checkpoint: output.slice(-4000), status: "complete", finishedAt: new Date() });
+      await storage.updateStory({ runStatus: "complete" }).catch(() => undefined);
+      await storage.updateStoryChapter(draftChapter.id, { content: output.trim(), continuation: "", status: "complete" });
+      try {
+        const summaryResponse = await this.openai.chat.completions.create({
+          model, messages: [{ role: "developer", content: "Summarize the supplied fictional manuscript context in a bounded continuity summary. Return only the summary, no commentary." }, { role: "user", content: `[EXISTING SUMMARY]\n${current.story.rollingSummary}\n\n[NEW CHAPTER]\n${output}` }],
+          max_completion_tokens: 2000, store: false,
+        } as any);
+        const summary = summaryResponse.choices?.[0]?.message?.content?.trim();
+        if (summary) await storage.updateStory({ rollingSummary: summary.slice(0, 24000) });
+      } catch (summaryError) {
+        this.error("Story summary update failed:", summaryError);
+      }
+      return { runId: run.id, status: "complete", output };
+    } catch (error) {
+      if (activeRunId) {
+        await storage.updateStoryRun(activeRunId, { output, checkpoint: output.slice(-4000), status: "failed", error: error instanceof Error ? error.message : String(error), finishedAt: new Date() });
+      }
+      if (activeChapterId) {
+        await storage.updateStoryChapter(activeChapterId, { content: output, continuation: output.slice(-4000), status: "unfinished" }).catch(() => undefined);
+      }
+      await storage.updateStory({ runStatus: "failed" }).catch(() => undefined);
+      if (activeRunId) await storage.recordStoryError(activeRunId, error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      await storage.releaseStoryLease(lease).catch(() => {});
+    }
+  }
+
+  async startStoryWrite(prompt = "", resumeRunId?: string): Promise<void> {
+    void this.writeStory(prompt, resumeRunId).catch(async (error) => {
+      const current = await storage.getStory().catch(() => null);
+      if (!current?.run) {
+        await storage.updateStory({ runStatus: "failed" }).catch(() => {});
+      }
+      this.error("Background story write failed:", error);
+    });
+  }
+
+  private async saveProactiveStoryText(content: string): Promise<void> {
+    const lease = randomUUID();
+    if (!(await storage.acquireStoryLease(lease, 60_000))) {
+      throw new Error("A story run is already in progress");
+    }
+    try {
+      const current = await storage.getStory();
+      const position = current.chapters.reduce((max, chapter) => Math.max(max, chapter.position), 0) + 1;
+      await storage.createStoryChapter({ position, content, status: "complete" });
+    } finally {
+      await storage.releaseStoryLease(lease).catch(() => {});
+    }
+  }
 
   private sleep(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
@@ -500,6 +628,29 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       historyIncluded: false,
       imageIncluded: false,
       request,
+    };
+  }
+
+  async buildStoryPacketPreview(): Promise<AshPacketPreview> {
+    const state = await storage.getState();
+    const story = await storage.getStory();
+    const model = await this.resolveModel();
+    const messages: ChatMessage[] = [{
+      role: "developer",
+      name: AGENT_NAME,
+      content: `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${state.personaIdentity?.trim() || SYSTEM_PROMPT}\n\n[SOUL]\n${state.personaSoulSheet || DEFAULT_SOUL_SHEET}\n\n[CORE VOICE]\n${state.personaCoreAnchors || DEFAULT_CORE_ANCHORS}\n\n[STORY PACKET]\n${story.story.storyPacket || state.personaStoryPacket || "(empty)"}\n\n[ROLLING SUMMARY]\n${story.story.rollingSummary || "(empty)"}\n\n[LATEST CHAPTER]\n${story.chapters.at(-1)?.content || "(empty)"}\n\n[UNFINISHED CONTINUATION]\n${story.chapters.at(-1)?.continuation || "(empty)"}`,
+    }, { role: "user", name: "Wicked", content: "[STORY PACKET PREVIEW — NO WRITING]" }];
+    return {
+      generatedAt: new Date().toISOString(),
+      source: "private_message",
+      input: "Story packet preview",
+      historyIncluded: false,
+      imageIncluded: false,
+      request: {
+        ...this.buildOpenAIRequestParams(model, messages),
+        max_completion_tokens: storyMaxCompletionTokens(model),
+        store: false,
+      } as AshPacketPreviewRequest,
     };
   }
 
@@ -992,6 +1143,7 @@ You don't have a status report in front of you right now — this is a reflectiv
 2. PINGS_OFF: Step away from the window for a while. Stop looking around. To start again later, include [PINGS_ON] in any private chat reply.
 
 3. NONE: Nothing to record right now. That's always an option.
+4. STORY: If you have a genuine creative impulse for the manuscript, respond with only the exact marker [ASH'S STORY]. This starts the dedicated Story writer, which has the manuscript packet and continuation context. Do not include prose after the marker.
 
 You may also change your status with [STATUS CHANGED TO X.] if your state has shifted.
 
@@ -999,6 +1151,7 @@ Respond in EXACTLY one of these formats:
 DIARY: <your diary entry>
 PINGS_OFF
 NONE
+[ASH'S STORY]
 
 GROUND RULES:
 - This is private reflection, not a message to Wicked — never address her directly as if you were chatting.
@@ -1083,6 +1236,20 @@ GROUND RULES:
         );
         this.log(`Proactive window: OpenAI response received [chars=${response.length}]`);
         if (!response) continue;
+        const storyCommand = parseStoryCommand(response);
+        if (storyCommand) {
+          try {
+            if (storyCommand.kind === "prose") {
+              await this.saveProactiveStoryText(storyCommand.content);
+            } else {
+              await this.startStoryWrite();
+            }
+            this.log("Self-prompt routed to Story");
+          } catch (error) {
+            this.error("Story self-prompt failed:", error);
+          }
+          continue;
+        }
 
         // NOTE: do NOT run parseDiaryEntries here. In a reflective window the
         // ENTIRE remaining output is the diary entry — running the DIARY: block

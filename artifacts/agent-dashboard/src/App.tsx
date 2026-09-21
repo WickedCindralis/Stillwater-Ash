@@ -12,6 +12,7 @@ import PersonaPage from "./pages/persona";
 import HeraldPage from "./pages/herald";
 import DiscordPage from "./pages/discord";
 import PacketPage from "./pages/packet";
+import StoryPage from "./pages/story";
 import { Power } from "lucide-react";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -139,6 +140,11 @@ function Router() {
       <Route path="/northflank">
         <AuthGate>
           <NorthflankPage />
+        </AuthGate>
+      </Route>
+      <Route path="/story">
+        <AuthGate>
+          <StoryPage />
         </AuthGate>
       </Route>
       <Route>

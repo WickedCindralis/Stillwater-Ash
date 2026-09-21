@@ -137,7 +137,7 @@ export default function StoryPage() {
 
         <main className="flex-1 min-w-0 bg-[#0d0c0a] relative flex flex-col overflow-y-auto">
           {activeTab === "manuscript" ? (
-            <ManuscriptEditor manuscript={manuscript} />
+            <ManuscriptEditor manuscript={manuscript} readOnly={isWriting} />
           ) : (
             <ChapterEditor 
               chapter={chapters.find(c => c.id === activeTab)} 
@@ -207,7 +207,7 @@ function ChapterNavItem({ chapter, isActive, onClick, isFirst, isLast, locked }:
   );
 }
 
-function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
+function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscript; readOnly: boolean }) {
   const updateManuscript = useUpdateManuscript();
   const initialized = useRef(false);
   const lastSaved = useRef({ title: "", storyPacket: "", summary: "" });
@@ -217,7 +217,7 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
   const [summary, setSummary] = useState("");
 
   useEffect(() => {
-    if (!initialized.current) {
+    if (!initialized.current || readOnly) {
       initialized.current = true;
       setTitle(manuscript.title || "");
       setStoryPacket(manuscript.storyPacket || "");
@@ -228,13 +228,13 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
         summary: manuscript.summary || "" 
       };
     }
-  }, [manuscript]);
+  }, [manuscript.title, manuscript.storyPacket, manuscript.summary, readOnly]);
 
   const mutateFnRef = useRef(updateManuscript.mutate);
   mutateFnRef.current = updateManuscript.mutate;
 
   useEffect(() => {
-    if (!initialized.current) return;
+    if (!initialized.current || readOnly) return;
     const timeout = setTimeout(() => {
       const current = { title, storyPacket, summary };
       if (
@@ -247,7 +247,7 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
       }
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [title, storyPacket, summary]);
+  }, [title, storyPacket, summary, readOnly]);
 
   const isSaving = updateManuscript.isPending;
 
@@ -256,6 +256,7 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
       <div className="flex items-center justify-between mb-8">
         <h2 className="font-serif text-3xl text-gold/90">Manuscript Settings</h2>
         {isSaving && <span className="text-xs text-white/40 flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin"/> Saving...</span>}
+        {readOnly && <span className="text-xs uppercase tracking-widest text-amber-400">Locked while Ash writes</span>}
       </div>
 
       <div className="space-y-8">
@@ -265,6 +266,7 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            readOnly={readOnly}
             className="w-full bg-white/5 border border-white/10 focus:border-gold/40 rounded-xl px-4 py-3 text-lg font-serif text-white outline-none transition-colors"
             placeholder="Untitled Manuscript"
           />
@@ -281,6 +283,7 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
           <textarea
             value={storyPacket}
             onChange={(e) => setStoryPacket(e.target.value)}
+            readOnly={readOnly}
             spellCheck={false}
             className="w-full h-80 bg-[#080706] border border-white/10 focus:border-gold/40 rounded-xl px-5 py-4 text-[15px] leading-relaxed text-white/80 font-mono outline-none transition-colors resize-y"
             placeholder="Outline and rules..."
@@ -298,6 +301,7 @@ function ManuscriptEditor({ manuscript }: { manuscript: StoryManuscript }) {
           <textarea
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
+            readOnly={readOnly}
             spellCheck={false}
             className="w-full h-64 bg-[#080706] border border-white/10 focus:border-gold/40 rounded-xl px-5 py-4 text-[15px] leading-relaxed text-white/80 font-mono outline-none transition-colors resize-y"
             placeholder="The story thus far..."

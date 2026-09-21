@@ -9,8 +9,8 @@ Story generation must use only the Story packet, bounded rolling summary, and th
 
 **How to apply:** Keep a dedicated Story packet inspection path. Preserve partial streamed prose as unfinished, resume by appending to the same chapter, and mark a chapter complete only after a normal provider stop.
 
-Only one Story writer may run across preview and production. Its database lease must renew during long streams, and a stale running state must become resumable after the lease expires.
+Only one Story writer may run across preview and production. Its database lease must use a monotonic persisted generation, renew during long streams, and make a stale running state resumable after fencing the expired generation.
 
-**Why:** A provider-length response can run much longer than an ordinary chat request, and preview plus production may share the same database.
+**Why:** A provider-length response can run much longer than an ordinary chat request, and preview plus production may share the same database. Token-only leases can be resurrected after a newer writer releases them.
 
-**How to apply:** Treat the renewable database lease—not process-local state—as the authority for mutual exclusion, and never overwrite saved partial output when resuming.
+**How to apply:** Require token, generation, expiry, and matching run generation in every writer transaction. Never delete the lease row on release, and reject manual mutations while an unexpired lease exists—even before run status changes.

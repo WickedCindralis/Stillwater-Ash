@@ -731,7 +731,8 @@ router.patch("/story", requireAuth, async (req, res): Promise<void> => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") }); return; }
   const patch = { ...parsed.data, ...(parsed.data.summary === undefined ? {} : { rollingSummary: parsed.data.summary }) };
   delete (patch as Record<string, unknown>).summary;
-  await storage.updateStory(patch);
+  const updated = await storage.updateStoryWhenIdle(patch);
+  if (!updated) { res.status(409).json({ error: "Manuscript settings cannot be edited while Ash is writing" }); return; }
   if (parsed.data.storyPacket !== undefined) await storage.updateState({ personaStoryPacket: parsed.data.storyPacket });
   res.json(storyManuscript(await storage.getStory()));
 });
@@ -742,7 +743,6 @@ router.post("/story/write", requireAuth, async (req, res): Promise<void> => {
   if (story.story.runStatus === "running") { res.status(409).json({ error: "A story run is already in progress" }); return; }
   if ((await storage.getState()).apiKillSwitch === 1) { res.status(503).json({ error: "Story writing is disabled by the API kill switch" }); return; }
   try {
-    await storage.updateStory({ runStatus: "running" });
     await ashBridge.startStoryWrite(parsed.data.prompt, parsed.data.resumeRunId);
     res.status(202).json(storyManuscript(await storage.getStory()));
   } catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : "Story run failed" }); }
@@ -767,10 +767,13 @@ router.delete("/story/chapters/:id", requireAuth, async (req, res): Promise<void
     res.status(409).json({ error: "Chapters cannot be deleted while Ash is writing" });
     return;
   }
-  if (!(await storage.deleteStoryChapter(id))) { res.status(404).json({ error: "Chapter not found" }); return; }
-  if (story.run?.chapterId === id) {
-    await storage.updateStoryRun(story.run.id, { status: "complete", finishedAt: new Date() });
-    await storage.updateStory({ runStatus: "idle", activeRunId: "" });
+  if (!(await storage.deleteStoryChapter(id))) {
+    if ((await storage.getStory()).story.runStatus === "running") {
+      res.status(409).json({ error: "Chapters cannot be deleted while Ash is writing" });
+      return;
+    }
+    res.status(404).json({ error: "Chapter not found" });
+    return;
   }
   res.json({ ok: true });
 });

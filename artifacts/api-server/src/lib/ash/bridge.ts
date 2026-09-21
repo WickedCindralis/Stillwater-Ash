@@ -36,7 +36,7 @@ import {
 } from "./screen-capture";
 import { stripScreenCaptureCommand } from "./screen-capture-command";
 import { formatPrivateHistory } from "./history-format";
-import { parseStoryCommand, selectResumeOutput } from "./story-command";
+import { parseStoryCommand } from "./story-command";
 import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 
@@ -147,7 +147,8 @@ export class AshBridge {
   async writeStory(prompt = "", resumeRunId?: string): Promise<{ runId: string; status: string; output: string }> {
     if (!this.openai) throw new Error("OpenAI client not initialized");
     const lease = randomUUID();
-    if (!(await storage.acquireStoryLease(lease, 15 * 60_000))) throw new Error("A story run is already in progress");
+    const leaseGeneration = await storage.acquireStoryLease(lease, 15 * 60_000);
+    if (leaseGeneration === null) throw new Error("A story run is already in progress");
     let activeRunId: string | null = null;
     let activeChapterId: number | null = null;
     let output = "";
@@ -159,13 +160,10 @@ export class AshBridge {
       if (state.apiKillSwitch === 1) throw new Error("Story writing is disabled by the API kill switch");
       const effectiveResume = resumeRunId || (current.run && current.run.status !== "complete" ? current.run.id : undefined);
       const runId = effectiveResume || randomUUID();
-      const run = effectiveResume && current.run?.id === effectiveResume
-        ? current.run
-        : await storage.createStoryRun({ id: runId, prompt });
-      const existingDraft = effectiveResume && run.chapterId ? await storage.getStoryChapter(run.chapterId) : null;
-      const prior = selectResumeOutput(existingDraft?.content, effectiveResume ? run.output : "");
-      const nextPosition = current.chapters.reduce((max, chapter) => Math.max(max, chapter.position), 0) + 1;
-      const draftChapter = existingDraft || await storage.createStoryChapter({ position: nextPosition, content: prior, status: "unfinished" });
+      const started = await storage.beginStoryRun(lease, leaseGeneration, runId, prompt, effectiveResume);
+      const run = started.run;
+      const draftChapter = started.chapter;
+      const prior = draftChapter.content;
       activeRunId = run.id;
       activeChapterId = draftChapter.id;
       output = prior;
@@ -173,21 +171,12 @@ export class AshBridge {
         `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${state.personaIdentity?.trim() || SYSTEM_PROMPT}`,
         `[SOUL]\n${state.personaSoulSheet || DEFAULT_SOUL_SHEET}`,
         `[CORE VOICE]\n${state.personaCoreAnchors || DEFAULT_CORE_ANCHORS}`,
-        `[STORY PACKET]\n${current.story.storyPacket || state.personaStoryPacket || "(empty)"}`,
-        `[ROLLING SUMMARY]\n${current.story.rollingSummary || "(none)"}`,
-        `[LATEST CHAPTER]\n${effectiveResume ? draftChapter.content : (current.chapters.at(-1)?.content || "(none)")}`,
-        `[UNFINISHED CONTINUATION]\n${effectiveResume ? draftChapter.content.slice(-4000) : (current.chapters.at(-1)?.continuation || "(none)")}`,
+        `[STORY PACKET]\n${started.story.storyPacket || state.personaStoryPacket || "(empty)"}`,
+        `[ROLLING SUMMARY]\n${started.story.rollingSummary || "(none)"}`,
+        `[LATEST CHAPTER]\n${effectiveResume ? draftChapter.content : (started.chapters.at(-2)?.content || "(none)")}`,
+        `[UNFINISHED CONTINUATION]\n${effectiveResume ? draftChapter.content.slice(-4000) : (started.chapters.at(-2)?.continuation || "(none)")}`,
         `[WRITING REQUEST]\n${prompt || (effectiveResume ? "Continue directly from the unfinished ending. Do not repeat existing prose." : "Write the next chapter.")}`,
       ].join("\n\n");
-      await storage.updateStory({ runStatus: "running", activeRunId: run.id });
-      await storage.updateStoryRun(run.id, {
-        chapterId: draftChapter.id,
-        output,
-        checkpoint: output.slice(-4000),
-        status: "running",
-        error: "",
-        finishedAt: null,
-      });
       const response = await this.openai.chat.completions.create({
         model, messages: [{ role: "developer", content: packet }, { role: "user", content: effectiveResume ? "Continue from the saved ending." : (prompt || "Write the next chapter.") }],
         max_completion_tokens: ceiling, store: false, stream: true,
@@ -198,68 +187,63 @@ export class AshBridge {
         output += chunk.choices?.[0]?.delta?.content || "";
         finishReason = chunk.choices?.[0]?.finish_reason || finishReason;
         if (Date.now() - lastCheckpoint > 2000) {
-          await storage.acquireStoryLease(lease, 15 * 60_000);
-          await storage.updateStoryRun(run.id, { output, checkpoint: output.slice(-4000), status: "running" });
-          await storage.updateStoryChapter(draftChapter.id, { content: output, continuation: output.slice(-4000), status: "unfinished" });
+          if (!(await storage.renewStoryLease(lease, leaseGeneration, 15 * 60_000))) {
+            throw new Error("Story lease was lost to another writer");
+          }
+          await storage.checkpointStoryRun(lease, leaseGeneration, run.id, draftChapter.id, output, "running");
           lastCheckpoint = Date.now();
         }
       }
       if (finishReason !== "stop") {
-        await storage.updateStoryRun(run.id, { output, checkpoint: output.slice(-4000), status: "paused" });
-        await storage.updateStory({ runStatus: "paused" });
-        await storage.updateStoryChapter(draftChapter.id, { content: output.trim(), continuation: output.slice(-4000), status: "unfinished" });
+        await storage.checkpointStoryRun(lease, leaseGeneration, run.id, draftChapter.id, output, "paused");
         return { runId: run.id, status: "paused", output };
       }
-      await storage.updateStoryRun(run.id, { output, checkpoint: output.slice(-4000), status: "complete", finishedAt: new Date() });
-      await storage.updateStory({ runStatus: "complete" }).catch(() => undefined);
-      await storage.updateStoryChapter(draftChapter.id, { content: output.trim(), continuation: "", status: "complete" });
+      await storage.completeStoryRun(lease, leaseGeneration, run.id, draftChapter.id, output);
       try {
         const summaryResponse = await this.openai.chat.completions.create({
-          model, messages: [{ role: "developer", content: "Summarize the supplied fictional manuscript context in a bounded continuity summary. Return only the summary, no commentary." }, { role: "user", content: `[EXISTING SUMMARY]\n${current.story.rollingSummary}\n\n[NEW CHAPTER]\n${output}` }],
+          model, messages: [{ role: "developer", content: "Summarize the supplied fictional manuscript context in a bounded continuity summary. Return only the summary, no commentary." }, { role: "user", content: `[EXISTING SUMMARY]\n${started.story.rollingSummary}\n\n[NEW CHAPTER]\n${output}` }],
           max_completion_tokens: 2000, store: false,
         } as any);
         const summary = summaryResponse.choices?.[0]?.message?.content?.trim();
-        if (summary) await storage.updateStory({ rollingSummary: summary.slice(0, 24000) });
+        if (summary) await storage.updateStorySummaryIfUnchanged(started.story.rollingSummary, summary.slice(0, 24000));
       } catch (summaryError) {
         this.error("Story summary update failed:", summaryError);
       }
       return { runId: run.id, status: "complete", output };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       if (activeRunId) {
-        await storage.updateStoryRun(activeRunId, { output, checkpoint: output.slice(-4000), status: "failed", error: error instanceof Error ? error.message : String(error), finishedAt: new Date() });
+        if (activeChapterId) {
+          try {
+            await storage.failStoryRun(lease, leaseGeneration, activeRunId, activeChapterId, output, errorMessage);
+          } catch (persistError) {
+            throw new AggregateError([error, persistError], `Story stream failed and its latest buffer could not be persisted: ${errorMessage}`);
+          }
+        }
+        await storage.recordStoryError(activeRunId, errorMessage);
       }
-      if (activeChapterId) {
-        await storage.updateStoryChapter(activeChapterId, { content: output, continuation: output.slice(-4000), status: "unfinished" }).catch(() => undefined);
-      }
-      await storage.updateStory({ runStatus: "failed" }).catch(() => undefined);
-      if (activeRunId) await storage.recordStoryError(activeRunId, error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
-      await storage.releaseStoryLease(lease).catch(() => {});
+      await storage.releaseStoryLease(lease, leaseGeneration).catch(() => {});
     }
   }
 
   async startStoryWrite(prompt = "", resumeRunId?: string): Promise<void> {
-    void this.writeStory(prompt, resumeRunId).catch(async (error) => {
-      const current = await storage.getStory().catch(() => null);
-      if (!current?.run) {
-        await storage.updateStory({ runStatus: "failed" }).catch(() => {});
-      }
+    void this.writeStory(prompt, resumeRunId).catch((error) => {
       this.error("Background story write failed:", error);
     });
   }
 
   private async saveProactiveStoryText(content: string): Promise<void> {
     const lease = randomUUID();
-    if (!(await storage.acquireStoryLease(lease, 60_000))) {
+    const generation = await storage.acquireStoryLease(lease, 60_000);
+    if (generation === null) {
       throw new Error("A story run is already in progress");
     }
     try {
-      const current = await storage.getStory();
-      const position = current.chapters.reduce((max, chapter) => Math.max(max, chapter.position), 0) + 1;
-      await storage.createStoryChapter({ position, content, status: "complete" });
+      await storage.insertProactiveStoryText(lease, generation, content);
     } finally {
-      await storage.releaseStoryLease(lease).catch(() => {});
+      await storage.releaseStoryLease(lease, generation).catch(() => {});
     }
   }
 

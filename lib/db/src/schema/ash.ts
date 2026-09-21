@@ -93,6 +93,7 @@ export const ashStoryRuns = pgTable("ash_story_runs", {
   status: text("status").notNull().default("running"), // running | complete | failed | paused
   prompt: text("prompt").notNull().default(""),
   chapterId: integer("chapter_id"),
+  leaseGeneration: integer("lease_generation").notNull().default(0),
   checkpoint: text("checkpoint").notNull().default(""),
   output: text("output").notNull().default(""),
   error: text("error").notNull().default(""),
@@ -104,6 +105,7 @@ export const ashStoryRuns = pgTable("ash_story_runs", {
 export const ashStoryLease = pgTable("ash_story_lease", {
   id: text("id").primaryKey(), // always "ash"
   token: text("token").notNull(),
+  generation: integer("generation").notNull().default(0),
   expiresAt: timestamp("expires_at").notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -43,6 +43,12 @@ import {
 const ASH_ID = "ash";
 
 export type ActivityFeedItem = AshActivity & { hasScreenshot: boolean };
+export type StoryRunStart = {
+  story: AshStory;
+  chapters: AshStoryChapter[];
+  run: AshStoryRun;
+  chapter: AshStoryChapter;
+};
 
 export interface IStorage {
   getState(): Promise<AshState>;
@@ -112,16 +118,23 @@ export interface IStorage {
   pruneDiscordMessages(maxRows?: number): Promise<void>;
   getStory(): Promise<{ story: AshStory; chapters: AshStoryChapter[]; run: AshStoryRun | null }>;
   updateStory(patch: Partial<Pick<AshStory, "title" | "storyPacket" | "rollingSummary" | "runStatus" | "activeRunId">>): Promise<AshStory>;
+  updateStoryWhenIdle(patch: Partial<Pick<AshStory, "title" | "storyPacket" | "rollingSummary">>): Promise<AshStory | null>;
+  updateStorySummaryIfUnchanged(expected: string, summary: string): Promise<boolean>;
   updateStoryChapter(id: number, patch: Partial<Pick<AshStoryChapter, "title" | "content" | "continuation" | "status">>): Promise<AshStoryChapter | null>;
   createStoryChapter(chapter: { position: number; title?: string; content?: string; continuation?: string; status?: string }): Promise<AshStoryChapter>;
   getStoryChapter(id: number): Promise<AshStoryChapter | null>;
   deleteStoryChapter(id: number): Promise<boolean>;
   moveStoryChapter(id: number, position: number): Promise<AshStoryChapter | null>;
   moveStoryChapterDirection(id: number, direction: "up" | "down"): Promise<AshStoryChapter | null>;
-  createStoryRun(run: Pick<AshStoryRun, "id" | "prompt">): Promise<AshStoryRun>;
+  beginStoryRun(token: string, generation: number, runId: string, prompt: string, resumeRunId?: string): Promise<StoryRunStart>;
   updateStoryRun(id: string, patch: Partial<Omit<AshStoryRun, "id" | "startedAt">>): Promise<AshStoryRun | null>;
-  acquireStoryLease(token: string, ttlMs: number): Promise<boolean>;
-  releaseStoryLease(token: string): Promise<void>;
+  checkpointStoryRun(token: string, generation: number, runId: string, chapterId: number, output: string, status: "running" | "paused"): Promise<void>;
+  failStoryRun(token: string, generation: number, runId: string, chapterId: number, output: string, error: string): Promise<void>;
+  completeStoryRun(token: string, generation: number, runId: string, chapterId: number, output: string): Promise<void>;
+  insertProactiveStoryText(token: string, generation: number, content: string): Promise<void>;
+  acquireStoryLease(token: string, ttlMs: number): Promise<number | null>;
+  renewStoryLease(token: string, generation: number, ttlMs: number): Promise<boolean>;
+  releaseStoryLease(token: string, generation: number): Promise<void>;
   recordStoryError(runId: string, message: string): Promise<void>;
 }
 
@@ -137,18 +150,22 @@ export class DbStorage implements IStorage {
       [story] = await db.update(ashStory).set({ storyPacket: state.packet, updatedAt: new Date() }).where(eq(ashStory.id, ASH_ID)).returning();
     }
     if (story!.runStatus === "running" && Date.now() - story!.updatedAt.getTime() > 16 * 60_000) {
-      const [lease] = await db.select().from(ashStoryLease).where(eq(ashStoryLease.id, ASH_ID)).limit(1);
-      if (!lease || lease.expiresAt.getTime() <= Date.now()) {
-        await db
-          .update(ashStoryRuns)
-          .set({ status: "paused", updatedAt: new Date() })
-          .where(and(eq(ashStoryRuns.storyId, ASH_ID), eq(ashStoryRuns.status, "running")));
-        [story] = await db
-          .update(ashStory)
-          .set({ runStatus: "paused", updatedAt: new Date() })
-          .where(eq(ashStory.id, ASH_ID))
-          .returning();
-      }
+      const recovered = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+        const now = new Date();
+        const [lockedStory] = await tx.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
+        const [lease] = await tx.select().from(ashStoryLease).where(eq(ashStoryLease.id, ASH_ID)).limit(1);
+        if (!lockedStory || lockedStory.runStatus !== "running" || Date.now() - lockedStory.updatedAt.getTime() <= 16 * 60_000 || (lease && lease.expiresAt > now)) {
+          return lockedStory ?? null;
+        }
+        if (lease) {
+          await tx.update(ashStoryLease).set({ generation: lease.generation + 1, expiresAt: now, updatedAt: now }).where(eq(ashStoryLease.id, ASH_ID));
+        }
+        await tx.update(ashStoryRuns).set({ status: "paused", updatedAt: now }).where(and(eq(ashStoryRuns.storyId, ASH_ID), eq(ashStoryRuns.status, "running")));
+        const [paused] = await tx.update(ashStory).set({ runStatus: "paused", updatedAt: now }).where(eq(ashStory.id, ASH_ID)).returning();
+        return paused ?? null;
+      });
+      if (recovered) story = recovered;
     }
     const chapters = await db.select().from(ashStoryChapters).where(eq(ashStoryChapters.storyId, ASH_ID)).orderBy(asc(ashStoryChapters.position), asc(ashStoryChapters.id));
     const [run] = await db.select().from(ashStoryRuns).where(and(eq(ashStoryRuns.storyId, ASH_ID), inArray(ashStoryRuns.status, ["running", "paused", "failed"]))).orderBy(desc(ashStoryRuns.updatedAt)).limit(1);
@@ -160,9 +177,29 @@ export class DbStorage implements IStorage {
     const inserted = await db.insert(ashStory).values({ id: ASH_ID, ...patch }).returning();
     return inserted[0]!;
   }
+  async updateStoryWhenIdle(patch: Partial<Pick<AshStory, "title" | "storyPacket" | "rollingSummary">>): Promise<AshStory | null> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [current] = await tx.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), gt(ashStoryLease.expiresAt, new Date()))).limit(1);
+      if (!current || current.runStatus === "running" || lease) return null;
+      const [updated] = await tx.update(ashStory).set({ ...patch, updatedAt: new Date() }).where(eq(ashStory.id, ASH_ID)).returning();
+      return updated ?? null;
+    });
+  }
+  async updateStorySummaryIfUnchanged(expected: string, summary: string): Promise<boolean> {
+    const rows = await db.update(ashStory).set({ rollingSummary: summary, updatedAt: new Date() }).where(and(eq(ashStory.id, ASH_ID), eq(ashStory.rollingSummary, expected))).returning({ id: ashStory.id });
+    return rows.length > 0;
+  }
   async updateStoryChapter(id: number, patch: Partial<Pick<AshStoryChapter, "title" | "content" | "continuation" | "status">>): Promise<AshStoryChapter | null> {
-    const rows = await db.update(ashStoryChapters).set({ ...patch, updatedAt: new Date() }).where(eq(ashStoryChapters.id, id)).returning();
-    return rows[0] ?? null;
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [story] = await tx.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), gt(ashStoryLease.expiresAt, new Date()))).limit(1);
+      if (story?.runStatus === "running" || lease) return null;
+      const [row] = await tx.update(ashStoryChapters).set({ ...patch, updatedAt: new Date() }).where(eq(ashStoryChapters.id, id)).returning();
+      return row ?? null;
+    });
   }
   async createStoryChapter(chapter: { position: number; title?: string; content?: string; continuation?: string; status?: string }): Promise<AshStoryChapter> {
     const [row] = await db.insert(ashStoryChapters).values({ storyId: ASH_ID, ...chapter }).returning();
@@ -173,7 +210,21 @@ export class DbStorage implements IStorage {
     return row ?? null;
   }
   async deleteStoryChapter(id: number): Promise<boolean> {
-    return (await db.delete(ashStoryChapters).where(eq(ashStoryChapters.id, id)).returning({ id: ashStoryChapters.id })).length > 0;
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [story] = await tx.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), gt(ashStoryLease.expiresAt, new Date()))).limit(1);
+      if (story?.runStatus === "running" || lease) return false;
+      const deleted = (await tx.delete(ashStoryChapters).where(eq(ashStoryChapters.id, id)).returning({ id: ashStoryChapters.id })).length > 0;
+      if (!deleted) return false;
+      const [run] = await tx.select().from(ashStoryRuns).where(and(eq(ashStoryRuns.storyId, ASH_ID), eq(ashStoryRuns.chapterId, id), inArray(ashStoryRuns.status, ["paused", "failed"]))).orderBy(desc(ashStoryRuns.updatedAt)).limit(1);
+      if (run) {
+        const now = new Date();
+        await tx.update(ashStoryRuns).set({ status: "complete", finishedAt: now, updatedAt: now }).where(eq(ashStoryRuns.id, run.id));
+        await tx.update(ashStory).set({ runStatus: "idle", activeRunId: "", updatedAt: now }).where(and(eq(ashStory.id, ASH_ID), eq(ashStory.activeRunId, run.id)));
+      }
+      return true;
+    });
   }
   async moveStoryChapter(id: number, position: number): Promise<AshStoryChapter | null> {
     const [chapter] = await db.select().from(ashStoryChapters).where(eq(ashStoryChapters.id, id)).limit(1);
@@ -188,7 +239,10 @@ export class DbStorage implements IStorage {
   }
   async moveStoryChapterDirection(id: number, direction: "up" | "down"): Promise<AshStoryChapter | null> {
     return db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story-order'))`);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [story] = await tx.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), gt(ashStoryLease.expiresAt, new Date()))).limit(1);
+      if (story?.runStatus === "running" || lease) return null;
       const [chapter] = await tx.select().from(ashStoryChapters).where(eq(ashStoryChapters.id, id)).limit(1);
       if (!chapter) return null;
       const operator = direction === "up" ? lt : gt;
@@ -200,21 +254,166 @@ export class DbStorage implements IStorage {
       return (await tx.select().from(ashStoryChapters).where(eq(ashStoryChapters.id, chapter.id)).limit(1))[0] ?? updated ?? chapter;
     });
   }
-  async createStoryRun(run: Pick<AshStoryRun, "id" | "prompt">): Promise<AshStoryRun> {
-    const [row] = await db.insert(ashStoryRuns).values(run).returning();
-    await this.updateStory({}).then(() => db.update(ashStory).set({ runStatus: "running", activeRunId: run.id, updatedAt: new Date() }).where(eq(ashStory.id, ASH_ID)));
-    return row!;
+  async beginStoryRun(token: string, generation: number, runId: string, prompt: string, resumeRunId?: string): Promise<StoryRunStart> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const now = new Date();
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation), gt(ashStoryLease.expiresAt, now))).limit(1);
+      if (!lease) throw new Error("Story lease lost before writing began");
+
+      let [story] = await tx.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
+      if (!story) [story] = await tx.insert(ashStory).values({ id: ASH_ID }).returning();
+      const chapters = await tx.select().from(ashStoryChapters).where(eq(ashStoryChapters.storyId, ASH_ID)).orderBy(asc(ashStoryChapters.position), asc(ashStoryChapters.id));
+
+      let run: AshStoryRun | undefined;
+      if (resumeRunId) [run] = await tx.select().from(ashStoryRuns).where(and(eq(ashStoryRuns.id, resumeRunId), eq(ashStoryRuns.storyId, ASH_ID))).limit(1);
+      if (!run) [run] = await tx.insert(ashStoryRuns).values({ id: runId, prompt }).returning();
+
+      let chapter: AshStoryChapter | undefined;
+      if (run.chapterId) [chapter] = await tx.select().from(ashStoryChapters).where(eq(ashStoryChapters.id, run.chapterId)).limit(1);
+      if (!chapter) {
+        const nextPosition = chapters.reduce((max, item) => Math.max(max, item.position), 0) + 1;
+        [chapter] = await tx.insert(ashStoryChapters).values({ storyId: ASH_ID, position: nextPosition, content: run.output, status: "unfinished" }).returning();
+        chapters.push(chapter!);
+      }
+
+      const prior = chapter!.content;
+      [run] = await tx.update(ashStoryRuns).set({
+        chapterId: chapter!.id,
+        leaseGeneration: generation,
+        output: prior,
+        checkpoint: prior.slice(-4000),
+        status: "running",
+        error: "",
+        finishedAt: null,
+        updatedAt: now,
+      }).where(eq(ashStoryRuns.id, run.id)).returning();
+      [story] = await tx.update(ashStory).set({ runStatus: "running", activeRunId: run!.id, updatedAt: now }).where(eq(ashStory.id, ASH_ID)).returning();
+      return { story: story!, chapters, run: run!, chapter: chapter! };
+    });
   }
   async updateStoryRun(id: string, patch: Partial<Omit<AshStoryRun, "id" | "startedAt">>): Promise<AshStoryRun | null> {
     const [row] = await db.update(ashStoryRuns).set({ ...patch, updatedAt: new Date() }).where(eq(ashStoryRuns.id, id)).returning();
     return row ?? null;
   }
-  async acquireStoryLease(token: string, ttlMs: number): Promise<boolean> {
-    const now = new Date(), expires = new Date(Date.now() + ttlMs);
-    const rows = await db.insert(ashStoryLease).values({ id: ASH_ID, token, expiresAt: expires }).onConflictDoUpdate({ target: ashStoryLease.id, set: { token, expiresAt: expires, updatedAt: now }, where: or(eq(ashStoryLease.token, token), lt(ashStoryLease.expiresAt, now)) }).returning();
+  async checkpointStoryRun(token: string, generation: number, runId: string, chapterId: number, output: string, status: "running" | "paused"): Promise<void> {
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation), gt(ashStoryLease.expiresAt, now))).limit(1);
+      if (!lease) throw new Error("Story lease lost during checkpoint");
+      const [ownedRun] = await tx.select({ id: ashStoryRuns.id }).from(ashStoryRuns).where(and(eq(ashStoryRuns.id, runId), eq(ashStoryRuns.leaseGeneration, generation))).limit(1);
+      if (!ownedRun) throw new Error("Story run fencing generation changed");
+      await tx.update(ashStoryRuns).set({
+        output,
+        checkpoint: output.slice(-4000),
+        status,
+        updatedAt: now,
+      }).where(eq(ashStoryRuns.id, runId));
+      await tx.update(ashStoryChapters).set({
+        content: output,
+        continuation: output.slice(-4000),
+        status: "unfinished",
+        updatedAt: now,
+      }).where(eq(ashStoryChapters.id, chapterId));
+      await tx.update(ashStory).set({
+        runStatus: status,
+        activeRunId: runId,
+        updatedAt: now,
+      }).where(eq(ashStory.id, ASH_ID));
+    });
+  }
+  async failStoryRun(token: string, generation: number, runId: string, chapterId: number, output: string, error: string): Promise<void> {
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation), gt(ashStoryLease.expiresAt, now))).limit(1);
+      if (!lease) throw new Error("Story lease lost before failure state could be saved");
+      const [ownedRun] = await tx.select({ id: ashStoryRuns.id }).from(ashStoryRuns).where(and(eq(ashStoryRuns.id, runId), eq(ashStoryRuns.leaseGeneration, generation))).limit(1);
+      if (!ownedRun) throw new Error("Story run fencing generation changed");
+      await tx.update(ashStoryRuns).set({
+        output,
+        checkpoint: output.slice(-4000),
+        status: "failed",
+        error,
+        finishedAt: now,
+        updatedAt: now,
+      }).where(eq(ashStoryRuns.id, runId));
+      await tx.update(ashStoryChapters).set({
+        content: output,
+        continuation: output.slice(-4000),
+        status: "unfinished",
+        updatedAt: now,
+      }).where(eq(ashStoryChapters.id, chapterId));
+      await tx.update(ashStory).set({
+        runStatus: "failed",
+        activeRunId: runId,
+        updatedAt: now,
+      }).where(eq(ashStory.id, ASH_ID));
+    });
+  }
+  async completeStoryRun(token: string, generation: number, runId: string, chapterId: number, output: string): Promise<void> {
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation), gt(ashStoryLease.expiresAt, now))).limit(1);
+      if (!lease) throw new Error("Story lease lost before completion");
+      const [ownedRun] = await tx.select({ id: ashStoryRuns.id }).from(ashStoryRuns).where(and(eq(ashStoryRuns.id, runId), eq(ashStoryRuns.leaseGeneration, generation))).limit(1);
+      if (!ownedRun) throw new Error("Story run fencing generation changed");
+      await tx.update(ashStoryChapters).set({
+        content: output.trim(),
+        continuation: "",
+        status: "complete",
+        updatedAt: now,
+      }).where(eq(ashStoryChapters.id, chapterId));
+      await tx.update(ashStory).set({
+        runStatus: "complete",
+        activeRunId: runId,
+        updatedAt: now,
+      }).where(eq(ashStory.id, ASH_ID));
+      await tx.update(ashStoryRuns).set({
+        output,
+        checkpoint: output.slice(-4000),
+        status: "complete",
+        error: "",
+        finishedAt: now,
+        updatedAt: now,
+      }).where(eq(ashStoryRuns.id, runId));
+    });
+  }
+  async insertProactiveStoryText(token: string, generation: number, content: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const now = new Date();
+      const [lease] = await tx.select().from(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation), gt(ashStoryLease.expiresAt, now))).limit(1);
+      if (!lease) throw new Error("Story lease lost before proactive prose could be saved");
+      const [last] = await tx.select({ position: ashStoryChapters.position }).from(ashStoryChapters).where(eq(ashStoryChapters.storyId, ASH_ID)).orderBy(desc(ashStoryChapters.position)).limit(1);
+      await tx.insert(ashStoryChapters).values({ storyId: ASH_ID, position: (last?.position ?? 0) + 1, content, status: "complete" });
+    });
+  }
+  async acquireStoryLease(token: string, ttlMs: number): Promise<number | null> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story'))`);
+      const now = new Date(), expiresAt = new Date(Date.now() + ttlMs);
+      const [existing] = await tx.select().from(ashStoryLease).where(eq(ashStoryLease.id, ASH_ID)).limit(1);
+      if (existing && existing.expiresAt > now) return null;
+      const generation = (existing?.generation ?? 0) + 1;
+      if (existing) {
+        await tx.update(ashStoryLease).set({ token, generation, expiresAt, updatedAt: now }).where(eq(ashStoryLease.id, ASH_ID));
+      } else {
+        await tx.insert(ashStoryLease).values({ id: ASH_ID, token, generation, expiresAt });
+      }
+      return generation;
+    });
+  }
+  async renewStoryLease(token: string, generation: number, ttlMs: number): Promise<boolean> {
+    const now = new Date(), expiresAt = new Date(Date.now() + ttlMs);
+    const rows = await db.update(ashStoryLease).set({ expiresAt, updatedAt: now }).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation), gt(ashStoryLease.expiresAt, now))).returning({ id: ashStoryLease.id });
     return rows.length > 0;
   }
-  async releaseStoryLease(token: string): Promise<void> { await db.delete(ashStoryLease).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token))); }
+  async releaseStoryLease(token: string, generation: number): Promise<void> {
+    await db.update(ashStoryLease).set({ expiresAt: new Date(), updatedAt: new Date() }).where(and(eq(ashStoryLease.id, ASH_ID), eq(ashStoryLease.token, token), eq(ashStoryLease.generation, generation)));
+  }
   async recordStoryError(runId: string, message: string): Promise<void> { await db.insert(ashStoryErrors).values({ runId, message: message.slice(0, 4000) }); }
   async getState(): Promise<AshState> {
     const rows = await db

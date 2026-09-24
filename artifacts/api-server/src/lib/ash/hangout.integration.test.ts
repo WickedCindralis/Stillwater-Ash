@@ -224,6 +224,25 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
       }
     });
 
+    await t.test("initial companion sync loads recent context instead of the full archive", async () => {
+      const pairing = await prepareActiveSession();
+      const messages = await db.insert(ashMessages).values(
+        Array.from({ length: 75 }, (_, index) => ({
+          role: "wicked" as const,
+          content: `desktop history window ${index}`,
+          imageUrl: "",
+          source: "private_message",
+        })),
+      ).returning({ id: ashMessages.id });
+      const initial = await syncHangoutCompanion(pairing.hangoutToken, 0);
+      assert.equal(initial.messages.length, 50);
+      assert.equal(initial.messages[0]?.id, messages[25]?.id);
+      assert.equal(initial.messages.at(-1)?.id, messages[74]?.id);
+      const later = await syncHangoutCompanion(pairing.hangoutToken, messages[60]!.id);
+      assert.deepEqual(later.messages.map((message) => message.id), messages.slice(61).map((message) => message.id));
+      await stopHangout();
+    });
+
     await t.test("idle claims are atomic and sync does not await idle capture/provider work", async () => {
       const pairing = await prepareActiveSession();
       await db.update(ashHangoutSession).set({

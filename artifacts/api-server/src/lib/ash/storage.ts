@@ -421,8 +421,11 @@ export class DbStorage implements IStorage {
         eq(ashHangoutScreenshots.invalidated, 0),
       ))
       .where(and(eq(ashMessages.source, "private_message"), gt(ashMessages.id, afterId)))
-      .orderBy(asc(ashMessages.id)).limit(500);
-    return rows;
+      // Initial sync shows recent context instead of replaying thousands of
+      // old cards into the desktop UI. Incremental sync still pages forward.
+      .orderBy(afterId === 0 ? desc(ashMessages.id) : asc(ashMessages.id))
+      .limit(afterId === 0 ? 50 : 500);
+    return afterId === 0 ? rows.reverse() : rows;
   }
 
 

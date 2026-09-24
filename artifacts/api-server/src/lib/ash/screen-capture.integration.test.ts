@@ -8,6 +8,7 @@ import {
   authenticateScreenCaptureToken,
   cancelPendingScreenCapture,
   getPendingCaptureRequest,
+  getScreenCaptureTimeoutMs,
   isFreshScreenCaptureCurrent,
   pairScreenCapture,
   resumeScreenCaptureRequests,
@@ -28,6 +29,7 @@ async function waitForPendingRequest(token: string) {
 }
 
 test("screen capture pairing and one-shot delivery stay bounded", async () => {
+  assert.equal(getScreenCaptureTimeoutMs(), 45_000, "two-monitor encoding and upload have a bounded 45-second window");
   await revokeScreenCapture();
   try {
     const { token } = await pairScreenCapture();

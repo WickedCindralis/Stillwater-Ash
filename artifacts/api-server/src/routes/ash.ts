@@ -268,7 +268,12 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
     await cancelPendingScreenCapture();
   }
   if (parsed.data.apiKillSwitch === 1) await invalidateHangoutForControl();
-  const state = await storage.updateState(parsed.data);
+  // An old timeout describes a previous attempt, not the newly enabled
+  // companion. The next failed attempt will set a fresh error.
+  const state = await storage.updateState({
+    ...parsed.data,
+    ...(parsed.data.screenCaptureEnabled === 1 ? { screenCaptureLastError: "" } : {}),
+  });
   if (parsed.data.screenCaptureEnabled === 1) {
     resumeScreenCaptureRequests();
   }

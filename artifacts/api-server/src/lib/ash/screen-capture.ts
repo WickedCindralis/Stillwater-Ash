@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { storage } from "./storage";
 
-const REQUEST_TIMEOUT_MS = 20_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_DATA_URL_CHARS = 17 * 1024 * 1024;
 

@@ -270,7 +270,9 @@ internal sealed class CompanionForm : Form
         chatTokenBox.Enabled = false;
         SetRunningStatus("Starting…", "Connecting to Stillwater.");
         StartHangoutMonitoring(settings);
-        runTask = RunCompanionAsync(settings, currentRunCancellation.Token);
+        // Keep network polling, image encoding, and large JSON uploads off the
+        // WinForms message pump so the window remains responsive during capture.
+        runTask = Task.Run(() => RunCompanionAsync(settings, currentRunCancellation.Token), currentRunCancellation.Token);
         _ = runTask.ContinueWith(_ =>
         {
             if (!IsDisposed && !closeRequested)

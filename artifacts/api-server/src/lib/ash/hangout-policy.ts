@@ -4,6 +4,10 @@ export function isCompanionConnected(lastSeen: Date | null, now = Date.now()): b
   return !!lastSeen && now - lastSeen.getTime() < 60_000;
 }
 
+export function shouldEndDisconnectedHangout(status: string, lastSeen: Date | null, now = Date.now()): boolean {
+  return status !== "idle" && !isCompanionConnected(lastSeen, now);
+}
+
 export function privateMessageHangoutMode(status: string): "active" | "inviting" | "idle" {
   return status === "active" ? "active" : status === "inviting" ? "inviting" : "idle";
 }

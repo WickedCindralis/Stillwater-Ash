@@ -1,12 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCompanionConnected, parseHangoutApproval, privateMessageHangoutMode } from "./hangout-policy";
+import { isCompanionConnected, parseHangoutApproval, privateMessageHangoutMode, shouldEndDisconnectedHangout } from "./hangout-policy";
 
 test("companion must have sent a heartbeat within the last minute", () => {
   const now = 100_000;
   assert.equal(isCompanionConnected(new Date(now - 59_999), now), true);
   assert.equal(isCompanionConnected(new Date(now - 60_000), now), false);
   assert.equal(isCompanionConnected(null, now), false);
+});
+
+test("offline companion ends stale Hangout, but idle chat stays ordinary chat", () => {
+  const now = 100_000;
+  assert.equal(shouldEndDisconnectedHangout("active", null, now), true);
+  assert.equal(shouldEndDisconnectedHangout("active", new Date(now - 60_000), now), true);
+  assert.equal(shouldEndDisconnectedHangout("inviting", null, now), true);
+  assert.equal(shouldEndDisconnectedHangout("active", new Date(now - 59_999), now), false);
+  assert.equal(shouldEndDisconnectedHangout("idle", null, now), false);
 });
 
 test("private chat rejects during invitation rather than falling back to normal chat", () => {

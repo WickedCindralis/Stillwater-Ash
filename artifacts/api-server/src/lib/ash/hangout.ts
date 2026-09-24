@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { waitForFreshScreenCapture, cancelPendingScreenCapture, isFreshScreenCaptureCurrent } from "./screen-capture";
 import type { AshMessage } from "@workspace/db";
 import { logger } from "../logger";
-import { isCompanionConnected, parseHangoutApproval, privateMessageHangoutMode } from "./hangout-policy";
+import { isCompanionConnected, parseHangoutApproval, privateMessageHangoutMode, shouldEndDisconnectedHangout } from "./hangout-policy";
 
 const INVITATION = "Wicked wants to know if you want to hang out with her while she works/plays. This will send you a screenshot with each message and every 15 minutes while the chat is idle. Your messages will go straight to her, and she will respond.";
 const IDLE_CHECKIN_MS = 15 * 60_000;
@@ -32,6 +32,7 @@ function safeFailureMessage(error: unknown): string {
     "Ash did not return a reply for the screenshot-backed exchange",
     "Hangout is not active",
     "A Hangout exchange is already in progress",
+    "Hangout companion is offline",
   ]);
   if (safeMessages.has(message)) return message;
   return "Hangout could not complete the exchange. Check session status and try again.";
@@ -41,7 +42,22 @@ function logBoundary(event: string, sessionId: string, correlationId: string, st
   logger.info(`[hangout] ${event} sessionId=${sessionId} correlationId=${correlationId} durationMs=${Date.now() - startedAt}${fields ? ` ${fields}` : ""}`);
 }
 
+async function endDisconnectedHangout(session: Awaited<ReturnType<typeof storage.getHangoutSession>>): Promise<boolean> {
+  if (!shouldEndDisconnectedHangout(session.status, session.companionLastSeen) || !session.sessionId) return false;
+  const stopped = await storage.stopHangoutSession(session.sessionId, session.generation);
+  if (stopped) logger.info("[hangout] Disconnected companion ended stale Hangout before capture");
+  return stopped;
+}
+
 async function captureAndReply(sessionId: string, generation: number, lease: string, prompt: string): Promise<AshMessage> {
+  const current = await storage.getHangoutSession();
+  if (current.sessionId !== sessionId || current.generation !== generation) {
+    throw new Error("Hangout was invalidated before the screenshot could be delivered");
+  }
+  if (shouldEndDisconnectedHangout(current.status, current.companionLastSeen)) {
+    await endDisconnectedHangout(current);
+    throw new Error("Hangout companion is offline");
+  }
   const correlationId = randomUUID();
   let startedAt = Date.now();
   logger.info(`[hangout] capture start sessionId=${sessionId} correlationId=${correlationId}`);
@@ -179,6 +195,10 @@ export async function startHangout(): Promise<{ status: string; sessionId: strin
 export async function sendHangoutMessage(content: string): Promise<{ wickedMessage: AshMessage; ashMessage: AshMessage; screenshotActivityId: number }> {
   const session = await storage.getHangoutSession();
   if (session.status !== "active") throw new Error("Hangout is not active");
+  if (shouldEndDisconnectedHangout(session.status, session.companionLastSeen)) {
+    await endDisconnectedHangout(session);
+    throw new Error("Hangout companion is offline");
+  }
   const lease = await storage.acquireHangoutLease(session.sessionId);
   if (!lease) throw new Error("A Hangout exchange is already in progress");
   try {
@@ -198,7 +218,11 @@ export async function sendHangoutMessage(content: string): Promise<{ wickedMessa
 }
 
 export async function sendPrivateMessage(content: string, imageDataUrl?: string, requestImage = false): Promise<{ wickedMessage: AshMessage; ashMessage: AshMessage | null }> {
-  const session = await storage.getHangoutSession();
+  let session = await storage.getHangoutSession();
+  if (shouldEndDisconnectedHangout(session.status, session.companionLastSeen)) {
+    await endDisconnectedHangout(session);
+    session = await storage.getHangoutSession();
+  }
   const mode = privateMessageHangoutMode(session.status);
   if (mode === "inviting") throw new Error("Hangout invitation is still awaiting a clear approval decision.");
   if (mode === "active") {
@@ -288,7 +312,7 @@ export async function hangoutStatus(): Promise<{ status: string; sessionId: stri
     status: session.status, sessionId: session.sessionId,
     connected: isCompanionConnected(session.companionLastSeen, Date.now()),
     companionPaired: paired && !!state.screenCaptureTokenHash,
-    lastError: session.lastError || state.screenCaptureLastError || "",
+    lastError: session.lastError || (session.status !== "idle" ? state.screenCaptureLastError : ""),
     lastCaptureAt: session.lastCaptureAt?.toISOString() ?? null,
   };
 }

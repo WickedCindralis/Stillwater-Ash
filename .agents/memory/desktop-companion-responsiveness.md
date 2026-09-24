@@ -38,3 +38,16 @@ the reply text.
 **How to apply:** A failed render must leave the sync cursor behind for retry,
 without telling the user to resend an already accepted message. Keep scroll
 targets small enough that the beginning of a reply remains visible.
+
+An active Hangout cannot be inferred from persisted session status alone.
+Treat the live companion heartbeat as a prerequisite for automatic capture;
+ordinary Stillwater chat should continue if an offline companion leaves a
+stale active session behind.
+
+**Why:** After a publish, a persisted Hangout session remained active while
+the Windows companion was offline. An ordinary chat message waited for an
+automatic screenshot, timed out, and was saved without an Ash reply.
+
+**How to apply:** Fence capture at the provider/request boundary and end
+stale sessions before routing web chat. Do not silently claim a failed
+screenshot-backed message received an Ash response.

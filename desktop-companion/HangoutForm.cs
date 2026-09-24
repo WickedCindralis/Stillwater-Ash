@@ -34,7 +34,7 @@ internal sealed class HangoutForm : Form
     private volatile bool sessionAvailable;
     private volatile bool stoppingSession;
     private volatile bool revoked;
-    private bool closingFromOwner;
+    private bool windowStarted;
 
     public HangoutForm(string serverUrl, string chatToken)
     {
@@ -63,6 +63,7 @@ internal sealed class HangoutForm : Form
 
     public void ShowHangout()
     {
+        if (IsDisposed || Disposing) return;
         if (InvokeRequired)
         {
             BeginInvoke((Action)ShowHangout);
@@ -77,7 +78,6 @@ internal sealed class HangoutForm : Form
 
     public void CloseFromOwner()
     {
-        closingFromOwner = true;
         monitorCancellation.Cancel();
         screenshotCancellation.Cancel();
         if (!IsDisposed) Close();
@@ -166,14 +166,17 @@ internal sealed class HangoutForm : Form
     {
         using var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
         using var client = CreateClient(handler);
-        var initialSync = true;
 
         while (!cancellationToken.IsCancellationRequested && !revoked)
         {
             try
             {
-                await SyncAsync(client, initialSync ? 0 : Interlocked.Read(ref lastSyncedMessageId), cancellationToken);
-                initialSync = false;
+                // Monitoring starts before the pop-out opens. Hidden polls
+                // maintain the heartbeat but must not accumulate old cards.
+                var visibleAtRequest = Visible;
+                var startingWindow = visibleAtRequest && !windowStarted;
+                await SyncAsync(client, Interlocked.Read(ref lastSyncedMessageId), cancellationToken,
+                    windowStart: !visibleAtRequest || startingWindow, startVisibleWindow: startingWindow);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -207,10 +210,12 @@ internal sealed class HangoutForm : Form
         return client;
     }
 
-    private async Task SyncAsync(HttpClient client, long after, CancellationToken cancellationToken)
+    private async Task SyncAsync(HttpClient client, long after, CancellationToken cancellationToken,
+        bool windowStart = false, bool startVisibleWindow = false)
     {
         using var response = await client.GetAsync(
-            $"{serverUrl}/api/hangout/companion/sync?after={after}",
+            $"{serverUrl}/api/hangout/companion/sync?after={after}" +
+                (windowStart ? "&windowStart=1" : ""),
             cancellationToken);
         await EnsureChatSuccessAsync(response, cancellationToken);
 
@@ -241,10 +246,19 @@ internal sealed class HangoutForm : Form
             sessionStopped = false;
             stoppedSessionId = null;
         }
-        stopButton.Enabled = !revoked && !sessionStopped && sessionAvailable;
+        if (startVisibleWindow)
+        {
+            if (!root.TryGetProperty("windowCursor", out var cursor) ||
+                !cursor.TryGetInt64(out var cursorId))
+                throw new InvalidDataException("The server did not provide a new-window cursor.");
+            Interlocked.Exchange(ref lastSyncedMessageId, cursorId);
+            windowStarted = true;
+        }
+        stopButton.Enabled = !revoked && windowStarted && !sessionStopped && sessionAvailable;
         UpdateChatControls();
 
-        if (root.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
+        if (windowStarted && !windowStart &&
+            root.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array)
         {
             foreach (var item in messages.EnumerateArray().OrderBy(ReadId))
             {
@@ -740,7 +754,7 @@ internal sealed class HangoutForm : Form
         void Update()
         {
             if (IsDisposed) return;
-            var canSend = !revoked && sessionAvailable && !sessionStopped && !stoppingSession &&
+            var canSend = windowStarted && !revoked && sessionAvailable && !sessionStopped && !stoppingSession &&
                 uncertainSendContent is null && !sendInProgress;
             inputBox.Enabled = canSend;
             sendButton.Enabled = canSend;
@@ -762,9 +776,8 @@ internal sealed class HangoutForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
-        if (closingFromOwner) return;
-        e.Cancel = true;
-        Hide();
+        monitorCancellation.Cancel();
+        screenshotCancellation.Cancel();
     }
 
     private static HangoutMessage ParseMessage(JsonElement element)

@@ -399,9 +399,10 @@ router.get("/hangout/companion/sync", async (req, res): Promise<void> => {
   const token = companionToken(req);
   const after = Number(req.query["after"]);
   const afterId = Number.isInteger(after) && after >= 0 ? after : 0;
-  logHangoutHttp(req, "start", correlationId, startedAt, { after: afterId });
+  const windowStart = req.query["windowStart"] === "1";
+  logHangoutHttp(req, "start", correlationId, startedAt, { after: afterId, windowStart });
   try {
-    const result = await syncHangoutCompanion(token, afterId);
+    const result = await syncHangoutCompanion(token, afterId, windowStart);
     logHangoutHttp(req, "success", correlationId, startedAt, { sessionId: result.sessionId, messageCount: result.messages.length });
     res.json(result);
   } catch {

@@ -213,17 +213,21 @@ export async function sendPrivateMessage(content: string, imageDataUrl?: string,
   return { wickedMessage, ashMessage };
 }
 
-export async function syncHangoutCompanion(token: string, after: number): Promise<{
+export async function syncHangoutCompanion(token: string, after: number, windowStart = false): Promise<{
   status: "idle" | "inviting" | "active";
   sessionId: string;
   messages: Array<{ id: number; role: string; content: string; createdAt: string; screenshotActivityId: number | null }>;
   lastError: string;
+  windowCursor?: number;
 }> {
   const session = await storage.getHangoutSession();
   if (!tokenMatches(token, session.companionTokenHash)) throw new Error("Invalid Hangout companion token");
   const digest = hashToken(token);
   if (!(await storage.heartbeatHangout(digest))) throw new Error("Invalid Hangout companion token");
-  const data = await storage.getHangoutMessages(after, digest);
+  // A new desktop chat window begins after the current transcript. Keep the
+  // canonical messages on the server without replaying them in that window.
+  const windowCursor = windowStart ? await storage.getHangoutLatestMessageId() : undefined;
+  const data = windowStart ? [] : await storage.getHangoutMessages(after, digest);
   const latest = await storage.getHangoutSession();
   return {
     status: latest.status as "idle" | "inviting" | "active",
@@ -234,6 +238,7 @@ export async function syncHangoutCompanion(token: string, after: number): Promis
       screenshotActivityId: message.screenshotActivityId,
     })),
     lastError: latest.lastError,
+    ...(windowStart ? { windowCursor } : {}),
   };
 }
 

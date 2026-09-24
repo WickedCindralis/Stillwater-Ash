@@ -240,6 +240,14 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
       assert.equal(initial.messages.at(-1)?.id, messages[74]?.id);
       const later = await syncHangoutCompanion(pairing.hangoutToken, messages[60]!.id);
       assert.deepEqual(later.messages.map((message) => message.id), messages.slice(61).map((message) => message.id));
+      const windowStart = await syncHangoutCompanion(pairing.hangoutToken, 0, true);
+      assert.deepEqual(windowStart.messages, []);
+      assert.equal(windowStart.windowCursor, messages[74]!.id);
+      const [newMessage] = await db.insert(ashMessages).values({
+        role: "ash", content: "visible in this new window", imageUrl: "", source: "private_message",
+      }).returning({ id: ashMessages.id });
+      const sinceOpen = await syncHangoutCompanion(pairing.hangoutToken, windowStart.windowCursor!);
+      assert.deepEqual(sinceOpen.messages.map((message) => message.id), [newMessage!.id]);
       await stopHangout();
     });
 

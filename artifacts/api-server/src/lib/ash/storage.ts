@@ -430,6 +430,13 @@ export class DbStorage implements IStorage {
     return afterId === 0 ? rows.reverse() : rows;
   }
 
+  async getHangoutLatestMessageId(): Promise<number> {
+    const [latest] = await db.select({ id: ashMessages.id }).from(ashMessages)
+      .where(eq(ashMessages.source, "private_message"))
+      .orderBy(desc(ashMessages.id)).limit(1);
+    return latest?.id ?? 0;
+  }
+
 
   async getStory(): Promise<{ story: AshStory; chapters: AshStoryChapter[]; run: AshStoryRun | null }> {
     let [story] = await db.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);

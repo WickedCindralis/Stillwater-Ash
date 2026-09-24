@@ -607,12 +607,20 @@ internal sealed class HangoutForm : Form
             Text = $"{message.Role}  ·  {time}",
             Margin = new Padding(0, 0, 0, 6),
         };
-        var content = new Label
+        var content = new RichTextBox
         {
             Dock = DockStyle.Fill,
+            ReadOnly = true,
+            WordWrap = true,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            BorderStyle = BorderStyle.None,
+            BackColor = card.BackColor,
             ForeColor = Color.FromArgb(230, 232, 237),
             Text = message.Content,
             Margin = new Padding(0, 0, 0, 2),
+            DetectUrls = false,
+            TabStop = false,
+            AccessibleName = $"Message from {message.Role}",
         };
         cardLayout.Controls.Add(heading, 0, 0);
         cardLayout.Controls.Add(content, 0, 1);
@@ -668,13 +676,15 @@ internal sealed class HangoutForm : Form
         }
     }
 
-    private static void SizeMessageCard(Panel card, TableLayoutPanel layout, Label content)
+    private static void SizeMessageCard(Panel card, TableLayoutPanel layout, RichTextBox content)
     {
         var textWidth = Math.Max(280, card.Width - 48);
         var measured = TextRenderer.MeasureText(content.Text, content.Font,
             new Size(textWidth, int.MaxValue),
             TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
-        var bodyHeight = Math.Max(28, measured.Height + 10);
+        // A long reply stays scrollable inside its card; estimating a Label's
+        // full height could clip its ending on some Windows DPI settings.
+        var bodyHeight = Math.Clamp(measured.Height + 18, 44, 420);
         layout.RowStyles[1].Height = bodyHeight;
         card.Height = card.Padding.Vertical + 28 + bodyHeight +
             (layout.RowCount == 3 ? 238 : 0);
@@ -688,7 +698,7 @@ internal sealed class HangoutForm : Form
             if (control is Panel card &&
                 card.Controls.OfType<TableLayoutPanel>().FirstOrDefault() is { } cardLayout &&
                 cardLayout.Controls.Count > 1 &&
-                cardLayout.Controls[1] is Label content)
+                cardLayout.Controls[1] is RichTextBox content)
             {
                 SizeMessageCard(card, cardLayout, content);
             }

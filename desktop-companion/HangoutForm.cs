@@ -151,8 +151,8 @@ internal sealed class HangoutForm : Form
         sendButton.Text = "Send";
         sendButton.Dock = DockStyle.Fill;
         sendButton.Margin = new Padding(8, 0, 0, 6);
-        sendButton.BackColor = Color.FromArgb(234, 193, 92);
-        sendButton.ForeColor = Color.FromArgb(25, 26, 30);
+        sendButton.BackColor = Color.FromArgb(124, 58, 237);
+        sendButton.ForeColor = Color.White;
         sendButton.FlatStyle = FlatStyle.Flat;
         sendButton.Click += async (_, _) => await SendMessageAsync();
         composer.Controls.Add(sendButton, 1, 0);
@@ -232,8 +232,13 @@ internal sealed class HangoutForm : Form
         var status = ReadString(root, "status") ?? "unknown";
         var sessionId = ReadString(root, "sessionId");
         var lastError = ReadString(root, "lastError");
-        var hangoutStatus = $"Hangout: {status}" +
-            (string.IsNullOrWhiteSpace(sessionId) ? "" : $"  ·  Session {sessionId}");
+        var hangoutStatus = status.ToLowerInvariant() switch
+        {
+            "active" => "Hangout Active",
+            "inviting" => "Hangout Inviting",
+            "idle" => "Hangout Idle",
+            _ => "Hangout Unavailable",
+        };
         var detail = string.IsNullOrWhiteSpace(lastError) ? null : lastError;
         if (uncertainSendContent is not null)
         {
@@ -423,12 +428,11 @@ internal sealed class HangoutForm : Form
 
             await using var stream = await response.Content.ReadAsStreamAsync(monitorCancellation.Token);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: monitorCancellation.Token);
-            var status = ReadString(document.RootElement, "status") ?? "stopped";
             stoppedSessionId = ReadString(document.RootElement, "sessionId") ?? currentSessionId;
             sessionStopped = true;
             sessionAvailable = false;
             stoppingSession = false;
-            SetStatus($"Hangout: {status}", "The Hangout session was stopped.");
+            SetStatus("Hangout Stopped", "The Hangout session was stopped.");
             UpdateChatControls();
             using var syncHandler = new SocketsHttpHandler { AllowAutoRedirect = false };
             using var syncClient = CreateClient(syncHandler);

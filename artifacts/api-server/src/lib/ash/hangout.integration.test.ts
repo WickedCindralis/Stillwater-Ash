@@ -35,6 +35,11 @@ import {
 const ONE_PIXEL_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const INVITATION_REPLY = "Yes, I would like to hang out.";
 
+if (!process.env.HANGOUT_TEST_DATABASE_URL ||
+    process.env.DATABASE_URL !== process.env.HANGOUT_TEST_DATABASE_URL) {
+  throw new Error("Hangout integration tests must use a dedicated HANGOUT_TEST_DATABASE_URL.");
+}
+
 async function waitForPendingCapture(token: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const request = await getPendingCaptureRequest(token);

@@ -651,16 +651,14 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
   }
 
   private async buildDiscordPacketOptions(guildId: string): Promise<DiscordPacketOptions> {
-    const [wickedMessages, stillwaterHistory, ownerDmHistory] = await Promise.all([
+    const [wickedMessages, ownerDmHistory] = await Promise.all([
       storage.getRecentDiscordOwnerCalls(guildId, DISCORD_WICKED_WINDOW),
-      storage.getRecentHistory(HISTORY_LIMIT),
       guildId === DISCORD_OWNER_DM_GUILD_ID
         ? storage.getRecentOwnerDiscordHistory(DISCORD_WICKED_WINDOW)
         : Promise.resolve([]),
     ]);
     return {
       wickedMessages,
-      stillwaterHistory,
       ownerDmHistory,
     };
   }

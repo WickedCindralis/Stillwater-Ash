@@ -26,9 +26,10 @@ bounded request lifetime without treating a stale error as new evidence.
 
 Keep the Hangout sync cursor separate from a send response's observed message
 IDs, and acknowledge sync results only after their cards have been rendered.
-Keep long replies scrollable within their text area and scroll the outer
-transcript to the reply's heading rather than a possibly taller-than-viewport
-card with an attached screenshot.
+Keep long replies scrollable within their text area. The user wants the
+Windows transcript to move to the newest message and show the end of a long
+reply by default, without scrolling to an older late-arriving card or hiding
+the text behind its screenshot.
 
 **Why:** Production confirmed an Ash reply was persisted and returned to the
 Windows app, and later polls skipped past its ID, while the user could not see
@@ -37,8 +38,9 @@ text measurement at some display scales and scrolling to a tall screenshot
 card can also obscure the reply text.
 
 **How to apply:** A failed render must leave the sync cursor behind for retry,
-without telling the user to resend an already accepted message. Keep scroll
-targets small enough that the beginning of a reply remains visible.
+without telling the user to resend an already accepted message. On a new
+highest-ID card, show the end of its text and bring that text into view;
+still let the user scroll back to its beginning and any attached screenshot.
 
 An active Hangout cannot be inferred from persisted session status alone.
 Treat the live companion heartbeat as a prerequisite for automatic capture;

@@ -656,6 +656,7 @@ internal sealed class HangoutForm : Form
         }
 
         card.Controls.Add(cardLayout);
+        var isNewestMessage = message.Id >= Interlocked.Read(ref lastMessageId);
         var insertionIndex = messagesPanel.Controls
             .Cast<Control>()
             .TakeWhile(existing => existing.Tag is long existingId && existingId < message.Id)
@@ -664,9 +665,18 @@ internal sealed class HangoutForm : Form
         try
         {
             messagesPanel.Controls.SetChildIndex(card, insertionIndex);
-            // A tall reply with a screenshot can exceed the viewport. The
-            // short heading is a reliable scroll target for its opening text.
-            messagesPanel.ScrollControlIntoView(heading);
+            if (isNewestMessage)
+            {
+                messagesPanel.PerformLayout();
+                card.PerformLayout();
+                cardLayout.PerformLayout();
+                // Show the end of long replies without putting a screenshot
+                // below the text ahead of the reply in the outer viewport.
+                content.SelectionStart = content.TextLength;
+                content.SelectionLength = 0;
+                content.ScrollToCaret();
+                messagesPanel.ScrollControlIntoView(content);
+            }
         }
         catch
         {

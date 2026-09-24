@@ -329,7 +329,7 @@ internal sealed class CompanionForm : Form
             return;
         }
         StartHangoutMonitoring(settings);
-        hangoutForm?.ShowHangout();
+        hangoutForm?.ShowHangout(focus: true);
     }
 
     private void StartHangoutMonitoring(CompanionSettings settings)

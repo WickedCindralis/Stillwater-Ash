@@ -47,10 +47,14 @@ internal sealed class HangoutForm : Form
         BackColor = Color.FromArgb(18, 20, 25);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 10F);
+        TopMost = true;
         FormClosing += OnFormClosing;
         BuildLayout();
         _ = Handle;
     }
+
+    // Auto-opening on an invitation should not take keyboard focus from a game.
+    protected override bool ShowWithoutActivation => true;
 
     public void StartMonitoring()
     {
@@ -61,19 +65,22 @@ internal sealed class HangoutForm : Form
         serverUrl.Equals(url.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) &&
         chatToken.Equals(token, StringComparison.Ordinal);
 
-    public void ShowHangout()
+    public void ShowHangout(bool focus = false)
     {
         if (IsDisposed || Disposing) return;
         if (InvokeRequired)
         {
-            BeginInvoke((Action)ShowHangout);
+            BeginInvoke((Action)(() => ShowHangout(focus)));
             return;
         }
 
         if (!Visible) Show();
-        WindowState = FormWindowState.Normal;
-        BringToFront();
-        Activate();
+        if (focus)
+        {
+            WindowState = FormWindowState.Normal;
+            BringToFront();
+            Activate();
+        }
     }
 
     public void CloseFromOwner()
@@ -268,8 +275,8 @@ internal sealed class HangoutForm : Form
             }
         }
 
-        if (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
-            status.Equals("inviting", StringComparison.OrdinalIgnoreCase))
+        if (!Visible && (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("inviting", StringComparison.OrdinalIgnoreCase)))
         {
             ShowHangout();
         }

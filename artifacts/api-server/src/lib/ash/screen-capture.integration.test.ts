@@ -70,7 +70,7 @@ test("screen capture pairing and one-shot delivery stay bounded", async () => {
     const capture = await delivered;
     assert.equal(capture?.imageDataUrl, ONE_PIXEL_PNG);
     assert.equal(isFreshScreenCaptureCurrent(capture!), true);
-    cancelPendingScreenCapture();
+    await cancelPendingScreenCapture();
     assert.equal(
       isFreshScreenCaptureCurrent(capture!),
       false,
@@ -82,7 +82,7 @@ test("screen capture pairing and one-shot delivery stay bounded", async () => {
 
     resumeScreenCaptureRequests();
     const cancelled = waitForFreshScreenCapture();
-    cancelPendingScreenCapture();
+    await cancelPendingScreenCapture();
     assert.equal(await cancelled, null, "turning screenshots off must release the waiting ping");
   } finally {
     await revokeScreenCapture();
@@ -120,7 +120,7 @@ test("an in-flight old upload cannot resolve a request created after OFF then ON
     const oldAccept = acceptCapture(token, oldRequest.requestId, ONE_PIXEL_PNG);
     await oldUploadPaused;
 
-    cancelPendingScreenCapture();
+    await cancelPendingScreenCapture();
     await originalUpdateState({ screenCaptureEnabled: 1 });
     resumeScreenCaptureRequests();
     const newWaiter = waitForFreshScreenCapture();
@@ -173,7 +173,7 @@ test("cancelling while screenshot persistence is in flight leaves no stored imag
     const acceptance = acceptCapture(token, pending.requestId, ONE_PIXEL_PNG);
     await persistenceCommittedPromise;
 
-    cancelPendingScreenCapture();
+    await cancelPendingScreenCapture();
     releasePersistence();
 
     assert.equal((await acceptance).accepted, false);
@@ -188,6 +188,64 @@ test("cancelling while screenshot persistence is in flight leaves no stored imag
   } finally {
     (storage as any).stageScreenCapture = originalStageScreenCapture;
     releasePersistence?.();
+    await revokeScreenCapture();
+  }
+});
+
+test("cancellation after completion but before publish deletes staged screenshot atomically", async () => {
+  await revokeScreenCapture();
+  const originalGetCaptureRequest = storage.getCaptureRequest.bind(storage);
+  const originalPublish = storage.publishCaptureRequest.bind(storage);
+  let releaseCompleteRead!: () => void;
+  let releasePublish!: () => void;
+  let completeReadPaused!: () => void;
+  let publishPaused!: () => void;
+  const completeReadHeld = new Promise<void>((resolve) => { releaseCompleteRead = resolve; });
+  const publishHeld = new Promise<void>((resolve) => { releasePublish = resolve; });
+  const completeReadReached = new Promise<void>((resolve) => { completeReadPaused = resolve; });
+  const publishReached = new Promise<void>((resolve) => { publishPaused = resolve; });
+
+  try {
+    const { token } = await pairScreenCapture();
+    await storage.updateState({ screenCaptureEnabled: 1 });
+    resumeScreenCaptureRequests();
+    const activityBefore = new Set((await storage.getActivity(100)).map((event) => event.id));
+    const delivered = waitForFreshScreenCapture();
+    const pending = await waitForPendingRequest(token);
+    assert.ok(pending?.requestId);
+
+    (storage as any).getCaptureRequest = async () => {
+      const request = await originalGetCaptureRequest();
+      if (request?.status === "complete") {
+        completeReadPaused();
+        await completeReadHeld;
+      }
+      return request;
+    };
+    (storage as any).publishCaptureRequest = async (requestId: string, activityId: number) => {
+      publishPaused();
+      await publishHeld;
+      return originalPublish(requestId, activityId);
+    };
+
+    const acceptance = acceptCapture(token, pending.requestId, ONE_PIXEL_PNG);
+    await Promise.all([completeReadReached, publishReached]);
+    await cancelPendingScreenCapture();
+    releaseCompleteRead();
+    releasePublish();
+
+    assert.equal((await acceptance).accepted, false, "cancellation must win against a completed but unpublished upload");
+    assert.equal(await delivered, null, "a cancelled completed request must not reach its waiter");
+    assert.equal(
+      (await storage.getActivity(100)).some((event) => !activityBefore.has(event.id) && event.kind === "screen_capture"),
+      false,
+      "cancellation must remove the staged activity and screenshot bytes",
+    );
+  } finally {
+    (storage as any).getCaptureRequest = originalGetCaptureRequest;
+    (storage as any).publishCaptureRequest = originalPublish;
+    releaseCompleteRead?.();
+    releasePublish?.();
     await revokeScreenCapture();
   }
 });

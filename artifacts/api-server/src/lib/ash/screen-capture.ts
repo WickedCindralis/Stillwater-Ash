@@ -5,23 +5,16 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_DATA_URL_CHARS = 17 * 1024 * 1024;
 
-type PendingCapture = {
-  id: string;
-  expiresAt: number;
-  epoch: number;
-  resolve: (imageDataUrl: string | null) => void;
-  timer: ReturnType<typeof setTimeout>;
-};
-
 export type FreshScreenCapture = {
   imageDataUrl: string;
   epoch: number;
+  activityId: number;
 };
 
-let pendingCapture: PendingCapture | null = null;
 let lastSeenWriteAt = 0;
 let captureEpoch = 0;
-let captureBlocked = false;
+let captureCancellation = Promise.resolve();
+let localPendingId = "";
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
@@ -47,12 +40,8 @@ function validateImageDataUrl(imageDataUrl: unknown): string | null {
   return imageDataUrl;
 }
 
-function clearPending(result: string | null, error = ""): void {
-  const current = pendingCapture;
-  if (!current) return;
-  pendingCapture = null;
-  clearTimeout(current.timer);
-  current.resolve(result);
+function clearPending(result: { imageDataUrl: string; activityId: number } | null, error = ""): void {
+  void result;
   if (error) {
     void storage.updateState({ screenCaptureLastError: error }).catch(() => {});
   }
@@ -65,7 +54,7 @@ async function touchLastSeen(): Promise<void> {
 }
 
 export async function pairScreenCapture(): Promise<{ token: string; companionId: string }> {
-  cancelPendingScreenCapture();
+  await cancelPendingScreenCapture();
   const token = randomBytes(32).toString("base64url");
   const companionId = randomUUID();
   await storage.updateState({
@@ -81,7 +70,7 @@ export async function pairScreenCapture(): Promise<{ token: string; companionId:
 }
 
 export async function revokeScreenCapture(): Promise<void> {
-  cancelPendingScreenCapture();
+  await cancelPendingScreenCapture();
   await storage.updateState({
     screenCaptureEnabled: 0,
     screenCaptureTokenHash: "",
@@ -93,19 +82,21 @@ export async function revokeScreenCapture(): Promise<void> {
   });
 }
 
-export function cancelPendingScreenCapture(): void {
-  captureBlocked = true;
+export function cancelPendingScreenCapture(): Promise<void> {
   captureEpoch += 1;
-  clearPending(null);
+  const requestId = localPendingId;
+  localPendingId = "";
+  const cancellation = captureCancellation.then(() => storage.cancelCaptureRequest(requestId || undefined));
+  captureCancellation = cancellation.catch(() => {});
+  return cancellation;
 }
 
 export function resumeScreenCaptureRequests(): void {
   captureEpoch += 1;
-  captureBlocked = false;
 }
 
 export function isFreshScreenCaptureCurrent(capture: FreshScreenCapture): boolean {
-  return !captureBlocked && capture.epoch === captureEpoch;
+  return capture.epoch === captureEpoch;
 }
 
 export async function authenticateScreenCaptureToken(token: string): Promise<boolean> {
@@ -116,24 +107,24 @@ export async function authenticateScreenCaptureToken(token: string): Promise<boo
 export async function getPendingCaptureRequest(token: string): Promise<{
   requestId: string;
   expiresAt: string;
+  sessionId: string;
+  correlationId: string;
 } | null> {
   const state = await storage.getState();
   if (!tokensMatch(token, state.screenCaptureTokenHash)) return null;
   await touchLastSeen();
 
   if (state.screenCaptureEnabled !== 1) {
-    cancelPendingScreenCapture();
+    await cancelPendingScreenCapture();
     return null;
   }
-  if (
-    captureBlocked ||
-    !pendingCapture ||
-    pendingCapture.epoch !== captureEpoch ||
-    pendingCapture.expiresAt <= Date.now()
-  ) return null;
+  const pendingCapture = await storage.getCaptureRequest();
+  if (!pendingCapture || pendingCapture.status !== "pending" || pendingCapture.expiresAt.getTime() <= Date.now()) return null;
   return {
-    requestId: pendingCapture.id,
-    expiresAt: new Date(pendingCapture.expiresAt).toISOString(),
+    requestId: pendingCapture.requestId,
+    expiresAt: pendingCapture.expiresAt.toISOString(),
+    sessionId: pendingCapture.sessionId,
+    correlationId: pendingCapture.correlationId,
   };
 }
 
@@ -141,33 +132,29 @@ export async function acceptCapture(
   token: string,
   requestId: string,
   imageDataUrl: unknown,
-): Promise<{ accepted: boolean; error?: string }> {
+): Promise<{ accepted: boolean; error?: string; sessionId?: string; correlationId?: string }> {
   const state = await storage.getState();
   if (!tokensMatch(token, state.screenCaptureTokenHash)) {
     return { accepted: false, error: "Invalid companion token" };
   }
   if (state.screenCaptureEnabled !== 1) {
-    cancelPendingScreenCapture();
+    await cancelPendingScreenCapture();
     return { accepted: false, error: "Screenshots are turned off" };
   }
-  if (
-    captureBlocked ||
-    !pendingCapture ||
-    pendingCapture.epoch !== captureEpoch ||
-    pendingCapture.id !== requestId
-  ) {
+  const captureRequest = await storage.getCaptureRequest();
+  if (!captureRequest || captureRequest.status !== "pending" || captureRequest.requestId !== requestId) {
     return { accepted: false, error: "Capture request is no longer pending" };
   }
-  const acceptedPending = pendingCapture;
-  if (acceptedPending.expiresAt <= Date.now()) {
-    clearPending(null, "Capture request expired");
-    return { accepted: false, error: "Capture request expired" };
+  const operation = { sessionId: captureRequest.sessionId, correlationId: captureRequest.correlationId };
+  if (captureRequest.expiresAt.getTime() <= Date.now()) {
+    await storage.cancelCaptureRequest();
+    return { accepted: false, error: "Capture request expired", ...operation };
   }
 
   const validated = validateImageDataUrl(imageDataUrl);
   if (!validated) {
     await storage.updateState({ screenCaptureLastError: "Rejected invalid or oversized image" });
-    return { accepted: false, error: "Image must be a valid base64 JPEG, PNG, or WebP under 12MB" };
+    return { accepted: false, error: "Image must be a valid base64 JPEG, PNG, or WebP under 12MB", ...operation };
   }
 
   await storage.updateState({
@@ -175,48 +162,46 @@ export async function acceptCapture(
     screenCaptureLastError: "",
     screenCaptureLastSeen: new Date(),
   });
-  if (
-    captureBlocked ||
-    captureEpoch !== acceptedPending.epoch ||
-    pendingCapture !== acceptedPending
-  ) {
-    return { accepted: false, error: "Capture request was invalidated before delivery" };
-  }
   const screenshotActivityId = await storage.stageScreenCapture(validated);
-  if (
-    captureBlocked ||
-    captureEpoch !== acceptedPending.epoch ||
-    pendingCapture !== acceptedPending
-  ) {
+  if (!(await storage.completeCaptureRequest(requestId, validated, screenshotActivityId))) {
     await storage.discardScreenCapture(screenshotActivityId);
-    return { accepted: false, error: "Capture request was invalidated before delivery" };
+    return { accepted: false, error: "Capture request was invalidated before delivery", ...operation };
   }
-  // Delivery and generation validation are synchronous with respect to one
-  // another. After this point the screenshot is historical data even if OFF
-  // is pressed while its visibility flag is being committed.
-  clearPending(validated);
-  await storage.publishScreenCapture(screenshotActivityId);
-  return { accepted: true };
+  if (!(await storage.publishCaptureRequest(requestId, screenshotActivityId))) {
+    return { accepted: false, error: "Capture request was invalidated before delivery", ...operation };
+  }
+  return { accepted: true, ...operation };
 }
 
-export async function waitForFreshScreenCapture(): Promise<FreshScreenCapture | null> {
+export async function waitForFreshScreenCapture(metadata: { sessionId?: string; correlationId?: string } = {}): Promise<FreshScreenCapture | null> {
   const requestedAtEpoch = captureEpoch;
   const state = await storage.getState();
-  if (captureBlocked || requestedAtEpoch !== captureEpoch) return null;
+  if (requestedAtEpoch !== captureEpoch) return null;
   if (state.screenCaptureEnabled !== 1 || !state.screenCaptureTokenHash) return null;
-  if (pendingCapture) return null;
 
   const id = randomUUID();
   const expiresAt = Date.now() + REQUEST_TIMEOUT_MS;
-  const imageDataUrl = await new Promise<string | null>((resolve) => {
-    const timer = setTimeout(() => {
-      if (pendingCapture?.id !== id) return;
-      clearPending(null, "The Windows companion did not answer in time");
-    }, REQUEST_TIMEOUT_MS);
-    pendingCapture = { id, expiresAt, epoch: requestedAtEpoch, resolve, timer };
-  });
-  if (!imageDataUrl || captureBlocked || requestedAtEpoch !== captureEpoch) return null;
-  return { imageDataUrl, epoch: requestedAtEpoch };
+  await captureCancellation;
+  if (requestedAtEpoch !== captureEpoch) return null;
+  if (!(await storage.reserveCaptureRequest(id, new Date(expiresAt), metadata.sessionId, metadata.correlationId))) return null;
+  localPendingId = id;
+  while (Date.now() < expiresAt && requestedAtEpoch === captureEpoch) {
+    const pending = await storage.getCaptureRequest();
+    if (!pending || pending.requestId !== id || pending.status === "cancelled") return null;
+    if (pending.status === "complete" && pending.activityId && pending.imageDataUrl) {
+      const capture = { imageDataUrl: pending.imageDataUrl, activityId: pending.activityId, epoch: requestedAtEpoch };
+      if (requestedAtEpoch !== captureEpoch) return null;
+      if (!(await storage.consumeCaptureRequest(id))) return null;
+      if (localPendingId === id) localPendingId = "";
+      if (requestedAtEpoch !== captureEpoch) return null;
+      return capture;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  await storage.cancelCaptureRequest(id);
+  if (localPendingId === id) localPendingId = "";
+  clearPending(null, "The Windows companion did not answer in time");
+  return null;
 }
 
 export function getScreenCaptureTimeoutMs(): number {

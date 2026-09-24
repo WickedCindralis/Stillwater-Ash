@@ -9,6 +9,19 @@ import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHer
 import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
+import {
+  authorizeHangoutCompanion,
+  getHangoutScreenshot,
+  hangoutStatus,
+  invalidateHangoutForControl,
+  pairHangoutCompanion,
+  revokeHangoutCompanion,
+  sendHangoutMessage,
+  sendPrivateMessage,
+  startHangout,
+  stopHangout,
+  syncHangoutCompanion,
+} from "../lib/ash/hangout";
 import { ashBridge, type AshPacketPreview } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
@@ -24,6 +37,7 @@ import {
 } from "../lib/ash/screen-capture";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 declare module "express-session" {
   interface SessionData {
@@ -250,8 +264,10 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
       return;
     }
   } else if (parsed.data.screenCaptureEnabled === 0) {
-    cancelPendingScreenCapture();
+    await invalidateHangoutForControl();
+    await cancelPendingScreenCapture();
   }
+  if (parsed.data.apiKillSwitch === 1) await invalidateHangoutForControl();
   const state = await storage.updateState(parsed.data);
   if (parsed.data.screenCaptureEnabled === 1) {
     resumeScreenCaptureRequests();
@@ -261,11 +277,13 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
 
 // ── Desktop screen capture companion ──
 router.post("/screen-capture/pair", requireAuth, async (_req, res): Promise<void> => {
+  await invalidateHangoutForControl();
   const pairing = await pairScreenCapture();
   res.json(pairing);
 });
 
 router.post("/screen-capture/revoke", requireAuth, async (_req, res): Promise<void> => {
+  await invalidateHangoutForControl();
   await revokeScreenCapture();
   res.json({ ok: true });
 });
@@ -287,27 +305,235 @@ function companionToken(req: Request): string {
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
 }
 
+function logHangoutHttp(req: Request, event: string, correlationId: string, startedAt: number, fields: Record<string, unknown> = {}): void {
+  req.log?.info({ event, correlationId, durationMs: Date.now() - startedAt, ...fields }, "Hangout HTTP boundary");
+}
+
+function hangoutErrorStatus(error: unknown): 400 | 409 {
+  const message = error instanceof Error ? error.message : "Hangout request failed";
+  return /already in progress|already active|exchange is already|invitation is still/i.test(message) ? 409 : 400;
+}
+
+function hangoutError(res: Response, error: unknown): void {
+  const message = error instanceof Error ? error.message : "Hangout request failed";
+  const safeMessage = /^(Pair the Windows Hangout companion first|The Hangout companion must be connected before starting|Turn screenshot capture ON before starting a Hangout|Hangout is disabled by the API kill switch|A Hangout session is already in progress|A Hangout exchange is already in progress|Hangout invitation is still awaiting a clear approval decision\.|Hangout is not active)$/.test(message)
+    ? message
+    : "Hangout could not complete the request. Check session status and try again.";
+  res.status(hangoutErrorStatus(error)).json({ error: safeMessage });
+}
+
+// ── Hangout web session controls ──
+router.get("/hangout/status", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  try {
+    const status = await hangoutStatus();
+    logHangoutHttp(req, "success", correlationId, startedAt, { sessionId: status.sessionId });
+    res.json(status);
+  } catch (error) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500 });
+    res.status(500).json({ error: "Could not read Hangout status" });
+  }
+});
+
+router.post("/hangout/start", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  try {
+    const result = await startHangout();
+    logHangoutHttp(req, "success", correlationId, startedAt, { sessionId: result.sessionId, sessionStatus: result.status });
+    res.json(result);
+  } catch (error) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: hangoutErrorStatus(error) });
+    hangoutError(res, error);
+  }
+});
+
+router.post("/hangout/stop", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  try {
+    await stopHangout();
+    logHangoutHttp(req, "success", correlationId, startedAt);
+    res.json(await hangoutStatus());
+  } catch {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500 });
+    res.status(500).json({ error: "Could not stop Hangout" });
+  }
+});
+
+router.post("/hangout/companion/pair", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  try {
+    const paired = await pairHangoutCompanion();
+    logHangoutHttp(req, "success", correlationId, startedAt);
+    res.json(paired);
+  } catch {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500 });
+    res.status(500).json({ error: "Could not pair the Hangout companion" });
+  }
+});
+
+router.post("/hangout/companion/revoke", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  try {
+    await revokeHangoutCompanion();
+    logHangoutHttp(req, "success", correlationId, startedAt);
+    res.json({ ok: true });
+  } catch {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500 });
+    res.status(500).json({ error: "Could not revoke Hangout companion" });
+  }
+});
+
+// ── Narrowly scoped Hangout companion API ──
+router.get("/hangout/companion/sync", async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  const token = companionToken(req);
+  const after = Number(req.query["after"]);
+  const afterId = Number.isInteger(after) && after >= 0 ? after : 0;
+  logHangoutHttp(req, "start", correlationId, startedAt, { after: afterId });
+  try {
+    const result = await syncHangoutCompanion(token, afterId);
+    logHangoutHttp(req, "success", correlationId, startedAt, { sessionId: result.sessionId, messageCount: result.messages.length });
+    res.json(result);
+  } catch {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 401 });
+    res.status(401).json({ error: "Invalid Hangout companion token" });
+  }
+});
+
+router.post("/hangout/companion/send", async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  const token = companionToken(req);
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  if (!(await authorizeHangoutCompanion(token))) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 401 });
+    res.status(401).json({ error: "Invalid Hangout companion token" });
+    return;
+  }
+  const content = req.body?.content;
+  if (typeof content !== "string" || !content.trim() || content.length > 4000) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 400 });
+    res.status(400).json({ error: "Content must contain 1–4000 characters" });
+    return;
+  }
+  try {
+    const result = await sendHangoutMessage(content);
+    logHangoutHttp(req, "success", correlationId, startedAt, { messageId: result.wickedMessage.id, ashMessageId: result.ashMessage.id });
+    res.json({
+      wickedMessage: lightweightMessage({ ...result.wickedMessage, imageUrl: "" }),
+      ashMessage: lightweightMessage({ ...result.ashMessage, imageUrl: "", screenshotActivityId: result.screenshotActivityId }),
+    });
+  } catch (error) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: hangoutErrorStatus(error) });
+    hangoutError(res, error);
+  }
+});
+
+router.post("/hangout/companion/stop", async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  if (!(await authorizeHangoutCompanion(companionToken(req)))) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 401 });
+    res.status(401).json({ error: "Invalid Hangout companion token" });
+    return;
+  }
+  try {
+    await stopHangout();
+    logHangoutHttp(req, "success", correlationId, startedAt);
+    res.json(await hangoutStatus());
+  } catch {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500 });
+    res.status(500).json({ error: "Could not stop Hangout" });
+  }
+});
+
+router.get("/hangout/companion/screenshot/:activityId", async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
+  const token = companionToken(req);
+  if (!(await authorizeHangoutCompanion(token))) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 401 });
+    res.status(401).json({ error: "Invalid Hangout companion token" });
+    return;
+  }
+  const id = Number(req.params["activityId"]);
+  let capture: Awaited<ReturnType<typeof getHangoutScreenshot>>;
+  try {
+    capture = Number.isInteger(id) && id > 0 ? await getHangoutScreenshot(id, token) : null;
+  } catch {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500, activityId: id });
+    res.status(500).json({ error: "Could not load Hangout screenshot" });
+    return;
+  }
+  if (!capture) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 404, activityId: id });
+    res.status(404).json({ error: "Hangout screenshot not found" });
+    return;
+  }
+  const match = capture.imageDataUrl.match(/^data:(image\/[\w.+-]+);base64,(.*)$/s);
+  if (!match) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 500, activityId: id });
+    res.status(500).json({ error: "Stored screenshot is invalid" });
+    return;
+  }
+  const bytes = Buffer.from(match[2]!, "base64");
+  logHangoutHttp(req, "success", correlationId, startedAt, {
+    activityId: id, imageBytes: bytes.byteLength, mime: match[1],
+    sessionId: capture.sessionId, operationCorrelationId: capture.correlationId,
+  });
+  res.setHeader("Content-Type", match[1]!);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.send(bytes);
+});
+
 router.get("/screen-capture/request", async (req, res): Promise<void> => {
+  const startedAt = Date.now(), correlationId = randomUUID();
+  req.log?.info({ event: "start", correlationId }, "Screen-capture HTTP boundary");
   const token = companionToken(req);
   if (!(await authenticateScreenCaptureToken(token))) {
+    req.log?.info({ event: "failure", correlationId, durationMs: Date.now() - startedAt, statusCode: 401 }, "Screen-capture HTTP boundary");
     res.status(401).json({ error: "Invalid companion token" });
     return;
   }
   const request = await getPendingCaptureRequest(token);
+  req.log?.info({
+    event: "success", correlationId, durationMs: Date.now() - startedAt, requestPending: !!request,
+    sessionId: request?.sessionId, operationCorrelationId: request?.correlationId,
+  }, "Screen-capture HTTP boundary");
   res.json(request ? { requestId: request.requestId, expiresAt: request.expiresAt } : { requestId: null });
 });
 
 router.post("/screen-capture/request/:id", async (req, res): Promise<void> => {
+  const startedAt = Date.now(), correlationId = randomUUID();
+  req.log?.info({ event: "start", correlationId }, "Screen-capture HTTP boundary");
   const token = companionToken(req);
   if (!(await authenticateScreenCaptureToken(token))) {
+    req.log?.info({ event: "failure", correlationId, durationMs: Date.now() - startedAt, statusCode: 401 }, "Screen-capture HTTP boundary");
     res.status(401).json({ error: "Invalid companion token" });
     return;
   }
+  const imageDataUrl = req.body?.imageDataUrl;
   const result = await acceptCapture(token, String(req.params.id), req.body?.imageDataUrl);
   if (!result.accepted) {
+    req.log?.info({
+      event: "failure", correlationId, durationMs: Date.now() - startedAt, statusCode: 409,
+      sessionId: result.sessionId, operationCorrelationId: result.correlationId,
+      imageBytes: typeof imageDataUrl === "string" ? estimateDataUrlBytes(imageDataUrl) : 0,
+      mime: typeof imageDataUrl === "string" ? imageDataUrl.match(/^data:(image\/[\w.+-]+);/)?.[1] || "unknown" : "unknown",
+    }, "Screen-capture HTTP boundary");
     res.status(409).json({ error: result.error || "Capture was not accepted" });
     return;
   }
+  req.log?.info({
+    event: "success", correlationId, durationMs: Date.now() - startedAt,
+    imageBytes: typeof imageDataUrl === "string" ? estimateDataUrlBytes(imageDataUrl) : 0,
+    mime: typeof imageDataUrl === "string" ? imageDataUrl.match(/^data:(image\/[\w.+-]+);/)?.[1] || "unknown" : "unknown",
+    sessionId: result.sessionId, operationCorrelationId: result.correlationId,
+  }, "Screen-capture HTTP boundary");
   res.json({ ok: true });
 });
 
@@ -323,9 +549,12 @@ function lightweightMessage<T extends { id: number; imageUrl: string }>(m: T): T
 }
 
 router.get("/messages", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
   const before = Number(req.query["before"]);
   const beforeId = Number.isInteger(before) && before > 0 ? before : undefined;
   const messages = await storage.getMessages(300, beforeId);
+  logHangoutHttp(req, "success", correlationId, startedAt, { messageCount: messages.length });
   res.json(messages.map(lightweightMessage));
 });
 
@@ -344,8 +573,11 @@ router.get("/messages/:id/image", requireAuth, async (req, res): Promise<void> =
 });
 
 router.post("/messages", requireAuth, async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  logHangoutHttp(req, "start", correlationId, startedAt);
   const parsed = sendMessageSchema.safeParse(req.body);
   if (!parsed.success) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 400 });
     res
       .status(400)
       .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
@@ -353,49 +585,36 @@ router.post("/messages", requireAuth, async (req, res): Promise<void> => {
   }
   const { content, imageDataUrl, requestImage } = parsed.data;
   if (!content.trim() && !imageDataUrl) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 400 });
     res.status(400).json({ error: "Message is empty" });
     return;
   }
   if (imageDataUrl) {
     if (!imageDataUrl.startsWith("data:image/")) {
+      logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 400 });
       res.status(400).json({ error: "Attachment must be an image" });
       return;
     }
     if (estimateDataUrlBytes(imageDataUrl) > MAX_IMAGE_BYTES) {
+      logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 400 });
       res.status(400).json({ error: "Image exceeds the 12MB limit" });
       return;
     }
   }
 
-  // Store Wicked's message. Photos are one-and-done (Summer Palace rule):
-  // Ash sees the image once in this exchange, but it is never persisted —
-  // only the text stays in the chat history.
-  const wickedMessage = await storage.createMessage({
-    role: "wicked",
-    content: content.trim(),
-    imageUrl: "",
-    source: "private_message",
-  });
-
-  const { text, imageUrl } = await ashBridge.handleWickedMessage(
-    content.trim() || "(Wicked sent you a picture — look at it and respond.)",
-    imageDataUrl,
-    requestImage,
-  );
-
-  let ashMessage = null;
-  if (text.trim() || imageUrl) {
-    ashMessage = await storage.createMessage({
-      role: "ash",
-      content: text.trim(),
-      imageUrl,
-      source: "private_message",
+  try {
+    const result = await sendPrivateMessage(content, imageDataUrl, requestImage);
+    logHangoutHttp(req, "success", correlationId, startedAt, {
+      messageId: result.wickedMessage.id, ashMessageId: result.ashMessage?.id ?? null,
     });
+    res.json({
+      wickedMessage: lightweightMessage(result.wickedMessage as typeof result.wickedMessage & { imageUrl: string }),
+      ashMessage: result.ashMessage ? lightweightMessage(result.ashMessage) : null,
+    });
+  } catch (error) {
+    logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 409 });
+    res.status(409).json({ error: error instanceof Error ? error.message : "Message could not be sent" });
   }
-  res.json({
-    wickedMessage: lightweightMessage(wickedMessage),
-    ashMessage: ashMessage ? lightweightMessage(ashMessage) : null,
-  });
 });
 
 // ── Export & purge ──

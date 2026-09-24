@@ -190,6 +190,23 @@ export const ashMessages = pgTable("ash_messages", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Map screenshot activities to the canonical chat message that produced them.
+// Bytes remain in ash_activity_screenshots and never enter normal chat history.
+export const ashHangoutScreenshots = pgTable("ash_hangout_screenshots", {
+  activityId: integer("activity_id").primaryKey()
+    .references(() => ashActivity.id, { onDelete: "cascade" }),
+  messageId: integer("message_id").notNull()
+    .references(() => ashMessages.id, { onDelete: "cascade" }),
+  sessionId: text("session_id").notNull(),
+  companionTokenHash: text("companion_token_hash").notNull().default(""),
+  correlationId: text("correlation_id").notNull().default(""),
+  invalidated: integer("invalidated").notNull().default(0),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("ash_hangout_screenshots_message_idx").on(table.messageId),
+]);
+
 export const ashDiaryEntries = pgTable("ash_diary_entries", {
   id: serial("id").primaryKey(),
   content: text("content").notNull(),
@@ -235,6 +252,39 @@ export const ashActivityScreenshots = pgTable("ash_activity_screenshots", {
   imageDataUrl: text("image_data_url").notNull(),
   ready: integer("ready").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// A single durable Hangout session coordinates all API instances. Pairing
+// credentials and exchange leases are deliberately separate from capture auth.
+export const ashHangoutSession = pgTable("ash_hangout_session", {
+  id: text("id").primaryKey().default("ash"),
+  sessionId: text("session_id").notNull().default(""),
+  status: text("status").notNull().default("idle"), // idle | inviting | active
+  generation: integer("generation").notNull().default(0),
+  companionTokenHash: text("companion_token_hash").notNull().default(""),
+  companionLastSeen: timestamp("companion_last_seen"),
+  lastError: text("last_error").notNull().default(""),
+  lastActivityAt: timestamp("last_activity_at"),
+  lastIdleCheckinAt: timestamp("last_idle_checkin_at"),
+  lastCaptureAt: timestamp("last_capture_at"),
+  leaseToken: text("lease_token").notNull().default(""),
+  leaseExpiresAt: timestamp("lease_expires_at"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Cross-instance rendezvous for the paired desktop capture poller. Only one
+// fresh capture can be pending globally; image data is retained only until
+// the waiting provider exchange consumes it.
+export const ashCaptureRequest = pgTable("ash_capture_request", {
+  id: text("id").primaryKey().default("ash"),
+  requestId: text("request_id").notNull().default(""),
+  sessionId: text("session_id").notNull().default(""),
+  correlationId: text("correlation_id").notNull().default(""),
+  status: text("status").notNull().default("idle"), // idle | pending | complete | cancelled
+  expiresAt: timestamp("expires_at"),
+  imageDataUrl: text("image_data_url").notNull().default(""),
+  activityId: integer("activity_id"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Chess games between Wicked (White) and Ash (Black). One active game at a time.

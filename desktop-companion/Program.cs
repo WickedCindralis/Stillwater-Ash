@@ -26,31 +26,36 @@ internal sealed class CompanionForm : Form
     private const int PollSeconds = 5;
     private readonly TextBox serverUrlBox = new();
     private readonly TextBox tokenBox = new();
+    private readonly TextBox chatTokenBox = new();
     private readonly Button saveButton = new();
     private readonly Button startButton = new();
     private readonly Button stopButton = new();
+    private readonly Button hangoutButton = new();
     private readonly Button forgetButton = new();
     private readonly Label statusLabel = new();
     private readonly Label detailLabel = new();
     private readonly CancellationTokenSource closeCancellation = new();
     private CancellationTokenSource? runCancellation;
     private Task? runTask;
+    private HangoutForm? hangoutForm;
     private bool closeRequested;
 
     public CompanionForm()
     {
         Text = "Stillwater Desktop Companion";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(560, 510);
-        Size = new Size(600, 560);
+        MinimumSize = new Size(690, 620);
+        Size = new Size(740, 650);
         BackColor = Color.FromArgb(18, 20, 25);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 10F);
         FormClosing += OnFormClosing;
 
         tokenBox.UseSystemPasswordChar = true;
+        chatTokenBox.UseSystemPasswordChar = true;
         serverUrlBox.PlaceholderText = "https://your-stillwater-host";
         tokenBox.PlaceholderText = "Paste the one-time token from Stillwater";
+        chatTokenBox.PlaceholderText = "Separate token for Hangout chat";
 
         BuildLayout();
         LoadSavedSettings();
@@ -64,7 +69,7 @@ internal sealed class CompanionForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(28),
             ColumnCount = 1,
-            RowCount = 7,
+            RowCount = 8,
             BackColor = BackColor,
         };
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
@@ -72,6 +77,7 @@ internal sealed class CompanionForm : Form
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+        outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
         outer.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(outer);
@@ -97,16 +103,18 @@ internal sealed class CompanionForm : Form
 
         outer.Controls.Add(CreateField("Stillwater URL", serverUrlBox), 0, 2);
         outer.Controls.Add(CreateField("Pairing token", tokenBox), 0, 3);
+        outer.Controls.Add(CreateField("Hangout chat token (separate from pairing token)", chatTokenBox), 0, 4);
 
         var securityNote = new Label
         {
-            Text = "Your token is encrypted for this Windows user. Screenshots are never saved to this computer. " +
+            Text = "Tokens are encrypted for this Windows user. The Hangout token is never used for capture. " +
+                   "Screenshots are never saved to this computer. " +
                    "Use the Screenshots ON/OFF switch in Stillwater to control capture.",
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(150, 158, 170),
             Padding = new Padding(0, 8, 0, 0),
         };
-        outer.Controls.Add(securityNote, 0, 4);
+        outer.Controls.Add(securityNote, 0, 5);
 
         var actions = new FlowLayoutPanel
         {
@@ -125,11 +133,14 @@ internal sealed class CompanionForm : Form
         stopButton.Width = 90;
         stopButton.Enabled = false;
         stopButton.Click += (_, _) => StopCompanion();
+        hangoutButton.Text = "Open Hangout";
+        hangoutButton.Width = 116;
+        hangoutButton.Click += (_, _) => OpenHangout();
         forgetButton.Text = "Forget saved details";
         forgetButton.Width = 154;
         forgetButton.Click += (_, _) => ForgetSettings();
-        actions.Controls.AddRange([saveButton, startButton, stopButton, forgetButton]);
-        outer.Controls.Add(actions, 0, 5);
+        actions.Controls.AddRange([saveButton, startButton, stopButton, hangoutButton, forgetButton]);
+        outer.Controls.Add(actions, 0, 6);
 
         var statusPanel = new Panel
         {
@@ -147,7 +158,7 @@ internal sealed class CompanionForm : Form
         detailLabel.AutoEllipsis = true;
         statusPanel.Controls.Add(detailLabel);
         statusPanel.Controls.Add(statusLabel);
-        outer.Controls.Add(statusPanel, 0, 6);
+        outer.Controls.Add(statusPanel, 0, 7);
     }
 
     private static Control CreateField(string caption, TextBox input)
@@ -184,6 +195,7 @@ internal sealed class CompanionForm : Form
             if (settings is null) return;
             serverUrlBox.Text = settings.ServerUrl;
             tokenBox.Text = settings.Token;
+            chatTokenBox.Text = settings.ChatToken ?? "";
             SetStoppedStatus("Saved details loaded. Click Start when you are ready.");
         }
         catch
@@ -219,9 +231,12 @@ internal sealed class CompanionForm : Form
             return;
         }
 
+        hangoutForm?.CloseFromOwner();
+        hangoutForm = null;
         SecureSettings.Delete();
         serverUrlBox.Clear();
         tokenBox.Clear();
+        chatTokenBox.Clear();
         SetStoppedStatus("Saved details forgotten.");
     }
 
@@ -252,7 +267,9 @@ internal sealed class CompanionForm : Form
         stopButton.Enabled = true;
         serverUrlBox.Enabled = false;
         tokenBox.Enabled = false;
+        chatTokenBox.Enabled = false;
         SetRunningStatus("Starting…", "Connecting to Stillwater.");
+        StartHangoutMonitoring(settings);
         runTask = RunCompanionAsync(settings, currentRunCancellation.Token);
         _ = runTask.ContinueWith(_ =>
         {
@@ -270,6 +287,7 @@ internal sealed class CompanionForm : Form
                     stopButton.Enabled = false;
                     serverUrlBox.Enabled = true;
                     tokenBox.Enabled = true;
+                    chatTokenBox.Enabled = true;
                     if (wasStopped)
                     {
                         SetStoppedStatus("Stopped", "No screenshots are being captured by this app.");
@@ -284,6 +302,54 @@ internal sealed class CompanionForm : Form
         runCancellation?.Cancel();
         SetStoppedStatus("Stopping…", "The companion will stop after its current request finishes.");
         stopButton.Enabled = false;
+    }
+
+    private void OpenHangout()
+    {
+        if (!TryReadSettings(out var settings, out var error))
+        {
+            SetError(error);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(settings.ChatToken))
+        {
+            SetError("A separate Hangout chat token is required.", "Enter the Hangout chat token and save your details.");
+            return;
+        }
+
+        try
+        {
+            SecureSettings.Save(settings);
+        }
+        catch
+        {
+            SetError("The details could not be saved securely.", "Check that you can write to your user profile.");
+            return;
+        }
+        StartHangoutMonitoring(settings);
+        hangoutForm?.ShowHangout();
+    }
+
+    private void StartHangoutMonitoring(CompanionSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.ChatToken))
+        {
+            hangoutForm?.CloseFromOwner();
+            hangoutForm = null;
+            return;
+        }
+        if (hangoutForm is not null && !hangoutForm.IsDisposed &&
+            !hangoutForm.UsesSettings(settings.ServerUrl, settings.ChatToken))
+        {
+            hangoutForm.CloseFromOwner();
+            hangoutForm = null;
+        }
+        if (hangoutForm is null || hangoutForm.IsDisposed)
+        {
+            hangoutForm = new HangoutForm(settings.ServerUrl, settings.ChatToken);
+            hangoutForm.ShowInTaskbar = false;
+            hangoutForm.StartMonitoring();
+        }
     }
 
     private async Task RunCompanionAsync(CompanionSettings settings, CancellationToken cancellationToken)
@@ -387,7 +453,7 @@ internal sealed class CompanionForm : Form
             return false;
         }
 
-        settings = new CompanionSettings(serverUrl, token);
+        settings = new CompanionSettings(serverUrl, token, chatTokenBox.Text.Trim());
         error = "";
         return true;
     }
@@ -397,6 +463,7 @@ internal sealed class CompanionForm : Form
         closeRequested = true;
         closeCancellation.Cancel();
         runCancellation?.Cancel();
+        hangoutForm?.CloseFromOwner();
     }
 
     private void SetRunningStatus(string status, string detail)
@@ -429,7 +496,7 @@ internal sealed class CompanionForm : Form
     }
 }
 
-internal sealed record CompanionSettings(string ServerUrl, string Token);
+internal sealed record CompanionSettings(string ServerUrl, string Token, string? ChatToken = null);
 
 internal static class SecureSettings
 {

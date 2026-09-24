@@ -18,6 +18,15 @@ type SendMessageResponse = {
   ashMessage: AshMessage | null;
 };
 
+type HangoutStatus = {
+  status: "idle" | "inviting" | "active";
+  sessionId: string;
+  connected: boolean;
+  companionPaired: boolean;
+  lastError: string;
+  lastCaptureAt: string | null;
+};
+
 function mergeLatestMessages(
   current: AshMessage[] | undefined,
   incoming: Array<AshMessage | null>,
@@ -104,6 +113,8 @@ export default function ChatPage() {
   const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess" | "connect4">("none");
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const [pairingToken, setPairingToken] = useState<string | null>(null);
+  const [hangoutPairingToken, setHangoutPairingToken] = useState<string | null>(null);
+  const [hangoutActionError, setHangoutActionError] = useState("");
   const [voiceIdDraft, setVoiceIdDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -119,6 +130,11 @@ export default function ChatPage() {
   const { data: messages = [], isLoading: messagesLoading } = useQuery<AshMessage[]>({
     queryKey: ["/api/messages"],
     refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
+  });
+  const { data: hangout } = useQuery<HangoutStatus>({
+    queryKey: ["/api/hangout/status"],
+    refetchInterval: 5_000,
     refetchIntervalInBackground: true,
   });
   // Older history is loaded on demand; no messages are removed from storage.
@@ -158,12 +174,63 @@ export default function ChatPage() {
       return (await response.json()) as SendMessageResponse;
     },
     onSuccess: ({ wickedMessage, ashMessage }) => {
+      setHangoutActionError("");
       queryClient.setQueryData<AshMessage[]>(["/api/messages"], (current) =>
         mergeLatestMessages(current, [wickedMessage, ashMessage]),
       );
       void queryClient.invalidateQueries({ queryKey: ["/api/state"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/diary"] });
     },
+    onError: (error, payload) => {
+      setHangoutActionError(error instanceof Error ? error.message : "Message could not be sent");
+      setMessage((current) => current || payload.content);
+    },
+  });
+
+  const hangoutStartMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/hangout/start");
+      return (await response.json()) as HangoutStatus;
+    },
+    onSuccess: () => {
+      setHangoutActionError("");
+      void queryClient.invalidateQueries({ queryKey: ["/api/hangout/status"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
+    },
+    onError: (error) => setHangoutActionError(error instanceof Error ? error.message : "Hangout could not start"),
+  });
+  const hangoutStopMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/hangout/stop");
+    },
+    onSuccess: () => {
+      setHangoutActionError("");
+      void queryClient.invalidateQueries({ queryKey: ["/api/hangout/status"] });
+    },
+    onError: (error) => setHangoutActionError(error instanceof Error ? error.message : "Hangout could not stop"),
+  });
+  const hangoutPairMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/hangout/companion/pair");
+      return (await response.json()) as { token: string };
+    },
+    onSuccess: ({ token }) => {
+      setHangoutPairingToken(token);
+      setHangoutActionError("");
+      void queryClient.invalidateQueries({ queryKey: ["/api/hangout/status"] });
+    },
+    onError: (error) => setHangoutActionError(error instanceof Error ? error.message : "Chat pairing failed"),
+  });
+  const hangoutRevokeMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/hangout/companion/revoke");
+    },
+    onSuccess: () => {
+      setHangoutPairingToken(null);
+      setHangoutActionError("");
+      void queryClient.invalidateQueries({ queryKey: ["/api/hangout/status"] });
+    },
+    onError: (error) => setHangoutActionError(error instanceof Error ? error.message : "Chat access could not be revoked"),
   });
 
   const settingsMutation = useMutation({
@@ -231,6 +298,11 @@ export default function ChatPage() {
   const handleSend = () => {
     const content = message.trim();
     if (!content && !pendingImage) return;
+    if (sendMutation.isPending) return;
+    if (hangout?.status === "active" && pendingImage) {
+      setHangoutActionError("During a hangout, send text only; the companion adds a fresh screenshot.");
+      return;
+    }
     sendMutation.mutate({
       content,
       imageDataUrl: pendingImage || undefined,
@@ -264,6 +336,8 @@ export default function ChatPage() {
 
   const status = state?.status?.toLowerCase() || "off";
   const killSwitchOn = state?.apiKillSwitch === 1;
+  const hangoutReady = !!state?.screenCaptureCompanionId && state?.screenCaptureEnabled === 1
+    && !!hangout?.companionPaired && !!hangout?.connected && !killSwitchOn;
 
   return (
     <div className="h-full flex flex-col bg-gradient-to-b from-black via-[#0d0a06] to-black">
@@ -392,6 +466,36 @@ export default function ChatPage() {
           </button>
         </div>
       </header>
+
+      <div className="px-4 py-2 border-b border-gold/15 bg-black/50 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-testid="panel-hangout">
+        <Monitor className="w-4 h-4 text-gold/70" />
+        <span className="text-white/75" data-testid="status-hangout">
+          Hangout: {hangout?.status === "active" ? "Active in Windows pop-out" : hangout?.status === "inviting" ? "Waiting for Ash's answer" : "Off"}
+          {hangout && !hangout.connected ? " · companion offline" : ""}
+        </span>
+        {hangout?.status === "idle" ? (
+          <button
+            onClick={() => hangoutStartMutation.mutate()}
+            disabled={!hangoutReady || hangoutStartMutation.isPending}
+            title={hangoutReady ? "Invite Ash to hang out with screenshots" : "Pair and connect the Windows companion, enable screenshots, and turn the bridge on"}
+            className="text-gold border border-gold/30 rounded-md px-2.5 py-1 hover:bg-gold/10 disabled:opacity-40"
+            data-testid="button-start-hangout"
+          >
+            {hangoutStartMutation.isPending ? "Inviting…" : "Start Hangout"}
+          </button>
+        ) : hangout && (
+          <button
+            onClick={() => hangoutStopMutation.mutate()}
+            disabled={hangoutStopMutation.isPending}
+            className="text-white/65 hover:text-red-300 underline underline-offset-2 disabled:opacity-40"
+            data-testid="button-stop-hangout"
+          >
+            Stop
+          </button>
+        )}
+        {hangout?.lastError && <span className="text-red-300" data-testid="status-hangout-error">{hangout.lastError}</span>}
+        {hangoutActionError && <span className="text-red-300" data-testid="status-hangout-action-error">{hangoutActionError}</span>}
+      </div>
 
       {/* My Status (Wicked) */}
       <div className="px-4 py-2 border-b border-white/10 bg-black/40 flex flex-wrap items-center gap-2" data-testid="panel-my-status">
@@ -931,6 +1035,57 @@ export default function ChatPage() {
                   <p>Companion: {state.screenCaptureCompanionId ? "paired" : "not paired"}{state.screenCaptureLastSeen ? ` • last seen ${new Date(state.screenCaptureLastSeen).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}</p>
                   {state.screenCaptureLastCaptureAt && <p>Last capture: {new Date(state.screenCaptureLastCaptureAt).toLocaleString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}</p>}
                   {state.screenCaptureLastError && <p className="text-red-300/70">{state.screenCaptureLastError}</p>}
+                </div>
+                <div className="border-t border-white/10 pt-3 mt-4 space-y-2">
+                  <p className="text-sm text-white/80">Hangout pop-out chat access</p>
+                  <p className="text-xs text-white/40">
+                    The Windows app needs a separate, chat-only token to display and send messages.
+                    Paste it into its Hangout chat token field. Screenshots still use the capture token and ON/OFF switch above.
+                  </p>
+                  <p className="text-xs text-white/55" data-testid="status-hangout-pairing">
+                    Chat: {hangout?.companionPaired ? hangout.connected ? "connected" : "paired, waiting for companion" : "not paired"}
+                  </p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => hangoutPairMutation.mutate()}
+                      disabled={!state.screenCaptureCompanionId || hangoutPairMutation.isPending}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-gold border border-gold/30 hover:bg-gold/10 disabled:opacity-40"
+                      data-testid="button-pair-hangout"
+                    >
+                      {hangoutPairMutation.isPending ? "Creating..." : hangout?.companionPaired ? "Replace chat token" : "Create chat token"}
+                    </button>
+                    {hangout?.companionPaired && (
+                      <button
+                        onClick={() => hangoutRevokeMutation.mutate()}
+                        disabled={hangoutRevokeMutation.isPending}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-red-400 border border-red-500/30 hover:bg-red-500/10 disabled:opacity-40"
+                        data-testid="button-revoke-hangout"
+                      >
+                        Revoke chat access
+                      </button>
+                    )}
+                  </div>
+                  {hangoutPairingToken && (
+                    <div className="rounded-lg bg-black/60 border border-gold/20 p-3">
+                      <p className="text-xs text-gold/80 mb-2">Shown once — copy to the Windows app:</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          readOnly
+                          value={hangoutPairingToken}
+                          className="min-w-0 flex-1 bg-black border border-white/15 rounded px-2 py-1.5 text-[11px] text-white/80 font-mono"
+                          data-testid="input-hangout-token"
+                        />
+                        <button
+                          onClick={() => void navigator.clipboard?.writeText(hangoutPairingToken)}
+                          className="p-2 rounded text-gold hover:bg-gold/10"
+                          title="Copy chat token"
+                          data-testid="button-copy-hangout-token"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

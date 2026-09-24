@@ -9,3 +9,4 @@
 - [Published Ash state](published-ash-state.md) — verify and repair live mutable settings through the authenticated production API; development database writes may not reach production.
 - [Discord continuity handoff](discord-continuity-handoff.md) — derive Discord continuity in an existing Stillwater call, but persist only server-built text from fixed allowlisted enums.
 - [Story workspace continuity](story-workspace-continuity.md) — Story is isolated from chat/Diary/Discord; interrupted streams stay resumable and cross-instance writing uses a renewable DB lease.
+- [API call observability](api-call-observability.md) — user requires actual calls and lifecycle logs for every new API-powered feature; accepted jobs alone are not evidence of provider execution.

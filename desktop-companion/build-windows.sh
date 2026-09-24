@@ -3,12 +3,21 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT="$SCRIPT_DIR/Stillwater.Companion.csproj"
-SOURCE="$SCRIPT_DIR/Program.cs"
 OUTPUT_DIR="$SCRIPT_DIR/release"
 OUTPUT="$OUTPUT_DIR/Stillwater.Companion.exe"
 
-if [ -f "$OUTPUT" ] && [ "$OUTPUT" -nt "$PROJECT" ] && [ "$OUTPUT" -nt "$SOURCE" ]; then
-  exit 0
+if [ -f "$OUTPUT" ] && [ "$OUTPUT" -nt "$PROJECT" ]; then
+  sources_current=true
+  for SOURCE in "$SCRIPT_DIR"/*.cs; do
+    [ -f "$SOURCE" ] || continue
+    if [ ! "$OUTPUT" -nt "$SOURCE" ]; then
+      sources_current=false
+      break
+    fi
+  done
+  if [ "$sources_current" = true ]; then
+    exit 0
+  fi
 fi
 
 rm -rf "$OUTPUT_DIR"

@@ -27,6 +27,9 @@ import {
   ashStoryRuns,
   ashStoryLease,
   ashStoryErrors,
+  ashHangoutSession,
+  ashHangoutScreenshots,
+  ashCaptureRequest,
   type AshStory,
   type AshStoryChapter,
   type AshStoryRun,
@@ -71,7 +74,7 @@ export interface IStorage {
   deleteDiaryEntry(id: number): Promise<void>;
   logActivity(kind: string, message: string): Promise<void>;
   stageScreenCapture(imageDataUrl: string): Promise<number>;
-  publishScreenCapture(activityId: number): Promise<void>;
+  publishCaptureRequest(requestId: string, activityId: number): Promise<boolean>;
   discardScreenCapture(activityId: number): Promise<void>;
   getActivity(limit?: number): Promise<ActivityFeedItem[]>;
   getActivityScreenshot(activityId: number): Promise<string | null>;
@@ -139,6 +142,254 @@ export interface IStorage {
 }
 
 export class DbStorage implements IStorage {
+  async reserveCaptureRequest(requestId: string, expiresAt: Date, sessionId = "", correlationId = ""): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-capture-rendezvous'))`);
+      await tx.insert(ashCaptureRequest).values({ id: ASH_ID }).onConflictDoNothing({ target: ashCaptureRequest.id });
+      const [current] = await tx.select().from(ashCaptureRequest).where(eq(ashCaptureRequest.id, ASH_ID)).limit(1);
+      if (current && current.expiresAt && current.expiresAt > new Date() && (current.status === "pending" || current.status === "complete")) return false;
+      await tx.update(ashCaptureRequest).set({
+        requestId, sessionId, correlationId, status: "pending", expiresAt, imageDataUrl: "", activityId: null, updatedAt: new Date(),
+      }).where(eq(ashCaptureRequest.id, ASH_ID));
+      return true;
+    });
+  }
+
+  async getCaptureRequest(): Promise<{ requestId: string; sessionId: string; correlationId: string; expiresAt: Date; status: string; imageDataUrl: string; activityId: number | null } | null> {
+    await db.insert(ashCaptureRequest).values({ id: ASH_ID }).onConflictDoNothing({ target: ashCaptureRequest.id });
+    const [row] = await db.select().from(ashCaptureRequest).where(eq(ashCaptureRequest.id, ASH_ID)).limit(1);
+    return row?.requestId ? {
+      requestId: row.requestId, sessionId: row.sessionId, correlationId: row.correlationId,
+      expiresAt: row.expiresAt ?? new Date(0), status: row.status, imageDataUrl: row.imageDataUrl, activityId: row.activityId,
+    } : null;
+  }
+
+  async completeCaptureRequest(requestId: string, imageDataUrl: string, activityId: number): Promise<boolean> {
+    const rows = await db.update(ashCaptureRequest).set({ status: "complete", imageDataUrl, activityId, updatedAt: new Date() })
+      .where(and(eq(ashCaptureRequest.id, ASH_ID), eq(ashCaptureRequest.requestId, requestId), eq(ashCaptureRequest.status, "pending"), gt(ashCaptureRequest.expiresAt, new Date())))
+      .returning({ id: ashCaptureRequest.id });
+    return rows.length > 0;
+  }
+
+  async consumeCaptureRequest(requestId: string): Promise<boolean> {
+    const rows = await db.update(ashCaptureRequest).set({ status: "idle", requestId: "", expiresAt: null, imageDataUrl: "", activityId: null, updatedAt: new Date() })
+      .where(and(eq(ashCaptureRequest.id, ASH_ID), eq(ashCaptureRequest.requestId, requestId), eq(ashCaptureRequest.status, "complete")))
+      .returning({ id: ashCaptureRequest.id });
+    return rows.length > 0;
+  }
+
+  async cancelCaptureRequest(requestId?: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM ash_capture_request WHERE id = 'ash' FOR UPDATE`);
+      const [current] = await tx.select().from(ashCaptureRequest)
+        .where(eq(ashCaptureRequest.id, ASH_ID)).limit(1);
+      if (!current || (requestId && current.requestId !== requestId) ||
+          (current.status !== "pending" && current.status !== "complete")) return;
+      const activityId = current.status === "complete" ? current.activityId : null;
+      const rows = await tx.update(ashCaptureRequest).set({
+        status: "cancelled", requestId: "", expiresAt: null, imageDataUrl: "", activityId: null, updatedAt: new Date(),
+      }).where(and(
+        eq(ashCaptureRequest.id, ASH_ID),
+        eq(ashCaptureRequest.requestId, current.requestId),
+        eq(ashCaptureRequest.status, current.status),
+      )).returning({ id: ashCaptureRequest.id });
+      if (rows.length && activityId != null) {
+        await tx.delete(ashActivity).where(eq(ashActivity.id, activityId));
+      }
+    });
+  }
+
+  async getHangoutSession(): Promise<typeof ashHangoutSession.$inferSelect> {
+    await db.insert(ashHangoutSession).values({ id: ASH_ID }).onConflictDoNothing({ target: ashHangoutSession.id });
+    const [row] = await db.select().from(ashHangoutSession).where(eq(ashHangoutSession.id, ASH_ID)).limit(1);
+    return row!;
+  }
+
+  async beginHangoutSession(sessionId: string, companionFreshAfter?: Date): Promise<typeof ashHangoutSession.$inferSelect | null> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-hangout'))`);
+      await tx.insert(ashHangoutSession).values({ id: ASH_ID }).onConflictDoNothing({ target: ashHangoutSession.id });
+      const [current] = await tx.select().from(ashHangoutSession).where(eq(ashHangoutSession.id, ASH_ID)).limit(1);
+      if (!current || current.status !== "idle" || !current.companionTokenHash) return null;
+      if (companionFreshAfter && (!current.companionLastSeen || current.companionLastSeen < companionFreshAfter)) return null;
+      const [next] = await tx.update(ashHangoutSession).set({
+        sessionId, status: "inviting", generation: current.generation + 1, lastError: "",
+        lastActivityAt: new Date(), lastIdleCheckinAt: null, leaseToken: "", leaseExpiresAt: null, updatedAt: new Date(),
+      }).where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.generation, current.generation))).returning();
+      return next ?? null;
+    });
+  }
+
+  async setHangoutStatus(sessionId: string, generation: number, status: "idle" | "inviting" | "active", error = ""): Promise<boolean> {
+    const rows = await db.update(ashHangoutSession).set({
+      status, lastError: error, ...(status === "idle" ? { generation: sql`${ashHangoutSession.generation} + 1`, leaseToken: "", leaseExpiresAt: null } : {}),
+      updatedAt: new Date(),
+    }).where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, generation))).returning({ id: ashHangoutSession.id });
+    return rows.length > 0;
+  }
+
+  async setHangoutPairing(tokenHash: string): Promise<void> {
+    await db.insert(ashHangoutSession).values({ id: ASH_ID }).onConflictDoNothing({ target: ashHangoutSession.id });
+    await db.update(ashHangoutSession).set({
+      companionTokenHash: tokenHash, companionLastSeen: null,
+      status: "idle", sessionId: "", lastError: "", generation: sql`${ashHangoutSession.generation} + 1`,
+      lastActivityAt: null, lastIdleCheckinAt: null, lastCaptureAt: null, leaseToken: "", leaseExpiresAt: null, updatedAt: new Date(),
+    }).where(eq(ashHangoutSession.id, ASH_ID));
+  }
+
+  async heartbeatHangout(tokenHash: string): Promise<boolean> {
+    const rows = await db.update(ashHangoutSession).set({ companionLastSeen: new Date(), updatedAt: new Date() })
+      .where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.companionTokenHash, tokenHash))).returning({ id: ashHangoutSession.id });
+    return rows.length > 0;
+  }
+
+  async acquireHangoutLease(sessionId: string, idleCutoff?: Date): Promise<{ token: string; generation: number; status: string } | null> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-hangout'))`);
+      const now = new Date();
+      const [row] = await tx.select().from(ashHangoutSession).where(eq(ashHangoutSession.id, ASH_ID)).limit(1);
+      if (!row || row.sessionId !== sessionId || row.status === "idle" || (row.leaseExpiresAt && row.leaseExpiresAt > now)) return null;
+      if (idleCutoff && (
+        !row.lastActivityAt || row.lastActivityAt > idleCutoff ||
+        (row.lastIdleCheckinAt && row.lastIdleCheckinAt > idleCutoff)
+      )) return null;
+      const token = randomUUID();
+      const [updated] = await tx.update(ashHangoutSession).set({
+        leaseToken: token, leaseExpiresAt: new Date(Date.now() + 15 * 60_000),
+        ...(idleCutoff ? { lastIdleCheckinAt: now } : {}), updatedAt: now,
+      }).where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, row.generation))).returning();
+      return updated ? { token, generation: updated.generation, status: updated.status } : null;
+    });
+  }
+
+  async fenceHangout(sessionId: string, generation: number, leaseToken: string): Promise<boolean> {
+    const [session] = await db.select().from(ashHangoutSession)
+      .where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, generation), eq(ashHangoutSession.leaseToken, leaseToken), gt(ashHangoutSession.leaseExpiresAt, new Date())))
+      .limit(1);
+    if (!session || session.status === "idle") return false;
+    const state = await this.getState();
+    return state.apiKillSwitch !== 1 && state.screenCaptureEnabled === 1 && !!state.screenCaptureTokenHash;
+  }
+
+  async touchHangoutActivity(sessionId: string, generation: number, captureAt?: Date): Promise<boolean> {
+    const rows = await db.update(ashHangoutSession).set({
+      lastActivityAt: new Date(), lastError: "", ...(captureAt ? { lastCaptureAt: captureAt } : {}), updatedAt: new Date(),
+    }).where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, generation), ne(ashHangoutSession.status, "idle"))).returning({ id: ashHangoutSession.id });
+    return rows.length > 0;
+  }
+
+  async failHangout(sessionId: string, generation: number, message: string): Promise<void> {
+    await db.update(ashHangoutSession).set({ lastError: message.slice(0, 500), updatedAt: new Date() })
+      .where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, generation)));
+  }
+
+  async createFencedHangoutMessage(
+    sessionId: string, generation: number, leaseToken: string, role: "wicked" | "ash", content: string,
+  ): Promise<AshMessage> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM ash_hangout_session WHERE id = 'ash' FOR UPDATE`);
+      const now = new Date();
+      const [session] = await tx.select().from(ashHangoutSession).where(and(
+        eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId),
+        eq(ashHangoutSession.generation, generation), eq(ashHangoutSession.leaseToken, leaseToken),
+        gt(ashHangoutSession.leaseExpiresAt, now), ne(ashHangoutSession.status, "idle"),
+      )).limit(1);
+      if (!session) throw new Error("Hangout was invalidated before message persistence");
+      const [message] = await tx.insert(ashMessages).values({
+        role, content, imageUrl: "", source: "private_message",
+      }).returning();
+      return message!;
+    });
+  }
+
+  async createFencedHangoutReply(
+    sessionId: string, generation: number, leaseToken: string, activityId: number, correlationId: string, content: string,
+  ): Promise<{ message: AshMessage; companionTokenHash: string }> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM ash_hangout_session WHERE id = 'ash' FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM ash_state WHERE id = 'ash' FOR UPDATE`);
+      const now = new Date();
+      const [session] = await tx.select().from(ashHangoutSession).where(and(
+        eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId),
+        eq(ashHangoutSession.generation, generation), eq(ashHangoutSession.leaseToken, leaseToken),
+        gt(ashHangoutSession.leaseExpiresAt, now), ne(ashHangoutSession.status, "idle"),
+      )).limit(1);
+      const [state] = await tx.select().from(ashState).where(eq(ashState.id, ASH_ID)).limit(1);
+      if (!session || !state || state.apiKillSwitch === 1 || state.screenCaptureEnabled !== 1 || !state.screenCaptureTokenHash) {
+        throw new Error("Hangout was invalidated before screenshot persistence");
+      }
+      const [message] = await tx.insert(ashMessages).values({
+        role: "ash", content, imageUrl: "", source: "private_message",
+      }).returning();
+      await tx.insert(ashHangoutScreenshots).values({
+        activityId, messageId: message!.id, sessionId, companionTokenHash: session.companionTokenHash, correlationId,
+      });
+      return { message: message!, companionTokenHash: session.companionTokenHash };
+    });
+  }
+
+  async releaseHangoutLease(token: string, generation: number): Promise<void> {
+    await db.update(ashHangoutSession).set({ leaseToken: "", leaseExpiresAt: null, updatedAt: new Date() })
+      .where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.leaseToken, token), eq(ashHangoutSession.generation, generation)));
+  }
+
+  async invalidateUndeliveredHangoutScreenshots(): Promise<void> {
+    await db.update(ashHangoutScreenshots).set({ invalidated: 1 })
+      .where(and(eq(ashHangoutScreenshots.invalidated, 0), isNull(ashHangoutScreenshots.deliveredAt)));
+  }
+
+  async getHangoutScreenshot(activityId: number, companionTokenHash: string): Promise<{ imageDataUrl: string; sessionId: string; correlationId: string } | null> {
+    return db.transaction(async (tx) => {
+      const [mapping] = await tx.select().from(ashHangoutScreenshots)
+        .where(and(
+          eq(ashHangoutScreenshots.activityId, activityId),
+          eq(ashHangoutScreenshots.companionTokenHash, companionTokenHash),
+          eq(ashHangoutScreenshots.invalidated, 0),
+        )).for("update").limit(1);
+      if (!mapping) return null;
+      if (!mapping.deliveredAt) {
+        await tx.update(ashHangoutScreenshots).set({ deliveredAt: new Date() })
+          .where(and(eq(ashHangoutScreenshots.activityId, activityId), isNull(ashHangoutScreenshots.deliveredAt)));
+      }
+      const [row] = await tx.select({ image: ashActivityScreenshots.imageDataUrl })
+        .from(ashActivityScreenshots).innerJoin(ashHangoutScreenshots, eq(ashActivityScreenshots.activityId, ashHangoutScreenshots.activityId))
+        .where(and(
+          eq(ashHangoutScreenshots.activityId, activityId),
+          eq(ashHangoutScreenshots.companionTokenHash, companionTokenHash),
+          eq(ashHangoutScreenshots.invalidated, 0),
+          eq(ashActivityScreenshots.ready, 1),
+        )).limit(1);
+      return row ? { imageDataUrl: row.image, sessionId: mapping.sessionId, correlationId: mapping.correlationId } : null;
+    });
+  }
+
+  async getHangoutScreenshotActivityForMessage(messageId: number, sessionId: string): Promise<number | null> {
+    const [row] = await db.select({ activityId: ashHangoutScreenshots.activityId })
+      .from(ashHangoutScreenshots)
+      .where(and(
+        eq(ashHangoutScreenshots.messageId, messageId), eq(ashHangoutScreenshots.sessionId, sessionId),
+        eq(ashHangoutScreenshots.invalidated, 0),
+      ))
+      .limit(1);
+    return row?.activityId ?? null;
+  }
+
+  async getHangoutMessages(afterId = 0, companionTokenHash = ""): Promise<Array<{ id: number; role: string; content: string; createdAt: Date; screenshotActivityId: number | null }>> {
+    const rows = await db.select({
+      id: ashMessages.id, role: ashMessages.role, content: ashMessages.content,
+      createdAt: ashMessages.createdAt, screenshotActivityId: ashHangoutScreenshots.activityId,
+    }).from(ashMessages)
+      .leftJoin(ashHangoutScreenshots, and(
+        eq(ashMessages.id, ashHangoutScreenshots.messageId),
+        eq(ashHangoutScreenshots.companionTokenHash, companionTokenHash),
+        eq(ashHangoutScreenshots.invalidated, 0),
+      ))
+      .where(and(eq(ashMessages.source, "private_message"), gt(ashMessages.id, afterId)))
+      .orderBy(asc(ashMessages.id)).limit(500);
+    return rows;
+  }
+
+
   async getStory(): Promise<{ story: AshStory; chapters: AshStoryChapter[]; run: AshStoryRun | null }> {
     let [story] = await db.select().from(ashStory).where(eq(ashStory.id, ASH_ID)).limit(1);
     if (!story) {
@@ -610,11 +861,22 @@ export class DbStorage implements IStorage {
     });
   }
 
-  async publishScreenCapture(activityId: number): Promise<void> {
-    await db
-      .update(ashActivityScreenshots)
-      .set({ ready: 1 })
-      .where(eq(ashActivityScreenshots.activityId, activityId));
+  async publishCaptureRequest(requestId: string, activityId: number): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM ash_capture_request WHERE id = 'ash' FOR UPDATE`);
+      const [request] = await tx.select().from(ashCaptureRequest)
+        .where(and(
+          eq(ashCaptureRequest.id, ASH_ID),
+          eq(ashCaptureRequest.requestId, requestId),
+          eq(ashCaptureRequest.status, "complete"),
+          eq(ashCaptureRequest.activityId, activityId),
+        )).limit(1);
+      if (!request) return false;
+      const rows = await tx.update(ashActivityScreenshots).set({ ready: 1 })
+        .where(eq(ashActivityScreenshots.activityId, activityId))
+        .returning({ activityId: ashActivityScreenshots.activityId });
+      return rows.length > 0;
+    });
   }
 
   async discardScreenCapture(activityId: number): Promise<void> {

@@ -162,13 +162,18 @@ export async function acceptCapture(
     screenCaptureLastError: "",
     screenCaptureLastSeen: new Date(),
   });
-  const screenshotActivityId = await storage.stageScreenCapture(validated);
-  if (!(await storage.completeCaptureRequest(requestId, validated, screenshotActivityId))) {
-    await storage.discardScreenCapture(screenshotActivityId);
+  const screenshotActivityId = await storage.stageScreenCapture(requestId, validated);
+  if (!screenshotActivityId) {
     return { accepted: false, error: "Capture request was invalidated before delivery", ...operation };
   }
-  if (!(await storage.publishCaptureRequest(requestId, screenshotActivityId))) {
-    return { accepted: false, error: "Capture request was invalidated before delivery", ...operation };
+  try {
+    if (!(await storage.publishCaptureRequest(requestId, screenshotActivityId))) {
+      await storage.cancelCaptureRequest(requestId);
+      return { accepted: false, error: "Capture request was invalidated before delivery", ...operation };
+    }
+  } catch (error) {
+    await storage.cancelCaptureRequest(requestId);
+    throw error;
   }
   return { accepted: true, ...operation };
 }
@@ -188,7 +193,7 @@ export async function waitForFreshScreenCapture(metadata: { sessionId?: string; 
   while (Date.now() < expiresAt && requestedAtEpoch === captureEpoch) {
     const pending = await storage.getCaptureRequest();
     if (!pending || pending.requestId !== id || pending.status === "cancelled") return null;
-    if (pending.status === "complete" && pending.activityId && pending.imageDataUrl) {
+    if (pending.status === "ready" && pending.activityId && pending.imageDataUrl) {
       const capture = { imageDataUrl: pending.imageDataUrl, activityId: pending.activityId, epoch: requestedAtEpoch };
       if (requestedAtEpoch !== captureEpoch) return null;
       if (!(await storage.consumeCaptureRequest(id))) return null;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import test from "node:test";
 import express from "express";
@@ -201,6 +202,22 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
         assert.ok(ids.has(companionMessage.ashMessage.id));
         assert.ok(synced.messages.find((message) => message.id === webMessage.ashMessage.id)?.screenshotActivityId);
         assert.ok(synced.messages.find((message) => message.id === companionMessage.ashMessage.id)?.screenshotActivityId);
+        const firstActivityId = synced.messages.find((message) => message.id === webMessage.ashMessage.id)?.screenshotActivityId;
+        assert.ok(firstActivityId);
+        const screenshotUrl = (id: number) => `${api.base}/hangout/companion/screenshot/${id}`;
+        const headers = { authorization: `Bearer ${pairing.hangoutToken}` };
+        assert.equal((await fetch(screenshotUrl(firstActivityId), { headers })).status, 200);
+        await stopHangout();
+        assert.equal(
+          (await fetch(screenshotUrl(companionMessage.ashMessage.screenshotActivityId), { headers })).status,
+          404,
+          "Stop must prevent the first delivery of a previously saved screenshot",
+        );
+        assert.equal(
+          (await fetch(screenshotUrl(firstActivityId), { headers })).status,
+          200,
+          "Stop should not erase an image already delivered to the pop-out",
+        );
       } finally {
         await api.close();
         await stopHangout();
@@ -258,6 +275,64 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
         if (scenario.name === "revoke") {
           assert.equal(await authorizeHangoutCompanion(pairing.hangoutToken), false, "revoked bearer must no longer authorize");
         }
+      }
+    });
+
+    await t.test("a stale Stop cannot cancel a newer session's capture or screenshot", async () => {
+      await prepareActiveSession();
+      const oldSession = await storage.getHangoutSession();
+      await stopHangout();
+      const pairing = await prepareActiveSession();
+      installNoProvider('{"decision":"approve","reply":"Unused."}', "New session remains active.");
+      const pendingSend = sendHangoutMessage("new session race marker");
+      const pendingCapture = await waitForPendingCapture(pairing.screenToken);
+      assert.equal(
+        await storage.stopHangoutSession(oldSession.sessionId, oldSession.generation),
+        false,
+        "a stale Stop must not mutate the new session",
+      );
+      assert.equal((await storage.getCaptureRequest())?.requestId, pendingCapture.requestId);
+      await fulfillNextCapture(pairing.screenToken);
+      const response = await pendingSend;
+      assert.equal((await storage.getHangoutSession()).status, "active");
+      const screenshot = await storage.getHangoutScreenshot(
+        response.screenshotActivityId,
+        createHash("sha256").update(pairing.hangoutToken).digest("hex"),
+      );
+      assert.equal(screenshot?.imageDataUrl, ONE_PIXEL_PNG);
+      await stopHangout();
+    });
+
+    await t.test("a revoked token cannot finish a screenshot fetch authorized earlier", async () => {
+      const pairing = await prepareActiveSession();
+      installNoProvider('{"decision":"approve","reply":"Unused."}', "Reply before revocation.");
+      const send = sendHangoutMessage("revocation race marker");
+      await fulfillNextCapture(pairing.screenToken);
+      const reply = await send;
+      const api = await startRouterServer();
+      const screenshotUrl = `${api.base}/hangout/companion/screenshot/${reply.screenshotActivityId}`;
+      const headers = { authorization: `Bearer ${pairing.hangoutToken}` };
+      const originalFetch = storage.getHangoutScreenshot.bind(storage);
+      let entered!: () => void;
+      let release!: () => void;
+      const enteredFetch = new Promise<void>((resolve) => { entered = resolve; });
+      const blockedFetch = new Promise<void>((resolve) => { release = resolve; });
+      try {
+        assert.equal((await fetch(screenshotUrl, { headers })).status, 200);
+        (storage as any).getHangoutScreenshot = async (activityId: number, tokenHash: string) => {
+          entered();
+          await blockedFetch;
+          return originalFetch(activityId, tokenHash);
+        };
+        const staleFetch = fetch(screenshotUrl, { headers });
+        await enteredFetch;
+        await revokeHangoutCompanion();
+        release();
+        assert.equal((await staleFetch).status, 404, "the DB read must recheck revocation after route authorization");
+      } finally {
+        (storage as any).getHangoutScreenshot = originalFetch;
+        release?.();
+        await api.close();
       }
     });
 

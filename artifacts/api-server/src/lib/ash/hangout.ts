@@ -139,9 +139,7 @@ export async function revokeHangoutCompanion(): Promise<void> {
 
 export async function stopHangout(): Promise<void> {
   const current = await storage.getHangoutSession();
-  if (current.sessionId) await storage.setHangoutStatus(current.sessionId, current.generation, "idle");
-  else await storage.setHangoutStatus("", current.generation, "idle");
-  await cancelPendingScreenCapture();
+  if (current.sessionId) await storage.stopHangoutSession(current.sessionId, current.generation);
 }
 
 export async function startHangout(): Promise<{ status: string; sessionId: string; lastError: string }> {
@@ -258,6 +256,9 @@ export function startHangoutIdleScheduler(): void {
   if (idleScheduler) return;
   const tick = async () => {
     try {
+      // Also clean up completed-but-unconsumed captures when a process dies
+      // between staging and publication and no companion is currently polling.
+      await storage.getCaptureRequest();
       await maybeIdleCheckin(await storage.getHangoutSession());
     } catch {
       // Status remains visible through the session error field when an

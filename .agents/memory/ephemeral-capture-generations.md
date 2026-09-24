@@ -30,3 +30,20 @@ Cancellation must await the database operation and atomically delete any image
 that has completed but was not yet consumed; otherwise a late upload can remain
 stored after OFF or Stop even if its local waiter rejects it. Preserve historical
 images only after consumption. Serve them through the authenticated activity endpoint.
+
+For session-specific Stop, check the session generation and invalidate only that
+session's undelivered mappings and capture in one transaction. Never use an
+unscoped global capture cancellation after reading a Hangout session: another
+instance may already have started a new one. Associate staged image bytes with
+their capture request atomically, make the waiter observe only published images,
+and sweep expired unconsumed captures even when the companion is not polling.
+Recheck the companion token inside the locked screenshot read, not only at the
+HTTP boundary.
+
+**Why:** Independent API instances can reorder Stop, re-pairing, image upload,
+publication, and screenshot fetch; a route-level bearer check or local epoch
+does not protect the final database read.
+
+**How to apply:** Treat Stop and credential revocation as transactional fences.
+Test both orders of publish/consume, a stale Stop against a new session, and a
+fetch authorized before token revocation.

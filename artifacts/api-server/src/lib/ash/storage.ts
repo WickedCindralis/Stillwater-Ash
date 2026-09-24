@@ -73,7 +73,7 @@ export interface IStorage {
   recordChronicleError(chronicleId: string, error: string): Promise<void>;
   deleteDiaryEntry(id: number): Promise<void>;
   logActivity(kind: string, message: string): Promise<void>;
-  stageScreenCapture(imageDataUrl: string): Promise<number>;
+  stageScreenCapture(requestId: string, imageDataUrl: string): Promise<number | null>;
   publishCaptureRequest(requestId: string, activityId: number): Promise<boolean>;
   discardScreenCapture(activityId: number): Promise<void>;
   getActivity(limit?: number): Promise<ActivityFeedItem[]>;
@@ -146,8 +146,13 @@ export class DbStorage implements IStorage {
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-capture-rendezvous'))`);
       await tx.insert(ashCaptureRequest).values({ id: ASH_ID }).onConflictDoNothing({ target: ashCaptureRequest.id });
-      const [current] = await tx.select().from(ashCaptureRequest).where(eq(ashCaptureRequest.id, ASH_ID)).limit(1);
-      if (current && current.expiresAt && current.expiresAt > new Date() && (current.status === "pending" || current.status === "complete")) return false;
+      const [current] = await tx.select().from(ashCaptureRequest).where(eq(ashCaptureRequest.id, ASH_ID)).for("update").limit(1);
+      if (current && current.expiresAt && current.expiresAt > new Date() && ["pending", "complete", "ready"].includes(current.status)) return false;
+      // A crashed waiter may leave an expired image unconsumed. Never replace
+      // its request identity without deleting the staged screenshot first.
+      if (current?.activityId && ["pending", "complete", "ready"].includes(current.status)) {
+        await tx.delete(ashActivity).where(eq(ashActivity.id, current.activityId));
+      }
       await tx.update(ashCaptureRequest).set({
         requestId, sessionId, correlationId, status: "pending", expiresAt, imageDataUrl: "", activityId: null, updatedAt: new Date(),
       }).where(eq(ashCaptureRequest.id, ASH_ID));
@@ -158,22 +163,19 @@ export class DbStorage implements IStorage {
   async getCaptureRequest(): Promise<{ requestId: string; sessionId: string; correlationId: string; expiresAt: Date; status: string; imageDataUrl: string; activityId: number | null } | null> {
     await db.insert(ashCaptureRequest).values({ id: ASH_ID }).onConflictDoNothing({ target: ashCaptureRequest.id });
     const [row] = await db.select().from(ashCaptureRequest).where(eq(ashCaptureRequest.id, ASH_ID)).limit(1);
+    if (row?.expiresAt && row.expiresAt <= new Date() && ["pending", "complete", "ready"].includes(row.status)) {
+      await this.cancelCaptureRequest(row.requestId);
+      return null;
+    }
     return row?.requestId ? {
       requestId: row.requestId, sessionId: row.sessionId, correlationId: row.correlationId,
       expiresAt: row.expiresAt ?? new Date(0), status: row.status, imageDataUrl: row.imageDataUrl, activityId: row.activityId,
     } : null;
   }
 
-  async completeCaptureRequest(requestId: string, imageDataUrl: string, activityId: number): Promise<boolean> {
-    const rows = await db.update(ashCaptureRequest).set({ status: "complete", imageDataUrl, activityId, updatedAt: new Date() })
-      .where(and(eq(ashCaptureRequest.id, ASH_ID), eq(ashCaptureRequest.requestId, requestId), eq(ashCaptureRequest.status, "pending"), gt(ashCaptureRequest.expiresAt, new Date())))
-      .returning({ id: ashCaptureRequest.id });
-    return rows.length > 0;
-  }
-
   async consumeCaptureRequest(requestId: string): Promise<boolean> {
     const rows = await db.update(ashCaptureRequest).set({ status: "idle", requestId: "", expiresAt: null, imageDataUrl: "", activityId: null, updatedAt: new Date() })
-      .where(and(eq(ashCaptureRequest.id, ASH_ID), eq(ashCaptureRequest.requestId, requestId), eq(ashCaptureRequest.status, "complete")))
+      .where(and(eq(ashCaptureRequest.id, ASH_ID), eq(ashCaptureRequest.requestId, requestId), eq(ashCaptureRequest.status, "ready")))
       .returning({ id: ashCaptureRequest.id });
     return rows.length > 0;
   }
@@ -184,8 +186,8 @@ export class DbStorage implements IStorage {
       const [current] = await tx.select().from(ashCaptureRequest)
         .where(eq(ashCaptureRequest.id, ASH_ID)).limit(1);
       if (!current || (requestId && current.requestId !== requestId) ||
-          (current.status !== "pending" && current.status !== "complete")) return;
-      const activityId = current.status === "complete" ? current.activityId : null;
+          !["pending", "complete", "ready"].includes(current.status)) return;
+      const activityId = current.activityId;
       const rows = await tx.update(ashCaptureRequest).set({
         status: "cancelled", requestId: "", expiresAt: null, imageDataUrl: "", activityId: null, updatedAt: new Date(),
       }).where(and(
@@ -226,6 +228,33 @@ export class DbStorage implements IStorage {
       updatedAt: new Date(),
     }).where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, generation))).returning({ id: ashHangoutSession.id });
     return rows.length > 0;
+  }
+
+  async stopHangoutSession(sessionId: string, generation: number): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(ashHangoutSession)
+        .where(eq(ashHangoutSession.id, ASH_ID)).for("update").limit(1);
+      if (!current || current.sessionId !== sessionId || current.generation !== generation || current.status === "idle") return false;
+      await tx.update(ashHangoutSession).set({
+        status: "idle", lastError: "", generation: generation + 1,
+        leaseToken: "", leaseExpiresAt: null, updatedAt: new Date(),
+      }).where(eq(ashHangoutSession.id, ASH_ID));
+      await tx.update(ashHangoutScreenshots).set({ invalidated: 1 })
+        .where(and(
+          eq(ashHangoutScreenshots.sessionId, sessionId),
+          eq(ashHangoutScreenshots.invalidated, 0),
+          isNull(ashHangoutScreenshots.deliveredAt),
+        ));
+      const [capture] = await tx.select().from(ashCaptureRequest)
+        .where(eq(ashCaptureRequest.id, ASH_ID)).for("update").limit(1);
+      if (capture?.sessionId === sessionId && ["pending", "complete", "ready"].includes(capture.status)) {
+        await tx.update(ashCaptureRequest).set({
+          status: "cancelled", requestId: "", expiresAt: null, imageDataUrl: "", activityId: null, updatedAt: new Date(),
+        }).where(eq(ashCaptureRequest.id, ASH_ID));
+        if (capture.activityId) await tx.delete(ashActivity).where(eq(ashActivity.id, capture.activityId));
+      }
+      return true;
+    });
   }
 
   async setHangoutPairing(tokenHash: string): Promise<void> {
@@ -340,6 +369,12 @@ export class DbStorage implements IStorage {
 
   async getHangoutScreenshot(activityId: number, companionTokenHash: string): Promise<{ imageDataUrl: string; sessionId: string; correlationId: string } | null> {
     return db.transaction(async (tx) => {
+      // Serialize first delivery against Stop's session-status update.
+      await tx.execute(sql`SELECT id FROM ash_hangout_session WHERE id = 'ash' FOR UPDATE`);
+      const [session] = await tx.select().from(ashHangoutSession).where(eq(ashHangoutSession.id, ASH_ID)).limit(1);
+      // The route's earlier bearer check can race a re-pair or revoke on
+      // another instance. Check the current credential under this same lock.
+      if (!session?.companionTokenHash || session.companionTokenHash !== companionTokenHash) return null;
       const [mapping] = await tx.select().from(ashHangoutScreenshots)
         .where(and(
           eq(ashHangoutScreenshots.activityId, activityId),
@@ -347,6 +382,7 @@ export class DbStorage implements IStorage {
           eq(ashHangoutScreenshots.invalidated, 0),
         )).for("update").limit(1);
       if (!mapping) return null;
+      if (!mapping.deliveredAt && (session?.status !== "active" || session.sessionId !== mapping.sessionId)) return null;
       if (!mapping.deliveredAt) {
         await tx.update(ashHangoutScreenshots).set({ deliveredAt: new Date() })
           .where(and(eq(ashHangoutScreenshots.activityId, activityId), isNull(ashHangoutScreenshots.deliveredAt)));
@@ -847,8 +883,12 @@ export class DbStorage implements IStorage {
     await db.insert(ashActivity).values({ kind, message });
   }
 
-  async stageScreenCapture(imageDataUrl: string): Promise<number> {
+  async stageScreenCapture(requestId: string, imageDataUrl: string): Promise<number | null> {
     return db.transaction(async (tx) => {
+      const [request] = await tx.select().from(ashCaptureRequest)
+        .where(eq(ashCaptureRequest.id, ASH_ID)).for("update").limit(1);
+      if (!request || request.requestId !== requestId || request.status !== "pending" ||
+          !request.expiresAt || request.expiresAt <= new Date()) return null;
       const [activity] = await tx
         .insert(ashActivity)
         .values({ kind: "screen_capture", message: "Screenshot taken" })
@@ -857,6 +897,9 @@ export class DbStorage implements IStorage {
         activityId: activity!.id,
         imageDataUrl,
       });
+      await tx.update(ashCaptureRequest).set({
+        status: "complete", activityId: activity!.id, imageDataUrl, updatedAt: new Date(),
+      }).where(eq(ashCaptureRequest.id, ASH_ID));
       return activity!.id;
     });
   }
@@ -875,7 +918,10 @@ export class DbStorage implements IStorage {
       const rows = await tx.update(ashActivityScreenshots).set({ ready: 1 })
         .where(eq(ashActivityScreenshots.activityId, activityId))
         .returning({ activityId: ashActivityScreenshots.activityId });
-      return rows.length > 0;
+      if (!rows.length) return false;
+      await tx.update(ashCaptureRequest).set({ status: "ready", updatedAt: new Date() })
+        .where(and(eq(ashCaptureRequest.id, ASH_ID), eq(ashCaptureRequest.requestId, requestId), eq(ashCaptureRequest.status, "complete")));
+      return true;
     });
   }
 

@@ -651,14 +651,17 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
   }
 
   private async buildDiscordPacketOptions(guildId: string): Promise<DiscordPacketOptions> {
-    const [wickedMessages, ownerDmHistory] = await Promise.all([
-      storage.getRecentDiscordOwnerCalls(guildId, DISCORD_WICKED_WINDOW),
+    const ownerUserId = process.env["DISCORD_OWNER_USER_ID"]?.trim() ?? "";
+    const [wickedMessages, stillwaterHistory, ownerDmHistory] = await Promise.all([
+      storage.getRecentDiscordOwnerComments(guildId, DISCORD_WICKED_WINDOW, ownerUserId),
+      storage.getRecentStillwaterHistory(DISCORD_WICKED_WINDOW),
       guildId === DISCORD_OWNER_DM_GUILD_ID
         ? storage.getRecentOwnerDiscordHistory(DISCORD_WICKED_WINDOW)
         : Promise.resolve([]),
     ]);
     return {
       wickedMessages,
+      stillwaterHistory,
       ownerDmHistory,
     };
   }
@@ -1064,8 +1067,18 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
     let rawReply = "";
     try {
       const packetOptions = await this.buildDiscordPacketOptions(message.guildId);
+      const playerContext = message.guildId === DISCORD_OWNER_DM_GUILD_ID
+        ? await storage.getRecentDiscordPlayerComments(
+          DISCORD_COMMENT_HISTORY_LIMIT,
+          process.env["DISCORD_OWNER_USER_ID"]?.trim() ?? "",
+        )
+        : await storage.getRecentDiscordContext(
+          message.guildId,
+          DISCORD_COMMENT_HISTORY_LIMIT,
+          process.env["DISCORD_OWNER_USER_ID"]?.trim(),
+        );
       rawReply = await this.callOpenAI(
-        buildDiscordPacketText([message], [], true, packetOptions),
+        buildDiscordPacketText([message], playerContext, true, packetOptions),
         "discord_owner",
       );
       if (!rawReply) {
@@ -1348,7 +1361,9 @@ GROUND RULES:
       try {
         await processDiscordBatchOnce<AshDiscordMessage>({
           claim: (limit) => storage.claimDiscordMentions(limit),
-          getContext: (guildId, limit) => storage.getRecentDiscordContext(guildId, limit),
+          getContext: (guildId, limit) => storage.getRecentDiscordContext(
+            guildId, limit, process.env["DISCORD_OWNER_USER_ID"]?.trim(),
+          ),
           getPacketOptions: (guildId) => this.buildDiscordPacketOptions(guildId),
           callModel: (prompt) => this.callOpenAI(prompt, "discord_batch"),
           deliver: (reply, messages, leaseId) =>

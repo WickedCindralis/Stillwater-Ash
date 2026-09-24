@@ -66,6 +66,7 @@ export interface IStorage {
   clearWickedPhotos(): Promise<number>;
   createMessage(msg: InsertMessage): Promise<AshMessage>;
   getRecentHistory(limit: number): Promise<AshMessage[]>;
+  getRecentStillwaterHistory(perRole: number): Promise<AshMessage[]>;
   getRecentOwnerDiscordHistory(perRole: number): Promise<AshMessage[]>;
   getDiaryEntries(): Promise<AshDiaryEntry[]>;
   createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry>;
@@ -116,9 +117,10 @@ export interface IStorage {
   completeDiscordDelivery(id: number, leaseId: string, replyDiscordMessageId: string): Promise<boolean>;
   failDiscordDelivery(id: number, leaseId: string, error: string): Promise<boolean>;
   withDiscordChannelLock<T>(channelId: string, work: () => Promise<T>): Promise<T>;
-  getRecentDiscordContext(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
+  getRecentDiscordContext(guildId: string, limit: number, ownerUserId?: string): Promise<AshDiscordMessage[]>;
+  getRecentDiscordPlayerComments(limit: number, ownerUserId: string): Promise<AshDiscordMessage[]>;
   getRecentDiscordCommentHistory(limit: number): Promise<AshDiscordMessage[]>;
-  getRecentDiscordOwnerCalls(guildId: string, limit: number): Promise<AshDiscordMessage[]>;
+  getRecentDiscordOwnerComments(guildId: string, limit: number, ownerUserId: string): Promise<AshDiscordMessage[]>;
   getRecentDiscordActivity(limit?: number): Promise<AshDiscordMessage[]>;
   pruneDiscordMessages(maxRows?: number): Promise<void>;
   getStory(): Promise<{ story: AshStory; chapters: AshStoryChapter[]; run: AshStoryRun | null }>;
@@ -840,6 +842,18 @@ export class DbStorage implements IStorage {
     return rows.reverse();
   }
 
+  async getRecentStillwaterHistory(perRole: number): Promise<AshMessage[]> {
+    const [wickedMessages, ashHistory] = await Promise.all(
+      (["wicked", "ash"] as const).map((role) => db
+        .select()
+        .from(ashMessages)
+        .where(and(eq(ashMessages.source, "private_message"), eq(ashMessages.role, role)))
+        .orderBy(desc(ashMessages.id))
+        .limit(perRole)),
+    );
+    return [...wickedMessages, ...ashHistory].sort((a, b) => a.id - b.id);
+  }
+
   async getRecentOwnerDiscordHistory(perRole: number): Promise<AshMessage[]> {
     const [ownerMessages, ashHistory] = await Promise.all([
       db
@@ -1406,7 +1420,7 @@ export class DbStorage implements IStorage {
     });
   }
 
-  async getRecentDiscordContext(guildId: string, limit: number): Promise<AshDiscordMessage[]> {
+  async getRecentDiscordContext(guildId: string, limit: number, ownerUserId?: string): Promise<AshDiscordMessage[]> {
     const selected = await this.listDiscordChannels();
     if (selected.length === 0) return [];
     const rows = await db
@@ -1415,6 +1429,22 @@ export class DbStorage implements IStorage {
       .where(and(
         eq(ashDiscordMessages.guildId, guildId),
         inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+        ownerUserId ? ne(ashDiscordMessages.authorId, ownerUserId) : undefined,
+      ))
+      .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
+      .limit(limit);
+    return rows.reverse();
+  }
+
+  async getRecentDiscordPlayerComments(limit: number, ownerUserId: string): Promise<AshDiscordMessage[]> {
+    const selected = await this.listDiscordChannels();
+    if (selected.length === 0 || !ownerUserId) return [];
+    const rows = await db
+      .select()
+      .from(ashDiscordMessages)
+      .where(and(
+        inArray(ashDiscordMessages.channelId, selected.map((channel) => channel.channelId)),
+        ne(ashDiscordMessages.authorId, ownerUserId),
       ))
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
       .limit(limit);
@@ -1438,7 +1468,8 @@ export class DbStorage implements IStorage {
     return rows.reverse();
   }
 
-  async getRecentDiscordOwnerCalls(guildId: string, limit: number): Promise<AshDiscordMessage[]> {
+  async getRecentDiscordOwnerComments(guildId: string, limit: number, ownerUserId: string): Promise<AshDiscordMessage[]> {
+    if (!ownerUserId) return [];
     const selected = await this.listDiscordChannels();
     if (selected.length === 0 && guildId !== DISCORD_OWNER_DM_GUILD_ID) return [];
     const scope = guildId === DISCORD_OWNER_DM_GUILD_ID
@@ -1451,7 +1482,7 @@ export class DbStorage implements IStorage {
       .select()
       .from(ashDiscordMessages)
       .where(and(
-        eq(ashDiscordMessages.kind, "owner_call"),
+        eq(ashDiscordMessages.authorId, ownerUserId),
         scope,
       ))
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))

@@ -1,10 +1,10 @@
 ---
 name: Discord continuity boundary
-description: Privacy rule for keeping Stillwater chat out of Discord model packets and replies.
+description: User-approved private continuity in Discord model packets, distinct from public replies.
 ---
 
-Do not put raw Stillwater chat history into any Discord model packet, including owner DMs. Discord packets may contain Discord calls, selected-channel context, and owner-DM history only in owner DMs. If private continuity is ever reintroduced, it must consist solely of server-built text from fixed allowlisted classifications generated inside an existing private Stillwater call, not free-form or raw chat.
+The user explicitly wants bounded raw Stillwater chat history in Discord model packets alongside recent player and owner Discord comments, including owner DMs. Do not remove it as a blanket privacy measure. Private context in the model packet is distinct from what Ash is allowed to reveal in a public reply; the Discord OFF switch remains a separate delivery boundary.
 
-**Why:** An OpenAI request showed a Discord packet containing raw private chat, including temporary integration-test messages. Labeling it “never disclose” did not prevent private text from crossing the provider boundary. A prompt plus keyword filtering cannot prove that free-form text did not paraphrase other private sources.
+**Why:** The user corrected a mistaken removal: this combined continuity was established behavior and essential to Ash remembering past conversations across Stillwater and Discord. An earlier OpenAI request also exposed test fixture messages because a database-backed test ran concurrently against a live database; test isolation, not removing intended continuity, addresses that failure.
 
-**How to apply:** Review the outbound Discord model request, not just the Discord reply. Never query private chat while assembling a Discord packet. If a future bounded continuity mechanism is approved, strip and validate its enum block before parsing other response controls and reject malformed, nested, duplicate, unknown, incomplete, or free-form content.
+**How to apply:** Keep the bounded Stillwater window split evenly between Wicked and Ash, and separate bounded player and owner Discord comment windows. Keep owner-DM conversation history private to owner DM packets. Do not send while the Discord bridge is OFF, and never run data-writing tests against the running app database.

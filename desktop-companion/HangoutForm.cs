@@ -24,6 +24,7 @@ internal sealed class HangoutForm : Form
     private readonly SemaphoreSlim screenshotSlots = new(2, 2);
     private Task? monitorTask;
     private long lastMessageId;
+    private long lastSyncedMessageId;
     private long uncertainSendAfterId;
     private volatile string? uncertainSendContent;
     private volatile string? currentSessionId;
@@ -171,7 +172,7 @@ internal sealed class HangoutForm : Form
         {
             try
             {
-                await SyncAsync(client, initialSync ? 0 : Interlocked.Read(ref lastMessageId), cancellationToken);
+                await SyncAsync(client, initialSync ? 0 : Interlocked.Read(ref lastSyncedMessageId), cancellationToken);
                 initialSync = false;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -247,7 +248,9 @@ internal sealed class HangoutForm : Form
         {
             foreach (var item in messages.EnumerateArray().OrderBy(ReadId))
             {
-                AddMessage(ParseMessage(item));
+                var message = ParseMessage(item);
+                AddMessage(message);
+                AdvanceMessageId(ref lastSyncedMessageId, message.Id);
             }
         }
 
@@ -286,27 +289,37 @@ internal sealed class HangoutForm : Form
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: monitorCancellation.Token);
             var root = document.RootElement;
             var received = false;
-            if (root.TryGetProperty("wickedMessage", out var wicked))
-            {
-                if (!sessionStopped) AddMessage(ParseMessage(wicked));
-                received = true;
-            }
-            if (root.TryGetProperty("ashMessage", out var ash))
-            {
-                if (!sessionStopped) AddMessage(ParseMessage(ash));
-                received = true;
-            }
             if (!sessionStopped)
             {
                 inputBox.Clear();
-                SetStatus("Message sent.", null);
+                try
+                {
+                    if (root.TryGetProperty("wickedMessage", out var wicked))
+                    {
+                        AddMessage(ParseMessage(wicked));
+                        received = true;
+                    }
+                    if (root.TryGetProperty("ashMessage", out var ash))
+                    {
+                        AddMessage(ParseMessage(ash));
+                        received = true;
+                    }
+                    SetStatus("Message sent.", null);
+                }
+                catch (Exception displayError)
+                {
+                    // The server already accepted the send. Never tell the user
+                    // to resend it; the independent sync cursor will retry it.
+                    SetStatus("Message sent, but the reply could not be displayed yet. Retrying sync.",
+                        displayError.Message, isError: true);
+                }
             }
 
             if (!received && monitorTask is not null)
             {
                 using var syncHandler = new SocketsHttpHandler { AllowAutoRedirect = false };
                 using var syncClient = CreateClient(syncHandler);
-                await SyncAsync(syncClient, Interlocked.Read(ref lastMessageId), monitorCancellation.Token);
+                await SyncAsync(syncClient, Interlocked.Read(ref lastSyncedMessageId), monitorCancellation.Token);
             }
         }
         catch (UnauthorizedChatException error)
@@ -343,7 +356,7 @@ internal sealed class HangoutForm : Form
             using var syncClient = CreateClient(syncHandler);
             try
             {
-                await SyncAsync(syncClient, Interlocked.Read(ref lastMessageId), monitorCancellation.Token);
+                await SyncAsync(syncClient, Interlocked.Read(ref lastSyncedMessageId), monitorCancellation.Token);
             }
             catch (UnauthorizedChatException syncError)
             {
@@ -398,7 +411,7 @@ internal sealed class HangoutForm : Form
             UpdateChatControls();
             using var syncHandler = new SocketsHttpHandler { AllowAutoRedirect = false };
             using var syncClient = CreateClient(syncHandler);
-            await SyncAsync(syncClient, Interlocked.Read(ref lastMessageId), monitorCancellation.Token);
+            await SyncAsync(syncClient, Interlocked.Read(ref lastSyncedMessageId), monitorCancellation.Token);
         }
         catch (UnauthorizedChatException error)
         {
@@ -484,17 +497,21 @@ internal sealed class HangoutForm : Form
     private void AddMessage(HangoutMessage message)
     {
         if (message.Id <= 0) return;
+        if (IsDisposed) throw new ObjectDisposedException(nameof(HangoutForm));
+        if (InvokeRequired)
+        {
+            // Do not acknowledge a message until its card is actually visible.
+            Invoke((Action)(() => AddMessage(message)));
+            return;
+        }
         lock (messageLock)
         {
-            if (!displayedMessageIds.Add(message.Id)) return;
+            if (displayedMessageIds.Contains(message.Id)) return;
+            AddMessageCard(message);
+            displayedMessageIds.Add(message.Id);
             canonicalMessages[message.Id] = message;
         }
-        long observed;
-        do
-        {
-            observed = Interlocked.Read(ref lastMessageId);
-            if (message.Id <= observed) break;
-        } while (Interlocked.CompareExchange(ref lastMessageId, message.Id, observed) != observed);
+        AdvanceMessageId(ref lastMessageId, message.Id);
 
         var confirmedTimedOutSend = false;
         lock (messageLock)
@@ -520,14 +537,16 @@ internal sealed class HangoutForm : Form
             }
         }
 
-        if (InvokeRequired)
+    }
+
+    private static void AdvanceMessageId(ref long cursor, long id)
+    {
+        long observed;
+        do
         {
-            BeginInvoke((Action)(() => AddMessageCard(message)));
-        }
-        else
-        {
-            AddMessageCard(message);
-        }
+            observed = Interlocked.Read(ref cursor);
+            if (id <= observed) return;
+        } while (Interlocked.CompareExchange(ref cursor, id, observed) != observed);
     }
 
     private void AddMessageCard(HangoutMessage message)
@@ -536,7 +555,6 @@ internal sealed class HangoutForm : Form
         var card = new Panel
         {
             Width = Math.Max(320, messagesPanel.ClientSize.Width - 34),
-            AutoSize = true,
             Tag = message.Id,
             BackColor = Color.FromArgb(34, 37, 45),
             Padding = new Padding(12),
@@ -544,14 +562,13 @@ internal sealed class HangoutForm : Form
         };
         var cardLayout = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
+            Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = message.ScreenshotActivityId is null ? 2 : 3,
         };
         cardLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        cardLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        cardLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        cardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        cardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
 
         var time = DateTimeOffset.TryParse(message.CreatedAt, out var parsed)
             ? parsed.ToLocalTime().ToString("g")
@@ -567,8 +584,6 @@ internal sealed class HangoutForm : Form
         };
         var content = new Label
         {
-            AutoSize = true,
-            MaximumSize = new Size(Math.Max(280, card.Width - 48), 0),
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(230, 232, 237),
             Text = message.Content,
@@ -576,6 +591,7 @@ internal sealed class HangoutForm : Form
         };
         cardLayout.Controls.Add(heading, 0, 0);
         cardLayout.Controls.Add(content, 0, 1);
+        SizeMessageCard(card, cardLayout, content);
 
         if (message.ScreenshotActivityId is long activityId)
         {
@@ -600,8 +616,10 @@ internal sealed class HangoutForm : Form
             };
             screenshotPanel.Controls.Add(picture);
             screenshotPanel.Controls.Add(placeholder);
+            cardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 238));
             cardLayout.Controls.Add(screenshotPanel, 0, 2);
             _ = AddScreenshotAsync(activityId, picture, placeholder);
+            SizeMessageCard(card, cardLayout, content);
         }
 
         card.Controls.Add(cardLayout);
@@ -610,8 +628,31 @@ internal sealed class HangoutForm : Form
             .TakeWhile(existing => existing.Tag is long existingId && existingId < message.Id)
             .Count();
         messagesPanel.Controls.Add(card);
-        messagesPanel.Controls.SetChildIndex(card, insertionIndex);
-        messagesPanel.ScrollControlIntoView(card);
+        try
+        {
+            messagesPanel.Controls.SetChildIndex(card, insertionIndex);
+            // A tall reply with a screenshot can exceed the viewport. The
+            // short heading is a reliable scroll target for its opening text.
+            messagesPanel.ScrollControlIntoView(heading);
+        }
+        catch
+        {
+            messagesPanel.Controls.Remove(card);
+            card.Dispose();
+            throw;
+        }
+    }
+
+    private static void SizeMessageCard(Panel card, TableLayoutPanel layout, Label content)
+    {
+        var textWidth = Math.Max(280, card.Width - 48);
+        var measured = TextRenderer.MeasureText(content.Text, content.Font,
+            new Size(textWidth, int.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+        var bodyHeight = Math.Max(28, measured.Height + 10);
+        layout.RowStyles[1].Height = bodyHeight;
+        card.Height = card.Padding.Vertical + 28 + bodyHeight +
+            (layout.RowCount == 3 ? 238 : 0);
     }
 
     private void ResizeMessageCards()
@@ -624,7 +665,7 @@ internal sealed class HangoutForm : Form
                 cardLayout.Controls.Count > 1 &&
                 cardLayout.Controls[1] is Label content)
             {
-                content.MaximumSize = new Size(Math.Max(280, control.Width - 48), 0);
+                SizeMessageCard(card, cardLayout, content);
             }
         }
     }

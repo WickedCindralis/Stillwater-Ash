@@ -1094,7 +1094,7 @@ export default function ChatPage() {
             <div className="bg-white/5 border border-white/10 rounded-xl p-4">
               <h3 className="text-white font-semibold mb-2">Stats</h3>
               <div className="text-sm text-white/50 space-y-1">
-                <p data-testid="text-tokens">Tokens used: {state.tokensUsed.toLocaleString()}</p>
+                <p data-testid="text-tokens">Tokens used this month: {state.tokensUsed.toLocaleString()}</p>
                 <p data-testid="text-heartbeat">
                   Last heartbeat: {state.lastHeartbeat ? new Date(state.lastHeartbeat).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }) : "never"}
                 </p>

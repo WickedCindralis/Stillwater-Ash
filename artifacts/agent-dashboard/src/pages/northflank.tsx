@@ -164,7 +164,7 @@ export default function NorthflankPage() {
               </span>
             </p>
             <p data-testid="text-build-tokens">
-              Tokens used: <span className="text-white">{system?.tokensUsed?.toLocaleString() ?? "..."}</span>
+              Tokens used this month: <span className="text-white">{system?.tokensUsed?.toLocaleString() ?? "..."}</span>
             </p>
           </div>
         </div>

@@ -730,8 +730,7 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       }
       if (totalTokens > 0) {
         try {
-          const fresh = await storage.getState();
-          await storage.updateState({ tokensUsed: (fresh.tokensUsed ?? 0) + totalTokens });
+          await storage.addTokenUsage(totalTokens);
         } catch (e) {
           this.error("Failed to track token usage:", e);
         }

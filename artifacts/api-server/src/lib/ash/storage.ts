@@ -44,6 +44,7 @@ import {
 } from "./discord-policy";
 
 const ASH_ID = "ash";
+const currentTokenMonth = sql<string>`to_char(now() AT TIME ZONE 'America/New_York', 'YYYY-MM')`;
 
 export type ActivityFeedItem = AshActivity & { hasScreenshot: boolean };
 export type StoryRunStart = {
@@ -56,6 +57,7 @@ export type StoryRunStart = {
 export interface IStorage {
   getState(): Promise<AshState>;
   updateState(patch: Partial<Omit<AshState, "id">>): Promise<AshState>;
+  addTokenUsage(tokens: number): Promise<void>;
   appendAshNote(entry: string, maxChars: number): Promise<{ saved: boolean; length: number }>;
   getMessages(limit?: number, beforeId?: number): Promise<AshMessage[]>;
   getAllMessages(): Promise<AshMessage[]>;
@@ -706,6 +708,11 @@ export class DbStorage implements IStorage {
   }
   async recordStoryError(runId: string, message: string): Promise<void> { await db.insert(ashStoryErrors).values({ runId, message: message.slice(0, 4000) }); }
   async getState(): Promise<AshState> {
+    // A read after midnight also resets the display if no model call occurred.
+    // The conditional UPDATE is serialized with concurrent token increments.
+    await db.update(ashState)
+      .set({ tokensUsed: 0, tokensMonth: currentTokenMonth })
+      .where(and(eq(ashState.id, ASH_ID), ne(ashState.tokensMonth, currentTokenMonth)));
     const rows = await db
       .select()
       .from(ashState)
@@ -727,6 +734,16 @@ export class DbStorage implements IStorage {
       .where(eq(ashState.id, ASH_ID))
       .returning();
     return rows[0]!;
+  }
+
+  async addTokenUsage(tokens: number): Promise<void> {
+    if (!Number.isSafeInteger(tokens) || tokens <= 0) throw new Error("Invalid token usage");
+    // The row lock taken by UPDATE prevents concurrent responses from losing
+    // increments. A response arriving after the 1st starts the new month.
+    await db.update(ashState).set({
+      tokensUsed: sql`CASE WHEN ${ashState.tokensMonth} = ${currentTokenMonth} THEN ${ashState.tokensUsed} + ${tokens} ELSE ${tokens} END`,
+      tokensMonth: currentTokenMonth,
+    }).where(eq(ashState.id, ASH_ID));
   }
 
   // Append one dated entry without risking a read/modify/write race. If the

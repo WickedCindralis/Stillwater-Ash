@@ -10,6 +10,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
 import { z } from "zod/v4";
 
 // Single-row state table for Ash. Table names are prefixed with ash_ so the
@@ -20,6 +21,10 @@ export const ashState = pgTable("ash_state", {
   status: text("status").notNull().default("online"),
   lastHeartbeat: timestamp("last_heartbeat"),
   tokensUsed: integer("tokens_used").notNull().default(0),
+  // A new column on an existing row inherits the month of deployment so its
+  // current displayed amount is preserved until the next calendar month.
+  tokensMonth: text("tokens_month").notNull()
+    .default(sql`to_char(now() AT TIME ZONE 'America/New_York', 'YYYY-MM')`),
   selfPromptPaused: integer("self_prompt_paused").notNull().default(1),
   selfPromptIntervalOverride: integer("self_prompt_interval_override")
     .notNull()

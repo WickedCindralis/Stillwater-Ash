@@ -21,6 +21,7 @@ import {
   startHangout,
   stopHangout,
   syncHangoutCompanion,
+  setHangoutIdleInterval,
 } from "../lib/ash/hangout";
 import { ashBridge, type AshPacketPreview } from "../lib/ash/bridge";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
@@ -408,6 +409,31 @@ router.get("/hangout/companion/sync", async (req, res): Promise<void> => {
   } catch {
     logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: 401 });
     res.status(401).json({ error: "Invalid Hangout companion token" });
+  }
+});
+
+router.post("/hangout/companion/interval", async (req, res): Promise<void> => {
+  const correlationId = randomUUID(), startedAt = Date.now();
+  const token = companionToken(req);
+  logHangoutHttp(req, "interval start", correlationId, startedAt);
+  if (!(await authorizeHangoutCompanion(token))) {
+    logHangoutHttp(req, "interval failure", correlationId, startedAt, { statusCode: 401 });
+    res.status(401).json({ error: "Invalid Hangout companion token" });
+    return;
+  }
+  const minutes = req.body?.minutes;
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    logHangoutHttp(req, "interval failure", correlationId, startedAt, { statusCode: 400 });
+    res.status(400).json({ error: "Minutes must be a whole number from 1 to 1440" });
+    return;
+  }
+  try {
+    const saved = await setHangoutIdleInterval(token, minutes);
+    logHangoutHttp(req, "interval success", correlationId, startedAt, { minutes: saved });
+    res.json({ minutes: saved });
+  } catch (error) {
+    logHangoutHttp(req, "interval failure", correlationId, startedAt, { statusCode: 500 });
+    res.status(500).json({ error: "Could not save Hangout interval" });
   }
 });
 

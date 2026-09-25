@@ -6,8 +6,9 @@ import type { AshMessage } from "@workspace/db";
 import { logger } from "../logger";
 import { isCompanionConnected, parseHangoutApproval, privateMessageHangoutMode, shouldEndDisconnectedHangout } from "./hangout-policy";
 
-const INVITATION = "Wicked wants to know if you want to hang out with her while she works/plays. This will send you a screenshot with each message and every 15 minutes while the chat is idle. Your messages will go straight to her, and she will respond.";
-const IDLE_CHECKIN_MS = 15 * 60_000;
+function invitationForInterval(minutes: number): string {
+  return `Wicked wants to know if you want to hang out with her while she works/plays. This will send you a screenshot with each message and every ${minutes} minute${minutes === 1 ? "" : "s"} while the chat is idle. Your messages will go straight to her, and she will respond.`;
+}
 let idleScheduler: ReturnType<typeof setInterval> | null = null;
 
 function hashToken(token: string): string {
@@ -102,11 +103,11 @@ async function captureAndReply(sessionId: string, generation: number, lease: str
   return ashMessage;
 }
 
-async function completeInvite(sessionId: string, generation: number, lease: string): Promise<void> {
+async function completeInvite(sessionId: string, generation: number, lease: string, invitation: string): Promise<void> {
   const correlationId = randomUUID();
   const startedAt = Date.now();
   logger.info(`[hangout] provider start sessionId=${sessionId} correlationId=${correlationId} purpose=approval`);
-  const result = await ashBridge.requestHangoutApproval(INVITATION, correlationId, () =>
+  const result = await ashBridge.requestHangoutApproval(invitation, correlationId, () =>
     storage.fenceHangout(sessionId, generation, lease),
   );
   logBoundary("provider result", sessionId, correlationId, startedAt, "purpose=approval");
@@ -174,14 +175,15 @@ export async function startHangout(): Promise<{ status: string; sessionId: strin
     if (!isCompanionConnected(refreshed.companionLastSeen)) throw new Error("The Hangout companion must be connected before starting");
     throw new Error("A Hangout session is already in progress");
   }
-  await storage.createMessage({ role: "wicked", content: INVITATION, imageUrl: "", source: "private_message" });
+  const invitation = invitationForInterval(session.idleIntervalMinutes);
+  await storage.createMessage({ role: "wicked", content: invitation, imageUrl: "", source: "private_message" });
   const lease = await storage.acquireHangoutLease(sessionId);
   if (!lease) {
     await storage.setHangoutStatus(sessionId, session.generation, "idle", "Could not reserve the Hangout invitation exchange");
     throw new Error("Could not reserve the Hangout invitation exchange");
   }
   try {
-    await completeInvite(sessionId, session.generation, lease.token);
+    await completeInvite(sessionId, session.generation, lease.token, invitation);
     return { status: (await storage.getHangoutSession()).status, sessionId, lastError: (await storage.getHangoutSession()).lastError };
   } catch (error) {
     const message = safeFailureMessage(error);
@@ -242,6 +244,7 @@ export async function syncHangoutCompanion(token: string, after: number, windowS
   sessionId: string;
   messages: Array<{ id: number; role: string; content: string; createdAt: string; screenshotActivityId: number | null }>;
   lastError: string;
+  idleIntervalMinutes: number;
   windowCursor?: number;
 }> {
   const session = await storage.getHangoutSession();
@@ -262,18 +265,31 @@ export async function syncHangoutCompanion(token: string, after: number, windowS
       screenshotActivityId: message.screenshotActivityId,
     })),
     lastError: latest.lastError,
+    idleIntervalMinutes: latest.idleIntervalMinutes,
     ...(windowStart ? { windowCursor } : {}),
   };
 }
 
+export async function setHangoutIdleInterval(token: string, minutes: number): Promise<number> {
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    throw new Error("Minutes must be a whole number from 1 to 1440");
+  }
+  const updated = await storage.setHangoutIdleInterval(hashToken(token), minutes);
+  if (updated === null) throw new Error("Invalid Hangout companion token");
+  logger.info(`[hangout] idle interval updated minutes=${updated}`);
+  return updated;
+}
+
 async function maybeIdleCheckin(session: Awaited<ReturnType<typeof storage.getHangoutSession>>): Promise<void> {
-  if (session.status !== "active" || !session.lastActivityAt || Date.now() - session.lastActivityAt.getTime() < IDLE_CHECKIN_MS) return;
-  if (session.lastIdleCheckinAt && Date.now() - session.lastIdleCheckinAt.getTime() < IDLE_CHECKIN_MS) return;
-  const lease = await storage.acquireHangoutLease(session.sessionId, new Date(Date.now() - IDLE_CHECKIN_MS));
+  const minutes = session.idleIntervalMinutes;
+  const intervalMs = minutes * 60_000;
+  if (session.status !== "active" || !session.lastActivityAt || Date.now() - session.lastActivityAt.getTime() < intervalMs) return;
+  if (session.lastIdleCheckinAt && Date.now() - session.lastIdleCheckinAt.getTime() < intervalMs) return;
+  const lease = await storage.acquireHangoutLease(session.sessionId, true);
   if (!lease) return;
   try {
     await captureAndReply(session.sessionId, session.generation, lease.token,
-      "It has been 15 minutes since Wicked's last message. Send a gentle screenshot-backed check-in, concise and natural.");
+      `It has been at least ${minutes} minute${minutes === 1 ? "" : "s"} since Wicked's last message. Send a gentle screenshot-backed check-in, concise and natural.`);
   } catch (error) {
     await storage.failHangout(session.sessionId, session.generation, safeFailureMessage(error));
   } finally {

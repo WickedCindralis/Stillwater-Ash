@@ -14,6 +14,8 @@ internal sealed class HangoutForm : Form
     private readonly Label statusLabel = new();
     private readonly FlowLayoutPanel messagesPanel = new();
     private readonly TextBox inputBox = new();
+    private readonly TextBox minutesBox = new();
+    private readonly Button minutesSaveButton = new();
     private readonly Button sendButton = new();
     private readonly Button stopButton = new();
     private readonly CancellationTokenSource monitorCancellation = new();
@@ -35,6 +37,9 @@ internal sealed class HangoutForm : Form
     private volatile bool stoppingSession;
     private volatile bool revoked;
     private bool windowStarted;
+    private bool minutesDirty;
+    private bool minutesSaving;
+    private bool updatingMinutesFromServer;
 
     public HangoutForm(string serverUrl, string chatToken)
     {
@@ -97,10 +102,11 @@ internal sealed class HangoutForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(18),
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
             BackColor = BackColor,
         };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         Controls.Add(layout);
@@ -114,6 +120,46 @@ internal sealed class HangoutForm : Form
         header.Controls.Add(statusLabel);
         layout.Controls.Add(header, 0, 0);
 
+        var intervalBar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(0, 3, 0, 0),
+        };
+        intervalBar.Controls.Add(new Label
+        {
+            Text = "MINUTES:",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(230, 232, 237),
+            Margin = new Padding(0, 7, 9, 0),
+        });
+        minutesBox.Text = "15";
+        minutesBox.Width = 65;
+        minutesBox.MaxLength = 4;
+        minutesBox.Enabled = false;
+        minutesBox.AccessibleName = "Minutes between idle Hangout screenshots";
+        minutesBox.TextChanged += (_, _) =>
+        {
+            if (updatingMinutesFromServer) return;
+            minutesDirty = true;
+            UpdateChatControls();
+        };
+        minutesBox.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;
+            _ = SaveMinutesAsync();
+        };
+        intervalBar.Controls.Add(minutesBox);
+        minutesSaveButton.Text = "Apply";
+        minutesSaveButton.Width = 72;
+        minutesSaveButton.Enabled = false;
+        minutesSaveButton.Margin = new Padding(8, 0, 0, 0);
+        minutesSaveButton.Click += async (_, _) => await SaveMinutesAsync();
+        intervalBar.Controls.Add(minutesSaveButton);
+        layout.Controls.Add(intervalBar, 0, 1);
+
         messagesPanel.Dock = DockStyle.Fill;
         messagesPanel.AutoScroll = true;
         messagesPanel.FlowDirection = FlowDirection.TopDown;
@@ -121,7 +167,7 @@ internal sealed class HangoutForm : Form
         messagesPanel.BackColor = Color.FromArgb(24, 27, 34);
         messagesPanel.Padding = new Padding(12);
         messagesPanel.SizeChanged += (_, _) => ResizeMessageCards();
-        layout.Controls.Add(messagesPanel, 0, 1);
+        layout.Controls.Add(messagesPanel, 0, 2);
 
         var composer = new TableLayoutPanel
         {
@@ -166,7 +212,7 @@ internal sealed class HangoutForm : Form
         stopButton.Enabled = false;
         stopButton.Click += async (_, _) => await StopHangoutAsync();
         composer.Controls.Add(stopButton, 1, 1);
-        layout.Controls.Add(composer, 0, 2);
+        layout.Controls.Add(composer, 0, 3);
     }
 
     private async Task MonitorAsync(CancellationToken cancellationToken)
@@ -232,6 +278,14 @@ internal sealed class HangoutForm : Form
         var status = ReadString(root, "status") ?? "unknown";
         var sessionId = ReadString(root, "sessionId");
         var lastError = ReadString(root, "lastError");
+        if (!minutesDirty && !minutesSaving &&
+            root.TryGetProperty("idleIntervalMinutes", out var savedMinutes) &&
+            savedMinutes.TryGetInt32(out var interval) && interval is >= 1 and <= 1440)
+        {
+            updatingMinutesFromServer = true;
+            try { minutesBox.Text = interval.ToString(); }
+            finally { updatingMinutesFromServer = false; }
+        }
         var hangoutStatus = status.ToLowerInvariant() switch
         {
             "active" => "Hangout Active",
@@ -284,6 +338,47 @@ internal sealed class HangoutForm : Form
             status.Equals("inviting", StringComparison.OrdinalIgnoreCase)))
         {
             ShowHangout();
+        }
+    }
+
+    private async Task SaveMinutesAsync()
+    {
+        if (revoked || minutesSaving || !windowStarted || !minutesDirty) return;
+        if (!int.TryParse(minutesBox.Text.Trim(), out var minutes) || minutes is < 1 or > 1440)
+        {
+            SetStatus("Enter a whole number of minutes from 1 to 1440.", null, isError: true);
+            return;
+        }
+
+        minutesSaving = true;
+        UpdateChatControls();
+        try
+        {
+            using var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
+            using var client = CreateClient(handler);
+            using var body = new StringContent(JsonSerializer.Serialize(new { minutes }), Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(
+                $"{serverUrl}/api/hangout/companion/interval", body, monitorCancellation.Token);
+            await EnsureChatSuccessAsync(response, monitorCancellation.Token);
+            minutesDirty = false;
+            SetStatus($"Idle screenshot interval set to {minutes} minute{(minutes == 1 ? "" : "s")}.", null);
+        }
+        catch (UnauthorizedChatException error)
+        {
+            MarkChatRevoked(error.Message);
+        }
+        catch (OperationCanceledException) when (monitorCancellation.IsCancellationRequested)
+        {
+            // Window closed while saving.
+        }
+        catch (Exception error)
+        {
+            SetStatus("Could not save screenshot interval.", error.Message, isError: true);
+        }
+        finally
+        {
+            minutesSaving = false;
+            UpdateChatControls();
         }
     }
 
@@ -772,6 +867,8 @@ internal sealed class HangoutForm : Form
             sendButton.Enabled = false;
             stopButton.Enabled = false;
             inputBox.Enabled = false;
+            minutesBox.Enabled = false;
+            minutesSaveButton.Enabled = false;
             SetStatus("Chat token revoked or expired.", detail, isError: true);
         }
 
@@ -790,6 +887,9 @@ internal sealed class HangoutForm : Form
             inputBox.Enabled = canSend;
             sendButton.Enabled = canSend;
             sendButton.Text = sendInProgress ? "Sending…" : uncertainSendContent is not null ? "Checking…" : "Send";
+            minutesBox.Enabled = windowStarted && !revoked && !minutesSaving;
+            minutesSaveButton.Enabled = minutesBox.Enabled && minutesDirty;
+            minutesSaveButton.Text = minutesSaving ? "Saving…" : "Apply";
         }
 
         if (InvokeRequired) BeginInvoke((Action)Update);

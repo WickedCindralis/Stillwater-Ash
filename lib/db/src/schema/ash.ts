@@ -265,6 +265,7 @@ export const ashHangoutSession = pgTable("ash_hangout_session", {
   id: text("id").primaryKey().default("ash"),
   sessionId: text("session_id").notNull().default(""),
   status: text("status").notNull().default("idle"), // idle | inviting | active
+  idleIntervalMinutes: integer("idle_interval_minutes").notNull().default(15),
   generation: integer("generation").notNull().default(0),
   companionTokenHash: text("companion_token_hash").notNull().default(""),
   companionLastSeen: timestamp("companion_last_seen"),

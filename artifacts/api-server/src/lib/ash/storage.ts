@@ -276,20 +276,30 @@ export class DbStorage implements IStorage {
     return rows.length > 0;
   }
 
-  async acquireHangoutLease(sessionId: string, idleCutoff?: Date): Promise<{ token: string; generation: number; status: string } | null> {
+  async setHangoutIdleInterval(tokenHash: string, minutes: number): Promise<number | null> {
+    const [row] = await db.update(ashHangoutSession)
+      .set({ idleIntervalMinutes: minutes, updatedAt: new Date() })
+      .where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.companionTokenHash, tokenHash)))
+      .returning({ idleIntervalMinutes: ashHangoutSession.idleIntervalMinutes });
+    return row?.idleIntervalMinutes ?? null;
+  }
+
+  async acquireHangoutLease(sessionId: string, idleCheckin = false): Promise<{ token: string; generation: number; status: string } | null> {
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-hangout'))`);
       const now = new Date();
       const [row] = await tx.select().from(ashHangoutSession).where(eq(ashHangoutSession.id, ASH_ID)).limit(1);
       if (!row || row.sessionId !== sessionId || row.status === "idle" || (row.leaseExpiresAt && row.leaseExpiresAt > now)) return null;
-      if (idleCutoff && (
+      const idleCutoff = new Date(now.getTime() - row.idleIntervalMinutes * 60_000);
+      if (idleCheckin && (
+        row.status !== "active" ||
         !row.lastActivityAt || row.lastActivityAt > idleCutoff ||
         (row.lastIdleCheckinAt && row.lastIdleCheckinAt > idleCutoff)
       )) return null;
       const token = randomUUID();
       const [updated] = await tx.update(ashHangoutSession).set({
         leaseToken: token, leaseExpiresAt: new Date(Date.now() + 15 * 60_000),
-        ...(idleCutoff ? { lastIdleCheckinAt: now } : {}), updatedAt: now,
+        ...(idleCheckin ? { lastIdleCheckinAt: now } : {}), updatedAt: now,
       }).where(and(eq(ashHangoutSession.id, ASH_ID), eq(ashHangoutSession.sessionId, sessionId), eq(ashHangoutSession.generation, row.generation))).returning();
       return updated ? { token, generation: updated.generation, status: updated.status } : null;
     });

@@ -20,6 +20,7 @@ import {
   pairHangoutCompanion,
   revokeHangoutCompanion,
   sendHangoutMessage,
+  setHangoutIdleInterval,
   startHangout,
   stopHangout,
   syncHangoutCompanion,
@@ -258,8 +259,13 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
 
     await t.test("idle claims are atomic and sync does not await idle capture/provider work", async () => {
       const pairing = await prepareActiveSession();
+      assert.equal((await syncHangoutCompanion(pairing.hangoutToken, 0)).idleIntervalMinutes, 15);
+      assert.equal(await setHangoutIdleInterval(pairing.hangoutToken, 3), 3);
+      await assert.rejects(setHangoutIdleInterval(pairing.hangoutToken, 0), /whole number/);
+      await assert.rejects(setHangoutIdleInterval("invalid", 3), /Invalid Hangout companion token/);
+      assert.equal((await syncHangoutCompanion(pairing.hangoutToken, 0)).idleIntervalMinutes, 3);
       await db.update(ashHangoutSession).set({
-        lastActivityAt: new Date(Date.now() - 16 * 60_000),
+        lastActivityAt: new Date(Date.now() - 4 * 60_000),
         lastIdleCheckinAt: null,
         leaseToken: "",
         leaseExpiresAt: null,
@@ -269,14 +275,16 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
       assert.ok(Date.now() - startedAt < 1_000, "sync should not wait for screenshot/provider idle work");
 
       const session = await storage.getHangoutSession();
-      const cutoff = new Date(Date.now() - 15 * 60_000);
       const claims = await Promise.all([
-        storage.acquireHangoutLease(session.sessionId, cutoff),
-        storage.acquireHangoutLease(session.sessionId, cutoff),
+        storage.acquireHangoutLease(session.sessionId, true),
+        storage.acquireHangoutLease(session.sessionId, true),
       ]);
       assert.equal(claims.filter(Boolean).length, 1, "concurrent idle ticks must yield exactly one durable claim");
       const claim = claims.find(Boolean)!;
       await storage.releaseHangoutLease(claim.token, claim.generation);
+      assert.equal(await setHangoutIdleInterval(pairing.hangoutToken, 15), 15);
+      assert.equal(await storage.acquireHangoutLease(session.sessionId, true), null,
+        "a longer saved interval must be checked again inside the atomic idle claim");
     });
 
     await t.test("stop, OFF, and revoke fence pending sends before provider invocation", async () => {

@@ -1,0 +1,99 @@
+.hangout-stage {
+  --hangout-bg: #121419;
+  min-height: 100vh;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  position: relative;
+  overflow: hidden;
+  padding: 16px;
+  background: radial-gradient(circle at 18% 28%, #30233d 0, #1c1b28 30%, #11131a 73%);
+  color: #f1f1f6;
+  font-family: "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+}
+.hangout-stage * { box-sizing: border-box; }
+.hangout-stage-decoration { position: absolute; top: 31px; left: 28px; opacity: .4; display: grid; gap: 11px; }
+.hangout-stage-mark { font-size: 17px; letter-spacing: .12em; font-weight: 600; color: #d9bfdc; }
+.hangout-stage-line { display: block; width: 140px; height: 7px; border-radius: 6px; background: #715882; opacity: .5; }
+.hangout-stage-line.short { width: 92px; opacity: .3; }
+.hangout-window {
+  width: 340px;
+  height: 480px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--hangout-bg);
+  border: 1px solid #4a3d5b;
+  box-shadow: 0 20px 45px #0009, 0 3px 15px #0006;
+}
+.hangout-window.is-collapsed { height: 54px; }
+.hangout-header {
+  flex: 0 0 53px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 7px 6px 11px;
+  background: #16181f;
+  border-bottom: 1px solid #3d304c;
+}
+.hangout-identity { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0; border: 0; text-align: left; color: inherit; background: transparent; cursor: pointer; }
+.hangout-avatar { width: 34px; height: 34px; flex: none; border-radius: 50%; background: #7041be; display: grid; place-items: center; font-size: 16px; font-weight: 650; }
+.hangout-person { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hangout-person strong { font-size: 14px; line-height: 17px; }
+.hangout-person small { display: flex; align-items: center; gap: 5px; font-size: 11px; line-height: 15px; color: #b1b6c2; white-space: nowrap; }
+.hangout-status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #61d399; box-shadow: 0 0 0 3px #61d39918; }
+.hangout-status-dot.is-idle { background: #eac15c; box-shadow: none; }
+.hangout-actions { display: flex; align-items: center; gap: 3px; flex: none; }
+.hangout-actions button { width: 29px; height: 32px; border: 0; border-radius: 7px; display: grid; place-items: center; background: #23252e; color: #e0e2e9; cursor: pointer; }
+.hangout-actions button:hover { background: #423250; color: #fff; }
+.hangout-actions button:focus-visible, .hangout-window button:focus-visible, .hangout-window input:focus-visible, .hangout-window textarea:focus-visible { outline: 2px solid #b992ff; outline-offset: 2px; }
+.hangout-thread { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 9px; padding: 12px 12px 10px; scrollbar-color: #604d72 transparent; scrollbar-width: thin; }
+.hangout-message { display: flex; flex-direction: column; align-items: flex-start; max-width: 84%; align-self: flex-start; min-width: 0; }
+.hangout-message.from-you { align-items: flex-end; align-self: flex-end; }
+.hangout-bubble { min-width: 68px; max-width: 100%; background: #272a33; border-radius: 16px 16px 16px 5px; padding: 10px 12px; color: #f1f1f6; font-size: 13px; line-height: 1.4; overflow: visible; overflow-wrap: anywhere; }
+.from-you .hangout-bubble { background: #5b3297; border-radius: 16px 16px 5px 16px; }
+.hangout-message-text { white-space: pre-wrap; }
+.hangout-message time { margin: 3px 4px 0; color: #858b99; font-size: 10px; line-height: 12px; }
+.hangout-thumbnail { width: 96px; height: 62px; display: block; position: relative; margin-top: 8px; padding: 0; overflow: hidden; background: #171920; border: 1px solid #564666; border-radius: 6px; cursor: zoom-in; }
+.hangout-screenshot-art { display: flex; width: 100%; height: 100%; background: #333643; }
+.hangout-screenshot-sidebar { width: 27%; height: 100%; background: linear-gradient(#261a34, #31213c); border-right: 1px solid #584567; }
+.hangout-screenshot-browser { flex: 1; padding: 6px; display: grid; align-content: start; gap: 5px; }
+.hangout-screenshot-browser div { height: 6px; border-radius: 2px; background: #8882aa; opacity: .55; }
+.hangout-screenshot-browser div:nth-child(2) { width: 45%; }
+.hangout-screenshot-browser div:nth-child(3) { height: 20px; background: #7a478f; opacity: .7; }
+.hangout-screenshot-browser div:nth-child(4) { width: 70%; }
+.hangout-thumbnail-icon { position: absolute; right: 5px; bottom: 5px; color: #f1eaff; filter: drop-shadow(0 1px 2px #000); }
+.hangout-composer { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px; min-height: 60px; padding: 8px 10px 10px; background: #121419; border-top: 1px solid #282a32; }
+.hangout-input-frame { display: flex; align-items: center; flex: 1; min-height: 39px; border-radius: 17px; background: #22242d; padding: 8px 11px; }
+.hangout-input-frame textarea { display: block; width: 100%; height: 20px; min-height: 20px; max-height: 68px; padding: 0; border: 0; outline: 0; resize: none; overflow-y: auto; background: transparent; color: #fff; font: 13px/20px "Segoe UI", Arial, sans-serif; scrollbar-width: thin; }
+.hangout-input-frame textarea::placeholder { color: #9da0ad; }
+.hangout-send { width: 36px; height: 36px; flex: none; border: 0; border-radius: 50%; display: grid; place-items: center; color: #fff; background: #7c3aed; cursor: pointer; }
+.hangout-send:disabled { opacity: .55; cursor: not-allowed; }
+.hangout-send:not(:disabled):hover { background: #9255f4; }
+.hangout-settings { position: absolute; z-index: 5; top: 51px; right: 8px; width: 224px; padding: 12px 10px; border: 1px solid #555060; border-radius: 8px; background: #1f212a; box-shadow: 0 12px 24px #0009; display: flex; flex-direction: column; gap: 8px; }
+.hangout-settings > strong { font-size: 13px; }
+.hangout-topmost { display: flex; align-items: center; gap: 7px; color: #dde0e6; font-size: 12px; cursor: pointer; }
+.hangout-topmost input { accent-color: #7c3aed; }
+.hangout-minutes-label { color: #b1b6c2; font-size: 11px; }
+.hangout-minutes-row { display: flex; gap: 7px; }
+.hangout-minutes-row input { min-width: 0; width: 100%; height: 28px; padding: 3px 7px; border: 1px solid #555060; border-radius: 4px; color: #fff; background: #171920; font: inherit; }
+.hangout-minutes-row button { width: 68px; flex: none; border: 0; border-radius: 4px; color: #fff; background: #49365e; font: 12px "Segoe UI", Arial, sans-serif; cursor: pointer; display: grid; place-items: center; }
+.hangout-minutes-row button:disabled { opacity: .65; cursor: default; }
+.hangout-stop { width: 100%; height: 30px; border: 0; border-radius: 4px; background: #43262f; color: #ffbec5; font: 12px "Segoe UI", Arial, sans-serif; cursor: pointer; }
+.hangout-reopen { margin: auto 36px 40px auto; padding: 10px 16px; border: 1px solid #815bb2; border-radius: 18px; color: #eee4ff; background: #342446; cursor: pointer; }
+.hangout-preview-backdrop { position: absolute; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: #05040ad9; }
+.hangout-preview-window { width: min(92%, 600px); max-height: 90vh; overflow: hidden; border: 1px solid #5e526b; border-radius: 9px; background: #1a1c23; box-shadow: 0 16px 40px #000; }
+.hangout-preview-toolbar { height: 37px; padding: 0 9px 0 14px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.hangout-preview-toolbar button { border: 0; background: transparent; color: #eee; cursor: pointer; }
+.hangout-preview-art { height: 220px; display: flex; background: #36394a; }
+.hangout-preview-sidebar { width: 30%; background: #30233d; border-right: 1px solid #665270; }
+.hangout-preview-browser { flex: 1; display: flex; flex-direction: column; gap: 15px; padding: 20px; }
+.hangout-preview-address { height: 14px; border-radius: 7px; background: #827b99; opacity: .65; }
+.hangout-preview-block { height: 28px; background: #765384; border-radius: 5px; }
+.hangout-preview-block.small { width: 65%; }

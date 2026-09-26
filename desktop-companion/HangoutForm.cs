@@ -55,6 +55,7 @@ internal sealed class HangoutForm : Form
     private bool headerWasDragged;
     private Point headerPressScreenPoint;
     private Point headerPressFormLocation;
+    private int transcriptGeneration;
     private TableLayoutPanel? outerLayout;
     private TableLayoutPanel? bodyLayout;
 
@@ -66,9 +67,10 @@ internal sealed class HangoutForm : Form
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
+        Padding = new Padding(1);
         MinimumSize = new Size(340, 52);
         Size = new Size(340, 480);
-        BackColor = Color.FromArgb(18, 20, 25);
+        BackColor = Color.FromArgb(74, 61, 91);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 10F);
         TopMost = true;
@@ -76,6 +78,8 @@ internal sealed class HangoutForm : Form
         Location = new Point(workArea.Right - Width - 16, workArea.Bottom - Height - 16);
         FormClosing += OnFormClosing;
         BuildLayout();
+        SizeChanged += (_, _) => SetRoundedRegion(this, 12);
+        SetRoundedRegion(this, 12);
         _ = Handle;
     }
 
@@ -100,10 +104,12 @@ internal sealed class HangoutForm : Form
             return;
         }
 
+        if (dismissedByUser && !Visible) BeginNewVisiblePeriod();
         dismissedByUser = false;
         if (!Visible) Show();
         if (focus)
         {
+            if (collapsed) ToggleCollapsed();
             WindowState = FormWindowState.Normal;
             BringToFront();
             Activate();
@@ -125,9 +131,10 @@ internal sealed class HangoutForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 2,
-            BackColor = BackColor,
+            BackColor = Color.FromArgb(18, 20, 25),
+            Margin = Padding.Empty,
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(layout);
         outerLayout = layout;
@@ -137,10 +144,8 @@ internal sealed class HangoutForm : Form
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(22, 24, 31),
             Padding = new Padding(11, 6, 7, 6),
+            Margin = Padding.Empty,
         };
-        header.MouseDown += OnHeaderMouseDown;
-        header.MouseMove += OnHeaderMouseMove;
-        header.MouseUp += OnHeaderMouseUp;
         statusLabel.Location = new Point(13, 19);
         statusLabel.Size = new Size(132, 18);
         statusLabel.AutoEllipsis = true;
@@ -212,6 +217,7 @@ internal sealed class HangoutForm : Form
         AttachHeaderSurface(identity);
         AttachHeaderSurface(nameLabel);
         AttachHeaderSurface(statusLabel);
+        AttachHeaderSurface(statusDot);
         AttachHeaderSurface(avatar);
         AttachHeaderSurface(avatarInitial);
 
@@ -220,8 +226,9 @@ internal sealed class HangoutForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 2,
-            BackColor = BackColor,
+            BackColor = Color.FromArgb(18, 20, 25),
             Padding = new Padding(0),
+            Margin = Padding.Empty,
         };
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
@@ -234,6 +241,7 @@ internal sealed class HangoutForm : Form
         messagesPanel.WrapContents = false;
         messagesPanel.BackColor = Color.FromArgb(18, 20, 25);
         messagesPanel.Padding = new Padding(8, 8, 8, 12);
+        messagesPanel.Margin = Padding.Empty;
         messagesPanel.SizeChanged += (_, _) => ResizeMessageCards();
         body.Controls.Add(messagesPanel, 0, 0);
 
@@ -242,13 +250,14 @@ internal sealed class HangoutForm : Form
             Dock = DockStyle.Fill,
             BackColor = Color.FromArgb(18, 20, 25),
             Padding = new Padding(10, 7, 10, 8),
+            Margin = Padding.Empty,
         };
         composer.Resize += (_, _) => LayoutComposer(composer);
         body.Controls.Add(composer, 0, 1);
 
         inputFrame.CornerRadius = 16;
         inputFrame.BackColor = Color.FromArgb(34, 36, 45);
-        inputFrame.Padding = new Padding(10, 7, 8, 7);
+        inputFrame.Padding = Padding.Empty;
         inputFrame.Size = new Size(268, 40);
         composer.Controls.Add(inputFrame);
         inputBox.Multiline = true;
@@ -274,6 +283,7 @@ internal sealed class HangoutForm : Form
         sendButton.FlatStyle = FlatStyle.Flat;
         sendButton.FlatAppearance.BorderSize = 0;
         sendButton.Font = new Font("Segoe UI Semibold", 15F);
+        SetCircularRegion(sendButton);
         sendButton.Click += async (_, _) => await SendMessageAsync();
         uiToolTip.SetToolTip(sendButton, "Send message");
         composer.Controls.Add(sendButton);
@@ -375,6 +385,7 @@ internal sealed class HangoutForm : Form
         button.FlatAppearance.BorderSize = 0;
         button.Font = new Font("Segoe UI", 12F);
         button.Cursor = Cursors.Hand;
+        SetRoundedRegion(button, 7);
     }
 
     private void LayoutComposer(Panel composer)
@@ -384,8 +395,8 @@ internal sealed class HangoutForm : Form
         inputFrame.Width = Math.Max(80, availableWidth - sendButton.Width - 8);
         sendButton.Location = new Point(inputFrame.Right + 8,
             Math.Max(4, (composer.ClientSize.Height - sendButton.Height) / 2));
-        inputBox.Location = new Point(inputFrame.Padding.Left, inputFrame.Padding.Top);
-        inputBox.Width = Math.Max(50, inputFrame.ClientSize.Width - inputFrame.Padding.Horizontal);
+        inputBox.Location = new Point(10, 7);
+        inputBox.Width = Math.Max(50, inputFrame.ClientSize.Width - 20);
     }
 
     private void ResizeComposer(Panel composer)
@@ -476,12 +487,58 @@ internal sealed class HangoutForm : Form
         Hide();
     }
 
+    private void BeginNewVisiblePeriod()
+    {
+        Interlocked.Increment(ref transcriptGeneration);
+        windowStarted = false;
+        messagesPanel.SuspendLayout();
+        try
+        {
+            foreach (Control row in messagesPanel.Controls.Cast<Control>().ToArray())
+            {
+                if (row.Tag is MessageRowState state && state.Picture?.Image is Image image)
+                {
+                    state.Picture.Image = null;
+                    image.Dispose();
+                }
+                messagesPanel.Controls.Remove(row);
+                row.Dispose();
+            }
+            lock (messageLock)
+            {
+                displayedMessageIds.Clear();
+                if (!sendInProgress && uncertainSendContent is null) canonicalMessages.Clear();
+            }
+            messagesPanel.AutoScrollPosition = Point.Empty;
+        }
+        finally
+        {
+            messagesPanel.ResumeLayout();
+        }
+    }
+
     private static void SetCircularRegion(Control control)
     {
         using var path = new System.Drawing.Drawing2D.GraphicsPath();
         path.AddEllipse(0, 0, control.Width, control.Height);
-        control.Region?.Dispose();
+        var previous = control.Region;
         control.Region = new Region(path);
+        previous?.Dispose();
+    }
+
+    private static void SetRoundedRegion(Control control, int radius)
+    {
+        if (control.Width <= 0 || control.Height <= 0) return;
+        var diameter = Math.Min(radius * 2, Math.Min(control.Width, control.Height));
+        using var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(0, 0, diameter, diameter, 180, 90);
+        path.AddArc(control.Width - diameter, 0, diameter, diameter, 270, 90);
+        path.AddArc(control.Width - diameter, control.Height - diameter, diameter, diameter, 0, 90);
+        path.AddArc(0, control.Height - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        var previous = control.Region;
+        control.Region = new Region(path);
+        previous?.Dispose();
     }
 
     private async Task MonitorAsync(CancellationToken cancellationToken)
@@ -498,7 +555,8 @@ internal sealed class HangoutForm : Form
                 var visibleAtRequest = Visible;
                 var startingWindow = visibleAtRequest && !windowStarted;
                 await SyncAsync(client, Interlocked.Read(ref lastSyncedMessageId), cancellationToken,
-                    windowStart: !visibleAtRequest || startingWindow, startVisibleWindow: startingWindow);
+                    windowStart: !visibleAtRequest || startingWindow, startVisibleWindow: startingWindow,
+                    windowGeneration: Volatile.Read(ref transcriptGeneration));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -533,7 +591,7 @@ internal sealed class HangoutForm : Form
     }
 
     private async Task SyncAsync(HttpClient client, long after, CancellationToken cancellationToken,
-        bool windowStart = false, bool startVisibleWindow = false)
+        bool windowStart = false, bool startVisibleWindow = false, int? windowGeneration = null)
     {
         using var response = await client.GetAsync(
             $"{serverUrl}/api/hangout/companion/sync?after={after}" +
@@ -543,6 +601,8 @@ internal sealed class HangoutForm : Form
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        if (windowGeneration.HasValue &&
+            windowGeneration.Value != Volatile.Read(ref transcriptGeneration)) return;
         var root = document.RootElement;
         var status = ReadString(root, "status") ?? "unknown";
         var sessionId = ReadString(root, "sessionId");
@@ -875,7 +935,10 @@ internal sealed class HangoutForm : Form
         {
             image.Dispose();
             if (!placeholder.IsDisposed && revoked)
-                placeholder.Text = "Screenshot unavailable — chat token revoked.";
+            {
+                placeholder.Text = "Unavailable";
+                uiToolTip.SetToolTip(placeholder, "Screenshot unavailable — chat token revoked.");
+            }
             return;
         }
         picture.Image?.Dispose();
@@ -961,15 +1024,9 @@ internal sealed class HangoutForm : Form
             Font = new Font("Segoe UI", 9.5F),
             TextAlign = ContentAlignment.TopLeft,
         };
-        var time = DateTimeOffset.TryParse(message.CreatedAt, out var parsed)
-            ? parsed.ToLocalTime()
-            : message.CreatedAt;
-        var timestampText = time is DateTimeOffset timestamp
-            ? timestamp.ToString("t")
-            : time;
-        var timestampFull = time is DateTimeOffset fullTimestamp
-            ? fullTimestamp.ToString("f")
-            : message.CreatedAt;
+        var hasTimestamp = DateTimeOffset.TryParse(message.CreatedAt, out var parsed);
+        var timestampText = hasTimestamp ? parsed.ToLocalTime().ToString("t") : message.CreatedAt;
+        var timestampFull = hasTimestamp ? parsed.ToLocalTime().ToString("f") : message.CreatedAt;
         var timestamp = new Label
         {
             AutoSize = false,
@@ -983,7 +1040,7 @@ internal sealed class HangoutForm : Form
 
         PictureBox? picture = null;
         Label? screenshotPlaceholder = null;
-        if (message.ScreenshotActivityId is long activityId)
+        if (message.ScreenshotActivityId is not null)
         {
             picture = new PictureBox
             {
@@ -1006,7 +1063,6 @@ internal sealed class HangoutForm : Form
             screenshotPlaceholder.Click += (_, _) => OpenScreenshot(picture);
             bubble.Controls.Add(picture);
             bubble.Controls.Add(screenshotPlaceholder);
-            _ = AddScreenshotAsync(activityId, picture, screenshotPlaceholder);
         }
 
         bubble.Controls.Add(content);
@@ -1035,7 +1091,13 @@ internal sealed class HangoutForm : Form
                 messagesPanel.PerformLayout();
                 card.PerformLayout();
                 messagesPanel.ScrollControlIntoView(card);
+                // A long message fills its bubble; scroll the conversation
+                // to the newest text rather than adding a scrollbar to it.
+                messagesPanel.AutoScrollPosition = new Point(0, messagesPanel.DisplayRectangle.Height);
             }
+            if (message.ScreenshotActivityId is long activityId &&
+                picture is not null && screenshotPlaceholder is not null)
+                _ = AddScreenshotAsync(activityId, picture, screenshotPlaceholder);
         }
         catch
         {
@@ -1058,7 +1120,10 @@ internal sealed class HangoutForm : Form
         var contentWidth = Math.Max(48, bubbleWidth - 24);
         var contentSize = TextRenderer.MeasureText(text, state.Content.Font,
             new Size(contentWidth, int.MaxValue), measureFlags);
-        var contentHeight = Math.Max(state.Content.Font.Height, contentSize.Height);
+        // Label painting may need a few extra pixels at non-default display scales.
+        // Do not cap the height: the conversation scrolls, never the bubble.
+        var contentHeight = Math.Max(state.Content.Font.Height, contentSize.Height) +
+            state.Content.Font.Height / 2 + 4;
         var bubble = state.Bubble;
         bubble.Width = bubbleWidth;
         state.Content.Location = new Point(12, 10);
@@ -1148,8 +1213,21 @@ internal sealed class HangoutForm : Form
         void Update()
         {
             if (IsDisposed) return;
-            statusLabel.Text = string.IsNullOrWhiteSpace(detail) ? status : $"{status}  ·  {detail}";
-            statusLabel.ForeColor = isError ? Color.FromArgb(255, 132, 132) : Color.FromArgb(234, 193, 92);
+            statusLabel.Text = status switch
+            {
+                "Hangout Active" => "Hangout active",
+                "Hangout Inviting" => "Waiting for Ash",
+                "Hangout Idle" => "Hangout idle",
+                "Hangout Unavailable" => "Connecting…",
+                _ => status,
+            };
+            statusLabel.ForeColor = isError ? Color.FromArgb(255, 150, 155) : Color.FromArgb(177, 182, 194);
+            statusDot.BackColor = isError ? Color.FromArgb(255, 118, 133)
+                : status == "Hangout Active" ? Color.FromArgb(97, 211, 153)
+                : Color.FromArgb(234, 193, 92);
+            var fullStatus = string.IsNullOrWhiteSpace(detail) ? status : $"{status}  ·  {detail}";
+            uiToolTip.SetToolTip(statusLabel, fullStatus);
+            uiToolTip.SetToolTip(statusDot, fullStatus);
         }
 
         if (InvokeRequired) BeginInvoke((Action)Update);
@@ -1166,12 +1244,14 @@ internal sealed class HangoutForm : Form
             if (IsDisposed) return;
             foreach (var label in messagesPanel.Controls
                          .OfType<Panel>()
-                         .SelectMany(panel => panel.Controls.OfType<TableLayoutPanel>())
-                         .SelectMany(layout => layout.Controls.OfType<Panel>())
-                         .SelectMany(panel => panel.Controls.OfType<Label>()))
+                         .Select(panel => (panel.Tag as MessageRowState)?.ScreenshotPlaceholder)
+                         .OfType<Label>())
             {
-                if (label.Text.StartsWith("Loading screenshot", StringComparison.Ordinal))
-                    label.Text = "Screenshot unavailable — chat token revoked.";
+                if (label.Text.StartsWith("Loading", StringComparison.Ordinal))
+                {
+                    label.Text = "Unavailable";
+                    uiToolTip.SetToolTip(label, "Screenshot unavailable — chat token revoked.");
+                }
             }
             sendButton.Enabled = false;
             stopButton.Enabled = false;
@@ -1195,7 +1275,10 @@ internal sealed class HangoutForm : Form
                 uncertainSendContent is null && !sendInProgress;
             inputBox.Enabled = canSend;
             sendButton.Enabled = canSend;
-            sendButton.Text = sendInProgress ? "Sending…" : uncertainSendContent is not null ? "Checking…" : "Send";
+            sendButton.Text = sendInProgress || uncertainSendContent is not null ? "…" : "↑";
+            sendButton.AccessibleName = sendInProgress ? "Sending message"
+                : uncertainSendContent is not null ? "Checking whether message was sent" : "Send message";
+            uiToolTip.SetToolTip(sendButton, sendButton.AccessibleName);
             minutesBox.Enabled = windowStarted && !revoked && !minutesSaving;
             minutesSaveButton.Enabled = minutesBox.Enabled && minutesDirty;
             minutesSaveButton.Text = minutesSaving ? "Saving…" : "Apply";
@@ -1216,6 +1299,12 @@ internal sealed class HangoutForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        if (!closingFromOwner && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            DismissWindow();
+            return;
+        }
         monitorCancellation.Cancel();
         screenshotCancellation.Cancel();
     }
@@ -1250,6 +1339,51 @@ internal sealed class HangoutForm : Form
         string Content,
         string CreatedAt,
         long? ScreenshotActivityId);
+
+    private sealed record MessageRowState(
+        long Id,
+        bool FromWicked,
+        RoundedPanel Bubble,
+        Label Content,
+        Label Timestamp,
+        PictureBox? Picture,
+        Label? ScreenshotPlaceholder);
+
+    private sealed class RoundedPanel : Panel
+    {
+        private int cornerRadius = 16;
+
+        public int CornerRadius
+        {
+            get => cornerRadius;
+            set
+            {
+                cornerRadius = value;
+                UpdateRoundedRegion();
+            }
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            UpdateRoundedRegion();
+        }
+
+        private void UpdateRoundedRegion()
+        {
+            if (Width <= 0 || Height <= 0) return;
+            var diameter = Math.Min(cornerRadius * 2, Math.Min(Width, Height));
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddArc(0, 0, diameter, diameter, 180, 90);
+            path.AddArc(Width - diameter, 0, diameter, diameter, 270, 90);
+            path.AddArc(Width - diameter, Height - diameter, diameter, diameter, 0, 90);
+            path.AddArc(0, Height - diameter, diameter, diameter, 90, 90);
+            path.CloseFigure();
+            var previous = Region;
+            Region = new Region(path);
+            previous?.Dispose();
+        }
+    }
 
     private sealed class UnauthorizedChatException(string message) : Exception(message) { }
 }

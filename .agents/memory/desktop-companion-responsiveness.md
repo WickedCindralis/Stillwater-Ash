@@ -26,21 +26,23 @@ bounded request lifetime without treating a stale error as new evidence.
 
 Keep the Hangout sync cursor separate from a send response's observed message
 IDs, and acknowledge sync results only after their cards have been rendered.
-Keep long replies scrollable within their text area. The user wants the
-Windows transcript to move to the newest message and show the end of a long
-reply by default, without scrolling to an older late-arriving card or hiding
-the text behind its screenshot.
+Keep every reply fully visible in its bubble, with no inner scrollbar. The
+user changed the Hangout layout requirement to a compact chat pop-up: only
+the conversation scrolls, and new messages move that outer viewport to the
+newest message. Screenshots should be compact thumbnails, not large cards.
 
 **Why:** Production confirmed an Ash reply was persisted and returned to the
 Windows app, and later polls skipped past its ID, while the user could not see
-it. A cursor advanced before successful UI rendering has no recovery path;
-text measurement at some display scales and scrolling to a tall screenshot
-card can also obscure the reply text.
+it. A cursor advanced before successful UI rendering has no recovery path.
+The previous bounded, scrollable message text and large screenshot could
+also hide the reply or make it hard to find. The user explicitly requested
+that message text never have its own scroll area.
 
 **How to apply:** A failed render must leave the sync cursor behind for retry,
-without telling the user to resend an already accepted message. On a new
-highest-ID card, show the end of its text and bring that text into view;
-still let the user scroll back to its beginning and any attached screenshot.
+without telling the user to resend an already accepted message. Measure the
+entire message at its current width (including higher display scaling); do
+not cap bubble height. On a new highest-ID card, scroll the outer conversation
+to its bottom, letting the user scroll back to its beginning and thumbnail.
 
 An active Hangout cannot be inferred from persisted session status alone.
 Treat the live companion heartbeat as a prerequisite for automatic capture;

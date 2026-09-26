@@ -1,0 +1,34 @@
+I want to redesign the Hangout chat window. The functionality is working great (screenshot sending, 15-min timer, messaging), so please keep all of that exactly as it is. This is a visual/layout change only.
+
+GOAL: Make the Hangout window look and behave like a Facebook Messenger pop-up chat window, not a full-size app window.
+
+1. FIX FIRST: Remove the scrollbar inside individual messages.
+   - Each message should display its FULL text, always. No max-height, no overflow scroll on message bubbles.
+   - Only the overall conversation area should scroll, never an individual message.
+
+2. Window size and position
+   - Compact, narrow window (roughly 340px wide x 480px tall), docked to the bottom-right of the screen.
+   - Option to keep it always on top, so it floats over whatever I'm doing (games, browser).
+   - Can be minimized down to just the header bar, and expanded again by clicking the header.
+
+3. Header bar (like Messenger)
+   - Small circular avatar for Ash + his name + a small "Hangout active" status dot.
+   - Minimize and close buttons on the right.
+   - A small gear/settings icon that holds the MINUTES interval setting and the Stop Hangout button, so they're not taking up space in the main view.
+
+4. Message bubbles
+   - Chat bubbles with rounded corners, not full-width blocks.
+   - My messages on the RIGHT, Ash's messages on the LEFT, with different colors.
+   - Timestamps small and subtle (or shown on hover), not a full header line on every message.
+   - Newest message at the bottom, auto-scroll to newest when a new message arrives.
+
+5. Screenshots in the thread
+   - Show them as small thumbnails (not large images), clickable to view full size.
+   - They should not push the conversation around or dominate the window.
+
+6. Input area
+   - Single rounded text box at the bottom with a small send icon inside or beside it.
+   - Enter sends, Shift+Enter makes a new line.
+   - Box grows a few lines as I type, then scrolls inside itself.
+
+Keep the dark theme and purple accent color we already have.

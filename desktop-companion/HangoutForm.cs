@@ -472,6 +472,7 @@ internal sealed class HangoutForm : Form
 
     private void ToggleSettings()
     {
+        if (collapsed) ToggleCollapsed();
         settingsPanel.Visible = !settingsPanel.Visible;
         if (settingsPanel.Visible)
         {

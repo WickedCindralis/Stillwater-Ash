@@ -98,15 +98,19 @@ export async function acceptLovenseCallback(value: unknown): Promise<boolean> {
   const toyId = (toy as Record<string, unknown>).id || toyKey;
   if (typeof toyId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(toyId)) return false;
   const hash = tokenHash(body.utoken);
-  const [pair] = await db.select().from(ashLovense).where(eq(ashLovense.id, OWNER_ROW)).limit(1);
-  if (!pair || !pair.pendingUid || body.uid !== pair.pendingUid || !pair.expiresAt ||
-      pair.expiresAt.getTime() <= Date.now() || hash !== pair.pendingTokenHash) return false;
-  const [updated] = await db.update(ashLovense).set({
-    uid: pair.pendingUid, toyId, pairedAt: new Date(), pendingUid: "",
-    pendingTokenHash: "", qrUrl: "", expiresAt: null, updatedAt: new Date(),
-  }).where(and(eq(ashLovense.id, OWNER_ROW), eq(ashLovense.pendingUid, pair.pendingUid),
-    eq(ashLovense.pendingTokenHash, hash))).returning({ id: ashLovense.id });
-  if (!updated) return false;
+  const accepted = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${DEVICE_LOCK})`);
+    const [pair] = await tx.select().from(ashLovense).where(eq(ashLovense.id, OWNER_ROW)).limit(1);
+    if (!pair || !pair.pendingUid || body.uid !== pair.pendingUid || !pair.expiresAt ||
+        pair.expiresAt.getTime() <= Date.now() || hash !== pair.pendingTokenHash) return false;
+    const [updated] = await tx.update(ashLovense).set({
+      uid: pair.pendingUid, toyId, pairedAt: new Date(), pendingUid: "",
+      pendingTokenHash: "", qrUrl: "", expiresAt: null, updatedAt: new Date(),
+    }).where(and(eq(ashLovense.id, OWNER_ROW), eq(ashLovense.pendingUid, pair.pendingUid),
+      eq(ashLovense.pendingTokenHash, hash))).returning({ id: ashLovense.id });
+    return !!updated;
+  });
+  if (!accepted) return false;
   logger.info("[ash-lovense] Remote pairing callback verified; device controls enabled for private chat");
   return true;
 }

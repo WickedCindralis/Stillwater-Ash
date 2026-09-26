@@ -21,6 +21,7 @@ test("rejects malformed, duplicate, and out-of-range controls without actuating"
     "[KINGS_FINGERS: VIBRATE 0 5]", "[KINGS_FINGERS: FINGER 21 5]",
     "[KINGS_FINGERS: FINGER 10 1]", "[KINGS_FINGERS: VIBRATE 10 31]",
     "[KINGS_FINGERS: VIBRATE 10.5 5]", "[KINGS_FINGERS: ROTATE 10 5]",
+    "[KINGS_FINGERS: vibrate 10 5]", "[KINGS_FINGERS: VIBRATE 01 5]",
     "[KINGS_FINGERS: STOP]\n[KINGS_FINGERS: VIBRATE 10 5]",
   ]) {
     const parsed = stripKingsFingersCommand(reply);

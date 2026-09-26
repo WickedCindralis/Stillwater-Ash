@@ -702,6 +702,12 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     if (hangout?.requiredImage && !imageDataUrl) throw new Error("Hangout requires a fresh screenshot");
     if (hangout?.instruction) messages.splice(messages.length - 1, 0, { role: "developer", content: hangout.instruction });
     if (source === "private_message" && allowKingsFingers) {
+      // Public Discord packets are useful for continuity, but must not share
+      // the model call that is authorized to control a physical device.
+      messages = messages.filter((message) =>
+        typeof message.content !== "string" ||
+        (!message.content.startsWith("[DISCORD COMMENT HISTORY") &&
+         !message.content.startsWith("[OWNER DISCORD DM HISTORY")));
       messages.splice(messages.length - 1, 0, { role: "developer", content: KINGS_FINGERS_PROTOCOL });
     }
 
@@ -1060,12 +1066,14 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     // fresh comments to Ash inside this same live call. Comments are claimed
     // atomically and released again if the model call fails, so none are lost.
     let heraldIds: number[] = [];
+    let hasHeraldPacket = false;
     let releaseClaim: ((ids: number[]) => Promise<void>) | null = null;
     try {
       const { sweepTheWalls, claimHeraldPacket, releaseHeraldClaim } = await import("./herald");
       await sweepTheWalls();
       const { packet, ids } = await claimHeraldPacket();
       if (packet) {
+        hasHeraldPacket = true;
         prompt = `${packet}\n\n[Wicked's message follows]\n${prompt}`;
         heraldIds = ids;
         releaseClaim = releaseHeraldClaim;
@@ -1077,7 +1085,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     try {
       // The Herald sweep can prepend untrusted public comments to this call.
       // Never allow those mixed-source packets to trigger physical controls.
-      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl, null, undefined, undefined, heraldIds.length === 0 && !imageDataUrl);
+      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl, null, undefined, undefined, !hasHeraldPacket && !imageDataUrl);
     } finally {
       if (!rawReply && heraldIds.length > 0 && releaseClaim) {
         // Kill switch / API failure — Ash never saw the comments; put them back.

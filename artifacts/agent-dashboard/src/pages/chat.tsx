@@ -855,7 +855,7 @@ export default function ChatPage() {
                   ) : null}
                 </div>
                 {lovenseStatusQuery.data?.connected && (
-                  <span className="w-2 h-2 mt-2 rounded-full bg-green-400 shrink-0" aria-label="Connected" />
+                  <span className="w-2 h-2 mt-2 rounded-full bg-green-400 shrink-0" aria-label="Paired" />
                 )}
               </div>
 
@@ -865,6 +865,9 @@ export default function ChatPage() {
                     ? "Pairing and device controls are disabled in preview. Open the published Stillwater app to pair."
                     : "Lovense pairing is unavailable until the server is configured."}
                 </p>
+              )}
+              {lovenseStatusQuery.data?.configured && (
+                <p className="text-white/50 text-xs">Pair with exactly one active toy. Paired does not confirm that Lovense Remote is online; commands report an error if it is offline.</p>
               )}
 
               {lovenseStatusQuery.data && !lovenseStatusQuery.data.connected && lovenseStatusQuery.data.qrUrl && (

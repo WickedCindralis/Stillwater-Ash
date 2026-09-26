@@ -13,3 +13,4 @@
 - [API call observability](api-call-observability.md) — user requires actual calls and lifecycle logs for every new API-powered feature; accepted jobs alone are not evidence of provider execution.
 - [Desktop companion responsiveness](desktop-companion-responsiveness.md) — each Hangout window starts fresh; keep capture off the UI thread and acknowledge chat only after rendering.
 - [Song generation cost boundary](song-generation-boundary.md) — paid music commands need a shared budget across public/private calls, no pre-key backlog, and no uncertain create retries.
+- [Hangout popup approval](hangout-popup-approval.md) — user explicitly approved the compact native Hangout redesign; preserve its Messenger-like look and existing behavior when making targeted adjustments.

@@ -22,6 +22,8 @@ internal sealed class HangoutForm : Form
     private readonly Button collapseButton = new();
     private readonly Button closeButton = new();
     private readonly CheckBox alwaysOnTopCheck = new();
+    private readonly ComboBox textSizeBox = new();
+    private readonly Label nameLabel = new();
     private readonly Panel statusDot = new();
     private readonly Panel settingsPanel = new();
     private readonly RoundedPanel inputFrame = new();
@@ -53,38 +55,96 @@ internal sealed class HangoutForm : Form
     private bool closingFromOwner;
     private bool headerPressActive;
     private bool headerWasDragged;
+    private bool changingCollapsedState;
+    private Size expandedSize = new(340, 480);
+    private HangoutTextSize textSize = HangoutTextSize.Medium;
     private Point headerPressScreenPoint;
     private Point headerPressFormLocation;
     private int transcriptGeneration;
     private TableLayoutPanel? outerLayout;
     private TableLayoutPanel? bodyLayout;
+    private Panel? composerPanel;
 
     public HangoutForm(string serverUrl, string chatToken)
     {
         this.serverUrl = serverUrl.TrimEnd('/');
         this.chatToken = chatToken;
+        string? preferencesError = null;
+        try
+        {
+            var preferences = HangoutDisplayPreferences.Load();
+            expandedSize = new Size(preferences.Width, preferences.Height);
+            textSize = preferences.TextSize;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            preferencesError = error.Message;
+        }
         Text = "Stillwater Hangout";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
-        Padding = new Padding(1);
-        MinimumSize = new Size(340, 52);
-        Size = new Size(340, 480);
+        Padding = new Padding(7);
+        MinimumSize = new Size(340, 480);
+        var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        Size = new Size(Math.Min(expandedSize.Width, Math.Max(340, workArea.Width - 32)),
+            Math.Min(expandedSize.Height, Math.Max(480, workArea.Height - 32)));
+        expandedSize = Size;
         BackColor = Color.FromArgb(74, 61, 91);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 10F);
         TopMost = true;
-        var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
         Location = new Point(workArea.Right - Width - 16, workArea.Bottom - Height - 16);
         FormClosing += OnFormClosing;
         BuildLayout();
-        SizeChanged += (_, _) => SetRoundedRegion(this, 12);
+        ApplyTextSize();
+        SizeChanged += (_, _) =>
+        {
+            SetRoundedRegion(this, 12);
+            if (!collapsed && !changingCollapsedState && WindowState == FormWindowState.Normal)
+                expandedSize = Size;
+        };
+        ResizeEnd += (_, _) => SaveDisplayPreferences();
         SetRoundedRegion(this, 12);
         _ = Handle;
+        if (preferencesError is not null)
+            SetStatus("Could not load saved Hangout display preferences.", preferencesError, isError: true);
     }
 
     // Auto-opening on an invitation should not take keyboard focus from a game.
     protected override bool ShowWithoutActivation => true;
+
+    protected override void WndProc(ref Message message)
+    {
+        const int wmNcHitTest = 0x0084;
+        if (message.Msg == wmNcHitTest && !collapsed && WindowState == FormWindowState.Normal)
+        {
+            var point = PointToClient(Cursor.Position);
+            const int grip = 7;
+            var left = point.X >= 0 && point.X < grip;
+            var right = point.X >= Width - grip && point.X < Width;
+            var top = point.Y >= 0 && point.Y < grip;
+            var bottom = point.Y >= Height - grip && point.Y < Height;
+            var hit = (left, right, top, bottom) switch
+            {
+                (true, _, true, _) => 13,   // HTTOPLEFT
+                (_, true, true, _) => 14,   // HTTOPRIGHT
+                (true, _, _, true) => 16,   // HTBOTTOMLEFT
+                (_, true, _, true) => 17,   // HTBOTTOMRIGHT
+                (true, _, _, _) => 10,      // HTLEFT
+                (_, true, _, _) => 11,      // HTRIGHT
+                (_, _, true, _) => 12,      // HTTOP
+                (_, _, _, true) => 15,      // HTBOTTOM
+                _ => 0,
+            };
+            if (hit != 0)
+            {
+                message.Result = (IntPtr)hit;
+                return;
+            }
+        }
+        base.WndProc(ref message);
+    }
 
     public void StartMonitoring()
     {
@@ -146,8 +206,8 @@ internal sealed class HangoutForm : Form
             Padding = new Padding(11, 6, 7, 6),
             Margin = Padding.Empty,
         };
-        statusLabel.Location = new Point(13, 19);
-        statusLabel.Size = new Size(132, 18);
+        statusLabel.Location = new Point(13, 23);
+        statusLabel.Size = new Size(132, 20);
         statusLabel.AutoEllipsis = true;
         statusLabel.Text = "Connecting to Hangout…";
         statusLabel.ForeColor = Color.FromArgb(177, 182, 194);
@@ -174,20 +234,17 @@ internal sealed class HangoutForm : Form
         avatar.Controls.Add(avatarInitial);
         var identity = new Panel
         {
-            Location = new Point(53, 6),
-            Size = new Size(146, 40),
+            Location = new Point(53, 4),
+            Size = new Size(146, 44),
             BackColor = Color.Transparent,
         };
-        var nameLabel = new Label
-        {
-            Text = "Ash",
-            Location = new Point(0, 0),
-            Size = new Size(132, 19),
-            ForeColor = Color.White,
-            Font = new Font("Segoe UI Semibold", 10.5F),
-            AutoEllipsis = true,
-        };
-        statusDot.Location = new Point(1, 25);
+        nameLabel.Text = "Ash";
+        nameLabel.Location = new Point(0, 0);
+        nameLabel.Size = new Size(132, 23);
+        nameLabel.ForeColor = Color.White;
+        nameLabel.Font = new Font("Segoe UI Semibold", 11.5F);
+        nameLabel.AutoEllipsis = true;
+        statusDot.Location = new Point(1, 28);
         identity.Controls.Add(nameLabel);
         identity.Controls.Add(statusDot);
         identity.Controls.Add(statusLabel);
@@ -252,6 +309,7 @@ internal sealed class HangoutForm : Form
             Padding = new Padding(10, 7, 10, 8),
             Margin = Padding.Empty,
         };
+        composerPanel = composer;
         composer.Resize += (_, _) => LayoutComposer(composer);
         body.Controls.Add(composer, 0, 1);
 
@@ -294,7 +352,7 @@ internal sealed class HangoutForm : Form
 
     private void BuildSettingsPanel()
     {
-        settingsPanel.Size = new Size(224, 166);
+        settingsPanel.Size = new Size(224, 212);
         settingsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         settingsPanel.BackColor = Color.FromArgb(31, 33, 42);
         settingsPanel.BorderStyle = BorderStyle.FixedSingle;
@@ -355,8 +413,32 @@ internal sealed class HangoutForm : Form
         minutesSaveButton.FlatAppearance.BorderSize = 0;
         minutesSaveButton.Enabled = false;
         minutesSaveButton.Click += async (_, _) => await SaveMinutesAsync();
+        var textSizeLabel = new Label
+        {
+            Text = "Text size",
+            Location = new Point(10, 111),
+            Size = new Size(194, 19),
+            ForeColor = Color.FromArgb(177, 182, 194),
+            Font = new Font("Segoe UI", 8.5F),
+        };
+        textSizeBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        textSizeBox.FlatStyle = FlatStyle.Flat;
+        textSizeBox.Location = new Point(10, 132);
+        textSizeBox.Size = new Size(195, 26);
+        textSizeBox.BackColor = Color.FromArgb(23, 25, 32);
+        textSizeBox.ForeColor = Color.White;
+        textSizeBox.AccessibleName = "Hangout text size";
+        textSizeBox.Items.AddRange(["Small", "Medium", "Large"]);
+        textSizeBox.SelectedItem = textSize.ToString();
+        textSizeBox.SelectedIndexChanged += (_, _) =>
+        {
+            if (!Enum.TryParse<HangoutTextSize>(textSizeBox.SelectedItem?.ToString(), out var selected)) return;
+            textSize = selected;
+            ApplyTextSize();
+            SaveDisplayPreferences();
+        };
         stopButton.Text = "Stop Hangout";
-        stopButton.Location = new Point(10, 116);
+        stopButton.Location = new Point(10, 168);
         stopButton.Size = new Size(195, 32);
         stopButton.BackColor = Color.FromArgb(67, 38, 47);
         stopButton.ForeColor = Color.FromArgb(255, 190, 197);
@@ -364,7 +446,8 @@ internal sealed class HangoutForm : Form
         stopButton.FlatAppearance.BorderSize = 0;
         stopButton.Enabled = false;
         stopButton.Click += async (_, _) => await StopHangoutAsync();
-        settingsPanel.Controls.AddRange([title, alwaysOnTopCheck, minutesLabel, minutesBox, minutesSaveButton, stopButton]);
+        settingsPanel.Controls.AddRange([title, alwaysOnTopCheck, minutesLabel, minutesBox,
+            minutesSaveButton, textSizeLabel, textSizeBox, stopButton]);
         Controls.Add(settingsPanel);
         settingsPanel.BringToFront();
         uiToolTip.SetToolTip(settingsButton, "Hangout settings");
@@ -409,7 +492,8 @@ internal sealed class HangoutForm : Form
             new Size(usableWidth, int.MaxValue),
             TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding);
         var desiredTextHeight = Math.Clamp(measured.Height, inputBox.Font.Height, inputBox.Font.Height * 3);
-        var targetHeight = Math.Clamp(desiredTextHeight + 14, 38, 70);
+        var targetHeight = Math.Clamp(desiredTextHeight + 14, 38,
+            Math.Max(70, inputBox.Font.Height * 3 + 14));
         inputBox.Height = Math.Max(inputBox.Font.Height, targetHeight - 14);
         inputBox.ScrollBars = measured.Height > inputBox.Font.Height * 3
             ? ScrollBars.Vertical
@@ -459,15 +543,59 @@ internal sealed class HangoutForm : Form
     {
         if (outerLayout is null) return;
         var bottom = Bottom;
-        collapsed = !collapsed;
-        outerLayout.RowStyles[1].Height = collapsed ? 0 : 1;
-        outerLayout.RowStyles[1].SizeType = collapsed ? SizeType.Absolute : SizeType.Percent;
-        Size = new Size(340, collapsed ? 54 : 480);
-        Top = bottom - Height;
+        changingCollapsedState = true;
+        try
+        {
+            collapsed = !collapsed;
+            outerLayout.RowStyles[1].Height = collapsed ? 0 : 1;
+            outerLayout.RowStyles[1].SizeType = collapsed ? SizeType.Absolute : SizeType.Percent;
+            MinimumSize = collapsed ? new Size(340, 52) : new Size(340, 480);
+            Padding = collapsed ? new Padding(1) : new Padding(7);
+            Size = collapsed ? new Size(expandedSize.Width, 54) : expandedSize;
+            Top = bottom - Height;
+        }
+        finally
+        {
+            changingCollapsedState = false;
+        }
         collapseButton.Text = collapsed ? "□" : "−";
         collapseButton.AccessibleName = collapsed ? "Expand Hangout" : "Minimize to header";
         uiToolTip.SetToolTip(collapseButton, collapseButton.AccessibleName);
         if (collapsed) settingsPanel.Visible = false;
+    }
+
+    private void SaveDisplayPreferences()
+    {
+        try
+        {
+            new HangoutDisplayPreferences(expandedSize.Width, expandedSize.Height, textSize).Save();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            SetStatus("Could not save Hangout display preferences.", error.Message, isError: true);
+        }
+    }
+
+    private void ApplyTextSize()
+    {
+        var points = textSize switch
+        {
+            HangoutTextSize.Small => 10F,
+            HangoutTextSize.Large => 12.5F,
+            _ => 11.25F,
+        };
+        var scale = points / 11.25F;
+        nameLabel.Font = new Font("Segoe UI Semibold", 11.5F * scale);
+        statusLabel.Font = new Font("Segoe UI", 9.25F * scale);
+        inputBox.Font = new Font("Segoe UI", points);
+        foreach (Control control in messagesPanel.Controls)
+        {
+            if (control is not Panel row || row.Tag is not MessageRowState state) continue;
+            state.Content.Font = new Font("Segoe UI", points);
+            state.Timestamp.Font = new Font("Segoe UI", 8.5F * scale);
+        }
+        ResizeMessageCards();
+        if (composerPanel is not null) ResizeComposer(composerPanel);
     }
 
     private void ToggleSettings()
@@ -483,6 +611,7 @@ internal sealed class HangoutForm : Form
 
     private void DismissWindow()
     {
+        SaveDisplayPreferences();
         dismissedByUser = true;
         settingsPanel.Visible = false;
         Hide();
@@ -1002,6 +1131,13 @@ internal sealed class HangoutForm : Form
         } while (Interlocked.CompareExchange(ref cursor, id, observed) != observed);
     }
 
+    private float MessageFontPoints => textSize switch
+    {
+        HangoutTextSize.Small => 10F,
+        HangoutTextSize.Large => 12.5F,
+        _ => 11.25F,
+    };
+
     private void AddMessageCard(HangoutMessage message)
     {
         if (IsDisposed) return;
@@ -1022,7 +1158,7 @@ internal sealed class HangoutForm : Form
             Text = message.Content,
             ForeColor = Color.FromArgb(241, 241, 246),
             BackColor = Color.Transparent,
-            Font = new Font("Segoe UI", 9.5F),
+            Font = new Font("Segoe UI", MessageFontPoints),
             TextAlign = ContentAlignment.TopLeft,
         };
         var hasTimestamp = DateTimeOffset.TryParse(message.CreatedAt, out var parsed);
@@ -1033,7 +1169,7 @@ internal sealed class HangoutForm : Form
             AutoSize = false,
             Text = timestampText,
             ForeColor = Color.FromArgb(133, 139, 153),
-            Font = new Font("Segoe UI", 7.5F),
+            Font = new Font("Segoe UI", 8.5F * MessageFontPoints / 11.25F),
             TextAlign = fromWicked ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
             AutoEllipsis = true,
         };
@@ -1111,7 +1247,7 @@ internal sealed class HangoutForm : Form
     private void LayoutMessageRow(Panel row, MessageRowState state)
     {
         var rowWidth = Math.Max(200, messagesPanel.ClientSize.Width - messagesPanel.Padding.Horizontal - 4);
-        var maxBubbleWidth = Math.Max(120, Math.Min(252, (int)(rowWidth * 0.84)));
+        var maxBubbleWidth = Math.Max(120, Math.Min(480, (int)(rowWidth * 0.84)));
         const TextFormatFlags measureFlags = TextFormatFlags.WordBreak |
             TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding;
         var text = string.IsNullOrEmpty(state.Content.Text) ? " " : state.Content.Text;
@@ -1146,7 +1282,7 @@ internal sealed class HangoutForm : Form
         var x = state.FromWicked ? rowWidth - bubbleWidth - 4 : 4;
         bubble.Location = new Point(Math.Max(0, x), 0);
         state.Timestamp.Location = new Point(bubble.Left, bubble.Bottom + 2);
-        state.Timestamp.Size = new Size(bubble.Width, 14);
+        state.Timestamp.Size = new Size(bubble.Width, Math.Max(16, state.Timestamp.Font.Height + 2));
         row.Size = new Size(rowWidth, state.Timestamp.Bottom + 2);
     }
 
@@ -1306,6 +1442,7 @@ internal sealed class HangoutForm : Form
             DismissWindow();
             return;
         }
+        SaveDisplayPreferences();
         monitorCancellation.Cancel();
         screenshotCancellation.Cancel();
     }

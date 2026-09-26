@@ -39,6 +39,8 @@ import { formatPrivateHistory } from "./history-format";
 import { parseStoryCommand } from "./story-command";
 import { SONG_PROTOCOL, stripSongCommand } from "./song-command";
 import { enqueueSong } from "./song-service";
+import { KINGS_FINGERS_PROTOCOL, stripKingsFingersCommand } from "./kings-fingers-command";
+import { sendKingsFingers } from "./lovense";
 import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 
@@ -679,6 +681,7 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     screenCapture?: FreshScreenCapture | null,
     hangout?: { requiredImage?: boolean; beforeProviderCall?: () => Promise<boolean>; correlationId?: string; instruction?: string },
     songOriginId?: string,
+    allowKingsFingers = false,
   ): Promise<string> {
     if (!this.openai) throw new Error("OpenAI client not initialized");
 
@@ -698,6 +701,9 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     }
     if (hangout?.requiredImage && !imageDataUrl) throw new Error("Hangout requires a fresh screenshot");
     if (hangout?.instruction) messages.splice(messages.length - 1, 0, { role: "developer", content: hangout.instruction });
+    if (source === "private_message" && allowKingsFingers) {
+      messages.splice(messages.length - 1, 0, { role: "developer", content: KINGS_FINGERS_PROTOCOL });
+    }
 
     const requestParams = this.buildOpenAIRequestParams(model, messages, imageDataUrl);
 
@@ -745,6 +751,26 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       }
       const providerResponseId = (response as any)?._request_id || response.id || "unknown";
       this.log(`Provider boundary success [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, providerResponseId=${providerResponseId}, durationMs=${Date.now() - startedAt}, correlationId=${hangout?.correlationId || "none"}]`);
+      const fingersCommand = stripKingsFingersCommand(responseText);
+      responseText = fingersCommand.text;
+      let deviceAccepted = false;
+      let deviceFailed = false;
+      if (fingersCommand.detected && source === "private_message" && allowKingsFingers) {
+        if (fingersCommand.error) {
+          deviceFailed = true;
+          this.error(`King's Fingers command rejected: ${fingersCommand.error}`);
+        } else if (fingersCommand.command) {
+          try {
+            await sendKingsFingers(fingersCommand.command);
+            deviceAccepted = true;
+          } catch (error) {
+            deviceFailed = true;
+            this.error("King's Fingers command failed:", error);
+          }
+        }
+      } else if (fingersCommand.detected) {
+        this.log(`King's Fingers command ignored outside direct private chat [source=${source}]`);
+      }
       const songCommand = stripSongCommand(responseText);
       let songQueued = false;
       if (songCommand.error) {
@@ -767,6 +793,12 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
           ? "I started a song. I'll share the link when it's ready."
           : "I couldn't start the song right now.";
       }
+      if (!songCommand.text && fingersCommand.detected) {
+        if (source.startsWith("discord")) return "NONE";
+        if (source === "self_prompt") return "";
+        return deviceAccepted ? "I sent the device command." : "I couldn't send the device command right now.";
+      }
+      if (deviceFailed) return `${songCommand.text}\n\nI couldn't send the device command right now.`.trim();
       return songCommand.text;
     } catch (e) {
       this.lastApiCallTime = Date.now();
@@ -1043,7 +1075,9 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     }
     let rawReply = "";
     try {
-      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl);
+      // The Herald sweep can prepend untrusted public comments to this call.
+      // Never allow those mixed-source packets to trigger physical controls.
+      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl, null, undefined, undefined, heraldIds.length === 0 && !imageDataUrl);
     } finally {
       if (!rawReply && heraldIds.length > 0 && releaseClaim) {
         // Kill switch / API failure — Ash never saw the comments; put them back.

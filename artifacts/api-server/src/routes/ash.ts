@@ -39,6 +39,7 @@ import {
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import lovenseRouter from "./lovense";
 
 declare module "express-session" {
   interface SessionData {
@@ -47,6 +48,7 @@ declare module "express-session" {
 }
 
 const router: IRouter = Router();
+router.use("/lovense", lovenseRouter);
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024; // 12MB decoded
 

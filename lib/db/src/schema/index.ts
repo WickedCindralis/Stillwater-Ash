@@ -19,3 +19,4 @@
 
 export * from "./ash";
 export * from "./ash-songs";
+export * from "./ash-lovense";

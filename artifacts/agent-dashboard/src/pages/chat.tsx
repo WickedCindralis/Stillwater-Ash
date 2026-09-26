@@ -6,7 +6,7 @@ import { getClipboardImage } from "@/lib/clipboardImage";
 import type { AshMessage, AshState, AshDiaryEntry } from "@/lib/types";
 import {
   Flame, Send, Loader2, ImagePlus, Wand2, X, BookOpen, Settings, Monitor, Copy,
-  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone, Feather,
+  Smartphone, LogOut, Power, Trash2, ArrowLeft, Swords, CircleDot, Download, ScrollText, Megaphone, Feather, RefreshCw, QrCode,
 } from "lucide-react";
 import { SiDiscord } from "react-icons/si";
 import ChessPanel from "@/components/chess-panel";
@@ -25,6 +25,16 @@ type HangoutStatus = {
   companionPaired: boolean;
   lastError: string;
   lastCaptureAt: string | null;
+};
+
+type LovenseStatus = {
+  configured: boolean;
+  connected: boolean;
+  qrUrl: string | null;
+  expiresAt: string | null;
+  callbackUrl: string;
+  stopWarning?: string | null;
+  previewOnly?: boolean;
 };
 
 function mergeLatestMessages(
@@ -167,6 +177,16 @@ export default function ChatPage() {
     enabled: panel === "diary",
     refetchInterval: panel === "diary" ? 30_000 : false,
   });
+  const lovenseStatusQuery = useQuery<LovenseStatus>({
+    queryKey: ["/api/lovense/status"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/lovense/status");
+      return (await response.json()) as LovenseStatus;
+    },
+    enabled: panel === "settings",
+    refetchInterval: panel === "settings" ? 5_000 : false,
+  });
+  const [lovenseStopWarning, setLovenseStopWarning] = useState<string | null>(null);
 
   const sendMutation = useMutation({
     mutationFn: async (payload: { content: string; imageDataUrl?: string; requestImage: boolean }) => {
@@ -238,6 +258,17 @@ export default function ChatPage() {
       await apiRequest("PATCH", "/api/state", patch);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/state"] }),
+  });
+
+  const lovenseMutation = useMutation({
+    mutationFn: async (action: "pair" | "disconnect") => {
+      const response = await apiRequest("POST", `/api/lovense/${action}`);
+      return (await response.json()) as LovenseStatus;
+    },
+    onSuccess: (status) => {
+      setLovenseStopWarning(status.stopWarning ?? null);
+      queryClient.setQueryData(["/api/lovense/status"], status);
+    },
   });
 
   const pairScreenCaptureMutation = useMutation({
@@ -800,6 +831,105 @@ export default function ChatPage() {
                 >
                   {killSwitchOn ? "OFF" : "ON"}
                 </button>
+              </div>
+            </div>
+
+            {/* Lovense pairing */}
+            <div className="min-w-0 bg-white/5 border border-white/10 rounded-xl p-4 space-y-3" data-testid="card-lovense-pairing">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-white font-semibold flex items-center gap-2">
+                    <QrCode className="w-4 h-4 shrink-0 text-gold" /> Lovense pairing
+                  </h3>
+                  {lovenseStatusQuery.data ? (
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs" data-testid="status-lovense">
+                      <span className={lovenseStatusQuery.data.configured ? "text-green-400" : "text-amber-300"}>
+                        {lovenseStatusQuery.data.configured ? "Configured" : "Not configured"}
+                      </span>
+                      <span className={lovenseStatusQuery.data.connected ? "text-green-400" : "text-white/50"}>
+                        {lovenseStatusQuery.data.connected ? "Paired" : "Not paired"}
+                      </span>
+                    </div>
+                  ) : lovenseStatusQuery.isLoading ? (
+                    <p className="text-white/40 text-xs mt-1">Checking connection…</p>
+                  ) : null}
+                </div>
+                {lovenseStatusQuery.data?.connected && (
+                  <span className="w-2 h-2 mt-2 rounded-full bg-green-400 shrink-0" aria-label="Connected" />
+                )}
+              </div>
+
+              {!lovenseStatusQuery.data?.configured && lovenseStatusQuery.data && (
+                <p className="text-white/50 text-xs">
+                  {lovenseStatusQuery.data.previewOnly
+                    ? "Pairing and device controls are disabled in preview. Open the published Stillwater app to pair."
+                    : "Lovense pairing is unavailable until the server is configured."}
+                </p>
+              )}
+
+              {lovenseStatusQuery.data && !lovenseStatusQuery.data.connected && lovenseStatusQuery.data.qrUrl && (
+                <div className="flex flex-col items-center gap-2 rounded-lg bg-white p-3">
+                  <img
+                    src={lovenseStatusQuery.data.qrUrl}
+                    alt="Lovense pairing QR code"
+                    className="w-40 max-w-full aspect-square object-contain"
+                    data-testid="img-lovense-qr"
+                  />
+                  {lovenseStatusQuery.data.expiresAt && (
+                    <p className="text-center text-xs text-black/60" data-testid="text-lovense-expiry">
+                      Expires {new Date(lovenseStatusQuery.data.expiresAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <p className="text-xs text-white/50">Callback URL for the Lovense developer dashboard (open published Stillwater)</p>
+                <p className="text-xs text-amber-300/80">If this Lovense developer app also serves Summer Palace, changing its single callback URL may stop Summer Palace from receiving new pairings. Use a separate developer app if both need to pair independently.</p>
+                {lovenseStatusQuery.data?.callbackUrl ? (
+                  <code className="block max-w-full break-all rounded-md bg-black/40 px-2 py-1.5 text-xs text-gold/90" data-testid="text-lovense-callback-url">
+                    {lovenseStatusQuery.data.callbackUrl}
+                  </code>
+                ) : (
+                  <p className="text-xs text-white/40">{lovenseStatusQuery.data?.previewOnly ? "Available only on the published app" : "Loading callback URL…"}</p>
+                )}
+              </div>
+
+              {lovenseStatusQuery.isError && (
+                <p className="text-red-300 text-xs break-words" role="alert" data-testid="error-lovense-status">
+                  {lovenseStatusQuery.error instanceof Error ? lovenseStatusQuery.error.message : "Lovense status could not be loaded."}
+                </p>
+              )}
+              {lovenseMutation.isError && (
+                <p className="text-red-300 text-xs break-words" role="alert" data-testid="error-lovense-action">
+                  {lovenseMutation.error instanceof Error ? lovenseMutation.error.message : "Lovense pairing action failed."}
+                </p>
+              )}
+              {lovenseStopWarning && (
+                <p className="text-amber-300 text-xs break-words" role="alert">{lovenseStopWarning}</p>
+              )}
+
+              <div className="flex flex-wrap gap-2">
+                {lovenseStatusQuery.data?.connected ? (
+                  <button
+                    onClick={() => lovenseMutation.mutate("disconnect")}
+                    disabled={lovenseMutation.isPending}
+                    className="flex-1 min-w-[8rem] py-2 rounded-lg bg-red-500/15 text-red-300 border border-red-500/30 text-sm font-semibold hover:bg-red-500/25 disabled:opacity-50"
+                    data-testid="button-lovense-disconnect"
+                  >
+                    {lovenseMutation.isPending ? "Working…" : "Disconnect"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => lovenseMutation.mutate("pair")}
+                    disabled={!lovenseStatusQuery.data?.configured || lovenseMutation.isPending}
+                    className="flex-1 min-w-[8rem] py-2 rounded-lg bg-gold/15 text-gold border border-gold/30 text-sm font-semibold hover:bg-gold/25 disabled:opacity-40 flex items-center justify-center gap-2"
+                    data-testid="button-lovense-pair"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${lovenseMutation.isPending ? "animate-spin" : ""}`} />
+                    {lovenseMutation.isPending ? "Pairing…" : lovenseStatusQuery.data?.qrUrl ? "Refresh pairing" : "Pair"}
+                  </button>
+                )}
               </div>
             </div>
 

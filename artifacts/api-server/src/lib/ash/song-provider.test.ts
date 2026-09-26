@@ -15,14 +15,33 @@ test("creates one description-mode v6 task", async () => {
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
     assert.equal(String(input), "https://api.aimusicapi.ai/api/v1/sonic/create");
     assert.deepEqual(JSON.parse(String(init?.body)), {
-      task_type: "create_music", custom_mode: false,
-      gpt_description_prompt: "night-drive synthwave", mv: "chirp-v6",
+      task_type: "create_music", mv: "chirp-v6",
+      custom_mode: false, gpt_description_prompt: "night-drive synthwave",
     });
     return mockFetch({ code: 200, task_id: "task-1" })(input, init);
   }) as typeof fetch;
-  assert.equal(await createSong("night-drive synthwave", "fake-test-key", fetcher), "task-1");
+  assert.equal(await createSong({ description: "night-drive synthwave", title: null, lyrics: null }, "fake-test-key", fetcher), "task-1");
 });
 
+test("Ash-written lyrics use custom mode and preserve all 700 characters", async () => {
+  const lyrics = "L".repeat(700);
+  const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      task_type: "create_music", mv: "chirp-v6",
+      custom_mode: true, title: "Lanterns", tags: "dreamy synth folk", prompt: lyrics,
+    });
+    return mockFetch({ code: 200, task_id: "task-long" })(input, init);
+  }) as typeof fetch;
+  assert.equal(await createSong({ description: "dreamy synth folk", title: "Lanterns", lyrics }, "fake-test-key", fetcher), "task-long");
+  await assert.rejects(
+    createSong({ description: "x".repeat(401), title: null, lyrics: null }, "fake-test-key", fetcher),
+    /between 1 and 400 characters/,
+  );
+  await assert.rejects(
+    createSong({ description: "dreamy synth folk", title: "Lanterns", lyrics: "L".repeat(701) }, "fake-test-key", fetcher),
+    /1–700 characters/,
+  );
+});
 test("polls until every clip has a final audio URL", async () => {
   assert.deepEqual(await pollSong("task-1", "fake-test-key", mockFetch({ code: 200, data: [] })), { status: "pending" });
   assert.deepEqual(await pollSong("task-1", "fake-test-key", mockFetch({
@@ -56,5 +75,5 @@ test("failed and malformed results never create success links", async () => {
     pollSong("task-1", "fake-test-key", mockFetch({ code: 200, data: [{ clip_id: "clip-1", state: "succeeded", audio_url: "javascript:alert(1)" }] })),
     SongProviderError,
   );
-  await assert.rejects(createSong("demo", "fake-test-key", mockFetch({ error: "invalid" }, 401)), /HTTP 401/);
+  await assert.rejects(createSong({ description: "demo", title: null, lyrics: null }, "fake-test-key", mockFetch({ error: "invalid" }, 401)), /HTTP 401/);
 });

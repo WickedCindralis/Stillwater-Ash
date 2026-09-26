@@ -17,7 +17,9 @@ let working = false;
 let started = false;
 let warnedMissingKey = false;
 
-export async function enqueueSong(prompt: string, source: string, responseId: string): Promise<void> {
+export async function enqueueSong(
+  prompt: string, source: string, responseId: string, title: string | null = null, lyrics: string | null = null,
+): Promise<void> {
   if (!process.env["AIMUSICAPI_KEY"]?.trim()) {
     throw new Error("Music provider is not configured");
   }
@@ -34,7 +36,7 @@ export async function enqueueSong(prompt: string, source: string, responseId: st
     if ((usage?.count ?? 0) >= MAX_DAILY_SONGS) {
       throw new Error(`Daily song limit of ${MAX_DAILY_SONGS} reached`);
     }
-    await tx.insert(ashSongJobs).values({ id, source, prompt });
+    await tx.insert(ashSongJobs).values({ id, source, prompt, title, lyricsText: lyrics });
     return true;
   });
   if (!inserted) return;
@@ -95,7 +97,7 @@ async function submitSong(job: AshSongJob, token: string, key: string): Promise<
       return;
     }
     logger.info({ jobId: job.id, source: job.source }, "[ash-song] Provider create request started");
-    const taskId = await createSong(job.prompt, key);
+    const taskId = await createSong({ description: job.prompt, title: job.title, lyrics: job.lyricsText }, key);
     const rows = await db.update(ashSongJobs).set({
       status: "pending", providerTaskId: taskId, leaseToken: null, leaseUntil: null,
       nextPollAt: new Date(Date.now() + SONG_POLL_INTERVAL_MS), updatedAt: new Date(),

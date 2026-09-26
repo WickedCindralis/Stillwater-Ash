@@ -43,14 +43,24 @@ async function request(path: string, key: string, init: RequestInit, fetcher: ty
   return { body: record, httpStatus: response.status };
 }
 
-export async function createSong(prompt: string, key: string, fetcher: typeof fetch = fetch): Promise<string> {
+export type SongRequest = { description: string; title: string | null; lyrics: string | null };
+
+export async function createSong(song: SongRequest, key: string, fetcher: typeof fetch = fetch): Promise<string> {
+  if (!song.description.trim() || song.description.length > 400) {
+    throw new SongProviderError("SONG description must be between 1 and 400 characters");
+  }
+  if (song.lyrics !== null && (!song.lyrics.trim() || song.lyrics.length > 700 || !song.title || song.title.length > 80)) {
+    throw new SongProviderError("Custom lyrics require a title of at most 80 characters and 1–700 characters of lyrics");
+  }
+  const description = song.lyrics === null
+    ? { custom_mode: false, gpt_description_prompt: song.description }
+    : { custom_mode: true, title: song.title, tags: song.description, prompt: song.lyrics };
   const { body } = await request("/api/v1/sonic/create", key, {
     method: "POST",
     body: JSON.stringify({
       task_type: "create_music",
-      custom_mode: false,
-      gpt_description_prompt: prompt,
       mv: "chirp-v6",
+      ...description,
     }),
   }, fetcher);
   if (typeof body.task_id !== "string" || !body.task_id.trim()) {

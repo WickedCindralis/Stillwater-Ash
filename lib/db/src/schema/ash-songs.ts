@@ -5,6 +5,8 @@ export const ashSongJobs = pgTable("ash_song_jobs", {
   id: text("id").primaryKey(),
   source: text("source").notNull(),
   prompt: text("prompt").notNull(),
+  title: text("title"),
+  lyricsText: text("lyrics_text"),
   status: text("status").notNull().default("queued"), // queued | starting | pending | succeeded | failed
   providerTaskId: text("provider_task_id"),
   nextPollAt: timestamp("next_poll_at", { withTimezone: true }),

@@ -3,29 +3,46 @@ import test from "node:test";
 import { stripSongCommand } from "./song-command";
 
 test("ordinary replies are unchanged", () => {
-  assert.deepEqual(stripSongCommand("A quiet morning."), { text: "A quiet morning.", prompt: null, error: null });
+  assert.deepEqual(stripSongCommand("A quiet morning."), { text: "A quiet morning.", prompt: null, title: null, lyrics: null, error: null });
 });
 
 test("song command is removed without removing other controls", () => {
   assert.deepEqual(stripSongCommand("I want to make music.\nSONG: a warm folk song about the dawn\n[STATUS CHANGED TO ONLINE.]"), {
     text: "I want to make music.\n\n[STATUS CHANGED TO ONLINE.]",
     prompt: "a warm folk song about the dawn",
+    title: null, lyrics: null,
     error: null,
   });
 });
 
 test("song-only proactive output leaves no diary text", () => {
   assert.deepEqual(stripSongCommand("SONG: slow piano with hopeful vocals"), {
-    text: "", prompt: "slow piano with hopeful vocals", error: null,
+    text: "", prompt: "slow piano with hopeful vocals", title: null, lyrics: null, error: null,
+  });
+});
+
+test("Ash can supply original lyrics separately without extending the description", () => {
+  const lyrics = "L".repeat(700);
+  assert.deepEqual(stripSongCommand(`SONG: dreamy synth folk\nSONG TITLE: Lanterns\n[SONG LYRICS]\n${lyrics}\n[/SONG LYRICS]\n[STATUS CHANGED TO ONLINE.]`), {
+    text: "[STATUS CHANGED TO ONLINE.]",
+    prompt: "dreamy synth folk",
+    title: "Lanterns",
+    lyrics,
+    error: null,
   });
 });
 
 test("invalid and duplicate commands are stripped but never queued", () => {
   assert.equal(stripSongCommand("SONG: \nHello").error, "SONG description must be between 1 and 400 characters");
+  assert.equal(stripSongCommand(`SONG: ${"x".repeat(400)}`).prompt?.length, 400);
   assert.equal(stripSongCommand(`SONG: ${"x".repeat(401)}`).prompt, null);
   const duplicate = stripSongCommand("SONG: first\nSONG: second\nVisible text");
   assert.equal(duplicate.prompt, null);
   assert.equal(duplicate.text, "Visible text");
+  assert.equal(stripSongCommand(`SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\n${"x".repeat(701)}\n[/SONG LYRICS]`).error, "SONG LYRICS must be between 1 and 700 characters");
+  assert.equal(stripSongCommand("SONG: test\n[SONG LYRICS]\nVerse\n[/SONG LYRICS]").error, "SONG TITLE must be between 1 and 80 characters when writing lyrics");
+  assert.equal(stripSongCommand("SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\nVerse").prompt, null);
+  assert.equal(stripSongCommand("SONG TITLE: Title\n[SONG LYRICS]\nVerse\n[/SONG LYRICS]").prompt, null);
 });
 
 test("quoted or inline references do not issue commands", () => {

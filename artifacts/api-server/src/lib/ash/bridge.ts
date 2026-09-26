@@ -752,7 +752,7 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
         await storage.logActivity("song_failed", `Song command rejected: ${songCommand.error}`).catch((error) => this.error("Could not log rejected song command:", error));
       } else if (songCommand.prompt) {
         try {
-          await enqueueSong(songCommand.prompt, source, songOriginId || providerResponseId);
+          await enqueueSong(songCommand.prompt, source, songOriginId || providerResponseId, songCommand.title, songCommand.lyrics);
           songQueued = true;
         } catch (error) {
           this.error(`Could not queue song [source=${source}, providerResponseId=${providerResponseId}]:`, error);
@@ -1214,7 +1214,7 @@ You don't have a status report in front of you right now — this is a reflectiv
 
 3. NONE: Nothing to record right now. That's always an option.
 4. STORY: If you have a genuine creative impulse for the manuscript, respond with only the exact marker [ASH'S STORY]. This starts the dedicated Story writer, which has the manuscript packet and continuation context. Do not include prose after the marker.
-5. SONG: If you choose to make music, write SONG: <description> on its own line. This queues a song and does not create a diary entry. Do not issue a song command every window. You may include it alongside a diary entry or status change, but not the Story marker.
+5. SONG: If you choose to make music, write SONG: <description, at most 400 characters> on its own line. To write your own lyrics, also include SONG TITLE: <title, at most 80 characters> and a [SONG LYRICS]...[/SONG LYRICS] block of at most 700 characters. Lyrics are separate from the short song description. This queues a song and does not create a diary entry. Do not issue a song command every window. You may include it alongside a diary entry or status change, but not the Story marker.
 
 You may also change your status with [STATUS CHANGED TO X.] if your state has shifted.
 

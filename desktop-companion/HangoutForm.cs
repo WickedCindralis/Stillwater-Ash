@@ -18,6 +18,14 @@ internal sealed class HangoutForm : Form
     private readonly Button minutesSaveButton = new();
     private readonly Button sendButton = new();
     private readonly Button stopButton = new();
+    private readonly Button settingsButton = new();
+    private readonly Button collapseButton = new();
+    private readonly Button closeButton = new();
+    private readonly CheckBox alwaysOnTopCheck = new();
+    private readonly Panel statusDot = new();
+    private readonly Panel settingsPanel = new();
+    private readonly RoundedPanel inputFrame = new();
+    private readonly ToolTip uiToolTip = new();
     private readonly CancellationTokenSource monitorCancellation = new();
     private readonly CancellationTokenSource screenshotCancellation = new();
     private readonly HashSet<long> displayedMessageIds = [];
@@ -40,19 +48,32 @@ internal sealed class HangoutForm : Form
     private bool minutesDirty;
     private bool minutesSaving;
     private bool updatingMinutesFromServer;
+    private bool collapsed;
+    private bool dismissedByUser;
+    private bool closingFromOwner;
+    private bool headerPressActive;
+    private bool headerWasDragged;
+    private Point headerPressScreenPoint;
+    private Point headerPressFormLocation;
+    private TableLayoutPanel? outerLayout;
+    private TableLayoutPanel? bodyLayout;
 
     public HangoutForm(string serverUrl, string chatToken)
     {
         this.serverUrl = serverUrl.TrimEnd('/');
         this.chatToken = chatToken;
         Text = "Stillwater Hangout";
-        StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(560, 520);
-        Size = new Size(820, 760);
+        FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.Manual;
+        ShowInTaskbar = false;
+        MinimumSize = new Size(340, 52);
+        Size = new Size(340, 480);
         BackColor = Color.FromArgb(18, 20, 25);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 10F);
         TopMost = true;
+        var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+        Location = new Point(workArea.Right - Width - 16, workArea.Bottom - Height - 16);
         FormClosing += OnFormClosing;
         BuildLayout();
         _ = Handle;
@@ -79,6 +100,7 @@ internal sealed class HangoutForm : Form
             return;
         }
 
+        dismissedByUser = false;
         if (!Visible) Show();
         if (focus)
         {
@@ -90,6 +112,7 @@ internal sealed class HangoutForm : Form
 
     public void CloseFromOwner()
     {
+        closingFromOwner = true;
         monitorCancellation.Cancel();
         screenshotCancellation.Cancel();
         if (!IsDisposed) Close();
@@ -100,45 +123,207 @@ internal sealed class HangoutForm : Form
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(18),
             ColumnCount = 1,
-            RowCount = 4,
+            RowCount = 2,
             BackColor = BackColor,
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
         Controls.Add(layout);
+        outerLayout = layout;
 
-        var header = new Panel { Dock = DockStyle.Fill };
-        statusLabel.Dock = DockStyle.Fill;
-        statusLabel.AutoEllipsis = true;
-        statusLabel.Text = "Connecting to Hangout…";
-        statusLabel.ForeColor = Color.FromArgb(234, 193, 92);
-        statusLabel.Font = new Font("Segoe UI Semibold", 11F);
-        header.Controls.Add(statusLabel);
-        layout.Controls.Add(header, 0, 0);
-
-        var intervalBar = new FlowLayoutPanel
+        var header = new Panel
         {
             Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(22, 24, 31),
+            Padding = new Padding(11, 6, 7, 6),
+        };
+        header.MouseDown += OnHeaderMouseDown;
+        header.MouseMove += OnHeaderMouseMove;
+        header.MouseUp += OnHeaderMouseUp;
+        statusLabel.Location = new Point(13, 19);
+        statusLabel.Size = new Size(132, 18);
+        statusLabel.AutoEllipsis = true;
+        statusLabel.Text = "Connecting to Hangout…";
+        statusLabel.ForeColor = Color.FromArgb(177, 182, 194);
+        statusLabel.Font = new Font("Segoe UI", 8.25F);
+        statusDot.Size = new Size(8, 8);
+        statusDot.BackColor = Color.FromArgb(234, 193, 92);
+        SetCircularRegion(statusDot);
+        var avatar = new Panel
+        {
+            Size = new Size(34, 34),
+            Location = new Point(11, 10),
+            BackColor = Color.FromArgb(112, 65, 190),
+        };
+        SetCircularRegion(avatar);
+        var avatarInitial = new Label
+        {
+            Dock = DockStyle.Fill,
+            Text = "A",
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI Semibold", 13F),
+            TextAlign = ContentAlignment.MiddleCenter,
+            BackColor = Color.Transparent,
+        };
+        avatar.Controls.Add(avatarInitial);
+        var identity = new Panel
+        {
+            Location = new Point(53, 6),
+            Size = new Size(146, 40),
+            BackColor = Color.Transparent,
+        };
+        var nameLabel = new Label
+        {
+            Text = "Ash",
+            Location = new Point(0, 0),
+            Size = new Size(132, 19),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI Semibold", 10.5F),
+            AutoEllipsis = true,
+        };
+        statusDot.Location = new Point(1, 25);
+        identity.Controls.Add(nameLabel);
+        identity.Controls.Add(statusDot);
+        identity.Controls.Add(statusLabel);
+
+        var headerButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            Width = 105,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Padding = new Padding(0, 3, 0, 0),
+            BackColor = Color.Transparent,
+            Padding = new Padding(0, 1, 0, 0),
+            Margin = Padding.Empty,
         };
-        intervalBar.Controls.Add(new Label
+        ConfigureHeaderButton(settingsButton, "⚙", "Hangout settings");
+        ConfigureHeaderButton(collapseButton, "−", "Minimize to header");
+        ConfigureHeaderButton(closeButton, "×", "Close Hangout window");
+        settingsButton.Click += (_, _) => ToggleSettings();
+        collapseButton.Click += (_, _) => ToggleCollapsed();
+        closeButton.Click += (_, _) => DismissWindow();
+        headerButtons.Controls.AddRange([settingsButton, collapseButton, closeButton]);
+        header.Controls.Add(headerButtons);
+        header.Controls.Add(identity);
+        header.Controls.Add(avatar);
+        layout.Controls.Add(header, 0, 0);
+        AttachHeaderSurface(header);
+        AttachHeaderSurface(identity);
+        AttachHeaderSurface(nameLabel);
+        AttachHeaderSurface(statusLabel);
+        AttachHeaderSurface(avatar);
+        AttachHeaderSurface(avatarInitial);
+
+        var body = new TableLayoutPanel
         {
-            Text = "MINUTES:",
-            AutoSize = true,
-            ForeColor = Color.FromArgb(230, 232, 237),
-            Margin = new Padding(0, 7, 9, 0),
-        });
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = BackColor,
+            Padding = new Padding(0),
+        };
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+        bodyLayout = body;
+        layout.Controls.Add(body, 0, 1);
+
+        messagesPanel.Dock = DockStyle.Fill;
+        messagesPanel.AutoScroll = true;
+        messagesPanel.FlowDirection = FlowDirection.TopDown;
+        messagesPanel.WrapContents = false;
+        messagesPanel.BackColor = Color.FromArgb(18, 20, 25);
+        messagesPanel.Padding = new Padding(8, 8, 8, 12);
+        messagesPanel.SizeChanged += (_, _) => ResizeMessageCards();
+        body.Controls.Add(messagesPanel, 0, 0);
+
+        var composer = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(18, 20, 25),
+            Padding = new Padding(10, 7, 10, 8),
+        };
+        composer.Resize += (_, _) => LayoutComposer(composer);
+        body.Controls.Add(composer, 0, 1);
+
+        inputFrame.CornerRadius = 16;
+        inputFrame.BackColor = Color.FromArgb(34, 36, 45);
+        inputFrame.Padding = new Padding(10, 7, 8, 7);
+        inputFrame.Size = new Size(268, 40);
+        composer.Controls.Add(inputFrame);
+        inputBox.Multiline = true;
+        inputBox.AcceptsReturn = true;
+        inputBox.WordWrap = true;
+        inputBox.ScrollBars = ScrollBars.None;
+        inputBox.BorderStyle = BorderStyle.None;
+        inputBox.BackColor = inputFrame.BackColor;
+        inputBox.ForeColor = Color.White;
+        inputBox.Font = new Font("Segoe UI", 9.5F);
+        inputBox.PlaceholderText = "Write a message…";
+        inputBox.Enabled = false;
+        inputBox.Height = 24;
+        inputBox.TextChanged += (_, _) => ResizeComposer(composer);
+        inputBox.KeyDown += OnInputKeyDown;
+        inputFrame.Controls.Add(inputBox);
+
+        sendButton.Text = "↑";
+        sendButton.AccessibleName = "Send message";
+        sendButton.Size = new Size(36, 36);
+        sendButton.BackColor = Color.FromArgb(124, 58, 237);
+        sendButton.ForeColor = Color.White;
+        sendButton.FlatStyle = FlatStyle.Flat;
+        sendButton.FlatAppearance.BorderSize = 0;
+        sendButton.Font = new Font("Segoe UI Semibold", 15F);
+        sendButton.Click += async (_, _) => await SendMessageAsync();
+        uiToolTip.SetToolTip(sendButton, "Send message");
+        composer.Controls.Add(sendButton);
+        LayoutComposer(composer);
+
+        BuildSettingsPanel();
+    }
+
+    private void BuildSettingsPanel()
+    {
+        settingsPanel.Size = new Size(224, 166);
+        settingsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        settingsPanel.BackColor = Color.FromArgb(31, 33, 42);
+        settingsPanel.BorderStyle = BorderStyle.FixedSingle;
+        settingsPanel.Padding = Padding.Empty;
+        settingsPanel.Visible = false;
+        settingsPanel.Location = new Point(ClientSize.Width - settingsPanel.Width - 8, 51);
+
+        var title = new Label
+        {
+            Text = "Hangout settings",
+            Location = new Point(10, 8),
+            Size = new Size(194, 20),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI Semibold", 9.5F),
+        };
+        alwaysOnTopCheck.Text = "Keep on top";
+        alwaysOnTopCheck.Checked = true;
+        alwaysOnTopCheck.Location = new Point(9, 31);
+        alwaysOnTopCheck.Size = new Size(194, 23);
+        alwaysOnTopCheck.ForeColor = Color.FromArgb(220, 222, 230);
+        alwaysOnTopCheck.BackColor = Color.Transparent;
+        alwaysOnTopCheck.CheckedChanged += (_, _) => TopMost = alwaysOnTopCheck.Checked;
+        var minutesLabel = new Label
+        {
+            Text = "Screenshot interval (minutes)",
+            Location = new Point(10, 57),
+            Size = new Size(194, 19),
+            ForeColor = Color.FromArgb(177, 182, 194),
+            Font = new Font("Segoe UI", 8.5F),
+        };
         minutesBox.Text = "15";
-        minutesBox.Width = 65;
+        minutesBox.Location = new Point(10, 79);
+        minutesBox.Size = new Size(116, 25);
         minutesBox.MaxLength = 4;
         minutesBox.Enabled = false;
         minutesBox.AccessibleName = "Minutes between idle Hangout screenshots";
+        minutesBox.BackColor = Color.FromArgb(23, 25, 32);
+        minutesBox.ForeColor = Color.White;
+        minutesBox.BorderStyle = BorderStyle.FixedSingle;
         minutesBox.TextChanged += (_, _) =>
         {
             if (updatingMinutesFromServer) return;
@@ -151,68 +336,152 @@ internal sealed class HangoutForm : Form
             e.SuppressKeyPress = true;
             _ = SaveMinutesAsync();
         };
-        intervalBar.Controls.Add(minutesBox);
         minutesSaveButton.Text = "Apply";
-        minutesSaveButton.Width = 72;
+        minutesSaveButton.Location = new Point(133, 78);
+        minutesSaveButton.Size = new Size(72, 27);
+        minutesSaveButton.BackColor = Color.FromArgb(60, 48, 85);
+        minutesSaveButton.ForeColor = Color.White;
+        minutesSaveButton.FlatStyle = FlatStyle.Flat;
+        minutesSaveButton.FlatAppearance.BorderSize = 0;
         minutesSaveButton.Enabled = false;
-        minutesSaveButton.Margin = new Padding(8, 0, 0, 0);
         minutesSaveButton.Click += async (_, _) => await SaveMinutesAsync();
-        intervalBar.Controls.Add(minutesSaveButton);
-        layout.Controls.Add(intervalBar, 0, 1);
-
-        messagesPanel.Dock = DockStyle.Fill;
-        messagesPanel.AutoScroll = true;
-        messagesPanel.FlowDirection = FlowDirection.TopDown;
-        messagesPanel.WrapContents = false;
-        messagesPanel.BackColor = Color.FromArgb(24, 27, 34);
-        messagesPanel.Padding = new Padding(12);
-        messagesPanel.SizeChanged += (_, _) => ResizeMessageCards();
-        layout.Controls.Add(messagesPanel, 0, 2);
-
-        var composer = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 2,
-            Padding = new Padding(0, 12, 0, 0),
-        };
-        composer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        composer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
-        composer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        composer.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-
-        inputBox.Dock = DockStyle.Fill;
-        inputBox.Multiline = true;
-        inputBox.AcceptsReturn = true;
-        inputBox.ScrollBars = ScrollBars.Vertical;
-        inputBox.BackColor = Color.FromArgb(33, 36, 44);
-        inputBox.ForeColor = Color.White;
-        inputBox.BorderStyle = BorderStyle.FixedSingle;
-        inputBox.PlaceholderText = "Write a message…";
-        inputBox.Enabled = false;
-        inputBox.KeyDown += OnInputKeyDown;
-        composer.Controls.Add(inputBox, 0, 0);
-        composer.SetRowSpan(inputBox, 2);
-
-        sendButton.Text = "Send";
-        sendButton.Dock = DockStyle.Fill;
-        sendButton.Margin = new Padding(8, 0, 0, 6);
-        sendButton.BackColor = Color.FromArgb(124, 58, 237);
-        sendButton.ForeColor = Color.White;
-        sendButton.FlatStyle = FlatStyle.Flat;
-        sendButton.Click += async (_, _) => await SendMessageAsync();
-        composer.Controls.Add(sendButton, 1, 0);
-
         stopButton.Text = "Stop Hangout";
-        stopButton.Dock = DockStyle.Fill;
-        stopButton.Margin = new Padding(8, 0, 0, 0);
-        stopButton.BackColor = Color.FromArgb(48, 51, 60);
-        stopButton.ForeColor = Color.White;
+        stopButton.Location = new Point(10, 116);
+        stopButton.Size = new Size(195, 32);
+        stopButton.BackColor = Color.FromArgb(67, 38, 47);
+        stopButton.ForeColor = Color.FromArgb(255, 190, 197);
         stopButton.FlatStyle = FlatStyle.Flat;
+        stopButton.FlatAppearance.BorderSize = 0;
         stopButton.Enabled = false;
         stopButton.Click += async (_, _) => await StopHangoutAsync();
-        composer.Controls.Add(stopButton, 1, 1);
-        layout.Controls.Add(composer, 0, 3);
+        settingsPanel.Controls.AddRange([title, alwaysOnTopCheck, minutesLabel, minutesBox, minutesSaveButton, stopButton]);
+        Controls.Add(settingsPanel);
+        settingsPanel.BringToFront();
+        uiToolTip.SetToolTip(settingsButton, "Hangout settings");
+        uiToolTip.SetToolTip(alwaysOnTopCheck, "Keep the Hangout window above other windows");
+        uiToolTip.SetToolTip(collapseButton, "Minimize to header");
+        uiToolTip.SetToolTip(closeButton, "Hide the Hangout window");
+    }
+
+    private static void ConfigureHeaderButton(Button button, string text, string accessibleName)
+    {
+        button.Text = text;
+        button.AccessibleName = accessibleName;
+        button.Size = new Size(28, 34);
+        button.Margin = new Padding(1, 0, 1, 0);
+        button.BackColor = Color.FromArgb(35, 37, 46);
+        button.ForeColor = Color.FromArgb(224, 226, 233);
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.Font = new Font("Segoe UI", 12F);
+        button.Cursor = Cursors.Hand;
+    }
+
+    private void LayoutComposer(Panel composer)
+    {
+        var availableWidth = Math.Max(160, composer.ClientSize.Width - composer.Padding.Horizontal);
+        inputFrame.Location = new Point(composer.Padding.Left, Math.Max(4, (composer.ClientSize.Height - inputFrame.Height) / 2));
+        inputFrame.Width = Math.Max(80, availableWidth - sendButton.Width - 8);
+        sendButton.Location = new Point(inputFrame.Right + 8,
+            Math.Max(4, (composer.ClientSize.Height - sendButton.Height) / 2));
+        inputBox.Location = new Point(inputFrame.Padding.Left, inputFrame.Padding.Top);
+        inputBox.Width = Math.Max(50, inputFrame.ClientSize.Width - inputFrame.Padding.Horizontal);
+    }
+
+    private void ResizeComposer(Panel composer)
+    {
+        if (bodyLayout is null || composer.IsDisposed) return;
+        var usableWidth = Math.Max(120, composer.ClientSize.Width - 82);
+        var measured = TextRenderer.MeasureText(
+            string.IsNullOrEmpty(inputBox.Text) ? " " : inputBox.Text,
+            inputBox.Font,
+            new Size(usableWidth, int.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding);
+        var desiredTextHeight = Math.Clamp(measured.Height, inputBox.Font.Height, inputBox.Font.Height * 3);
+        var targetHeight = Math.Clamp(desiredTextHeight + 14, 38, 70);
+        inputBox.Height = Math.Max(inputBox.Font.Height, targetHeight - 14);
+        inputBox.ScrollBars = measured.Height > inputBox.Font.Height * 3
+            ? ScrollBars.Vertical
+            : ScrollBars.None;
+        inputFrame.Height = targetHeight;
+        bodyLayout.RowStyles[1].Height = targetHeight + 20;
+        LayoutComposer(composer);
+    }
+
+    private void AttachHeaderSurface(Control control)
+    {
+        control.MouseDown += OnHeaderMouseDown;
+        control.MouseMove += OnHeaderMouseMove;
+        control.MouseUp += OnHeaderMouseUp;
+    }
+
+    private void OnHeaderMouseDown(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left) return;
+        headerPressActive = true;
+        headerWasDragged = false;
+        headerPressScreenPoint = Cursor.Position;
+        headerPressFormLocation = Location;
+    }
+
+    private void OnHeaderMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (!headerPressActive || (Control.MouseButtons & MouseButtons.Left) == 0) return;
+        var current = Cursor.Position;
+        var dx = current.X - headerPressScreenPoint.X;
+        var dy = current.Y - headerPressScreenPoint.Y;
+        if (!headerWasDragged && Math.Abs(dx) + Math.Abs(dy) < 6) return;
+        headerWasDragged = true;
+        Location = new Point(headerPressFormLocation.X + dx, headerPressFormLocation.Y + dy);
+    }
+
+    private void OnHeaderMouseUp(object? sender, MouseEventArgs e)
+    {
+        if (!headerPressActive || e.Button != MouseButtons.Left) return;
+        var shouldToggle = !headerWasDragged;
+        headerPressActive = false;
+        headerWasDragged = false;
+        if (shouldToggle) ToggleCollapsed();
+    }
+
+    private void ToggleCollapsed()
+    {
+        if (outerLayout is null) return;
+        var bottom = Bottom;
+        collapsed = !collapsed;
+        outerLayout.RowStyles[1].Height = collapsed ? 0 : 1;
+        outerLayout.RowStyles[1].SizeType = collapsed ? SizeType.Absolute : SizeType.Percent;
+        Size = new Size(340, collapsed ? 54 : 480);
+        Top = bottom - Height;
+        collapseButton.Text = collapsed ? "□" : "−";
+        collapseButton.AccessibleName = collapsed ? "Expand Hangout" : "Minimize to header";
+        uiToolTip.SetToolTip(collapseButton, collapseButton.AccessibleName);
+        if (collapsed) settingsPanel.Visible = false;
+    }
+
+    private void ToggleSettings()
+    {
+        settingsPanel.Visible = !settingsPanel.Visible;
+        if (settingsPanel.Visible)
+        {
+            settingsPanel.Location = new Point(ClientSize.Width - settingsPanel.Width - 8, 51);
+            settingsPanel.BringToFront();
+        }
+    }
+
+    private void DismissWindow()
+    {
+        dismissedByUser = true;
+        settingsPanel.Visible = false;
+        Hide();
+    }
+
+    private static void SetCircularRegion(Control control)
+    {
+        using var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddEllipse(0, 0, control.Width, control.Height);
+        control.Region?.Dispose();
+        control.Region = new Region(path);
     }
 
     private async Task MonitorAsync(CancellationToken cancellationToken)
@@ -334,7 +603,7 @@ internal sealed class HangoutForm : Form
             }
         }
 
-        if (!Visible && (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
+        if (!Visible && !dismissedByUser && (status.Equals("active", StringComparison.OrdinalIgnoreCase) ||
             status.Equals("inviting", StringComparison.OrdinalIgnoreCase)))
         {
             ShowHangout();
@@ -672,89 +941,90 @@ internal sealed class HangoutForm : Form
     private void AddMessageCard(HangoutMessage message)
     {
         if (IsDisposed) return;
-        var card = new Panel
+        var fromWicked = message.Role.Equals("wicked", StringComparison.OrdinalIgnoreCase) ||
+            message.Role.Equals("user", StringComparison.OrdinalIgnoreCase);
+        var bubble = new RoundedPanel
         {
-            Width = Math.Max(320, messagesPanel.ClientSize.Width - 34),
-            Tag = message.Id,
-            BackColor = Color.FromArgb(34, 37, 45),
-            Padding = new Padding(12),
-            Margin = new Padding(0, 0, 0, 10),
+            CornerRadius = 16,
+            BackColor = fromWicked
+                ? Color.FromArgb(91, 50, 151)
+                : Color.FromArgb(39, 42, 51),
         };
-        var cardLayout = new TableLayoutPanel
+        var content = new Label
         {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = message.ScreenshotActivityId is null ? 2 : 3,
-        };
-        cardLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        cardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-        cardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-
-        var time = DateTimeOffset.TryParse(message.CreatedAt, out var parsed)
-            ? parsed.ToLocalTime().ToString("g")
-            : message.CreatedAt;
-        var heading = new Label
-        {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            ForeColor = Color.FromArgb(234, 193, 92),
-            Font = new Font("Segoe UI Semibold", 9.5F),
-            Text = $"{message.Role}  ·  {time}",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-        var content = new RichTextBox
-        {
-            Dock = DockStyle.Fill,
-            ReadOnly = true,
-            WordWrap = true,
-            ScrollBars = RichTextBoxScrollBars.Vertical,
-            BorderStyle = BorderStyle.None,
-            BackColor = card.BackColor,
-            ForeColor = Color.FromArgb(230, 232, 237),
+            AutoSize = false,
+            UseMnemonic = false,
+            AutoEllipsis = false,
             Text = message.Content,
-            Margin = new Padding(0, 0, 0, 2),
-            DetectUrls = false,
-            TabStop = false,
-            AccessibleName = $"Message from {message.Role}",
+            ForeColor = Color.FromArgb(241, 241, 246),
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", 9.5F),
+            TextAlign = ContentAlignment.TopLeft,
         };
-        cardLayout.Controls.Add(heading, 0, 0);
-        cardLayout.Controls.Add(content, 0, 1);
-        SizeMessageCard(card, cardLayout, content);
+        var time = DateTimeOffset.TryParse(message.CreatedAt, out var parsed)
+            ? parsed.ToLocalTime()
+            : message.CreatedAt;
+        var timestampText = time is DateTimeOffset timestamp
+            ? timestamp.ToString("t")
+            : time;
+        var timestampFull = time is DateTimeOffset fullTimestamp
+            ? fullTimestamp.ToString("f")
+            : message.CreatedAt;
+        var timestamp = new Label
+        {
+            AutoSize = false,
+            Text = timestampText,
+            ForeColor = Color.FromArgb(133, 139, 153),
+            Font = new Font("Segoe UI", 7.5F),
+            TextAlign = fromWicked ? ContentAlignment.MiddleRight : ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+        };
+        uiToolTip.SetToolTip(timestamp, timestampFull);
 
+        PictureBox? picture = null;
+        Label? screenshotPlaceholder = null;
         if (message.ScreenshotActivityId is long activityId)
         {
-            var screenshotPanel = new Panel
+            picture = new PictureBox
             {
-                Dock = DockStyle.Top,
-                Height = 230,
-                Margin = new Padding(0, 8, 0, 0),
+                Size = new Size(96, 62),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.FromArgb(23, 25, 32),
+                Cursor = Cursors.Hand,
+                AccessibleName = "Screenshot thumbnail. Click to view full size.",
+                BorderStyle = BorderStyle.FixedSingle,
             };
-            var placeholder = new Label
+            screenshotPlaceholder = new Label
             {
-                Text = "Loading screenshot…",
-                Dock = DockStyle.Fill,
+                Text = "Loading",
+                Size = picture.Size,
                 ForeColor = Color.FromArgb(160, 168, 181),
                 TextAlign = ContentAlignment.MiddleCenter,
+                BackColor = picture.BackColor,
             };
-            var picture = new PictureBox
-            {
-                Dock = DockStyle.Fill,
-                SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = Color.FromArgb(24, 27, 34),
-            };
-            screenshotPanel.Controls.Add(picture);
-            screenshotPanel.Controls.Add(placeholder);
-            cardLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 238));
-            cardLayout.Controls.Add(screenshotPanel, 0, 2);
-            _ = AddScreenshotAsync(activityId, picture, placeholder);
-            SizeMessageCard(card, cardLayout, content);
+            picture.Click += (_, _) => OpenScreenshot(picture);
+            screenshotPlaceholder.Click += (_, _) => OpenScreenshot(picture);
+            bubble.Controls.Add(picture);
+            bubble.Controls.Add(screenshotPlaceholder);
+            _ = AddScreenshotAsync(activityId, picture, screenshotPlaceholder);
         }
 
-        card.Controls.Add(cardLayout);
+        bubble.Controls.Add(content);
+        var card = new Panel
+        {
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = messagesPanel.BackColor,
+        };
+        var state = new MessageRowState(message.Id, fromWicked, bubble, content, timestamp, picture, screenshotPlaceholder);
+        card.Tag = state;
+        card.Controls.Add(bubble);
+        card.Controls.Add(timestamp);
+        LayoutMessageRow(card, state);
+
         var isNewestMessage = message.Id >= Interlocked.Read(ref lastMessageId);
         var insertionIndex = messagesPanel.Controls
             .Cast<Control>()
-            .TakeWhile(existing => existing.Tag is long existingId && existingId < message.Id)
+            .TakeWhile(existing => existing.Tag is MessageRowState existingState && existingState.Id < message.Id)
             .Count();
         messagesPanel.Controls.Add(card);
         try
@@ -764,13 +1034,7 @@ internal sealed class HangoutForm : Form
             {
                 messagesPanel.PerformLayout();
                 card.PerformLayout();
-                cardLayout.PerformLayout();
-                // Show the end of long replies without putting a screenshot
-                // below the text ahead of the reply in the outer viewport.
-                content.SelectionStart = content.TextLength;
-                content.SelectionLength = 0;
-                content.ScrollToCaret();
-                messagesPanel.ScrollControlIntoView(content);
+                messagesPanel.ScrollControlIntoView(card);
             }
         }
         catch
@@ -781,33 +1045,78 @@ internal sealed class HangoutForm : Form
         }
     }
 
-    private static void SizeMessageCard(Panel card, TableLayoutPanel layout, RichTextBox content)
+    private void LayoutMessageRow(Panel row, MessageRowState state)
     {
-        var textWidth = Math.Max(280, card.Width - 48);
-        var measured = TextRenderer.MeasureText(content.Text, content.Font,
-            new Size(textWidth, int.MaxValue),
-            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
-        // A long reply stays scrollable inside its card; estimating a Label's
-        // full height could clip its ending on some Windows DPI settings.
-        var bodyHeight = Math.Clamp(measured.Height + 18, 44, 420);
-        layout.RowStyles[1].Height = bodyHeight;
-        card.Height = card.Padding.Vertical + 28 + bodyHeight +
-            (layout.RowCount == 3 ? 238 : 0);
+        var rowWidth = Math.Max(200, messagesPanel.ClientSize.Width - messagesPanel.Padding.Horizontal - 4);
+        var maxBubbleWidth = Math.Max(120, Math.Min(252, (int)(rowWidth * 0.84)));
+        const TextFormatFlags measureFlags = TextFormatFlags.WordBreak |
+            TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding;
+        var text = string.IsNullOrEmpty(state.Content.Text) ? " " : state.Content.Text;
+        var naturalSize = TextRenderer.MeasureText(text, state.Content.Font,
+            new Size(maxBubbleWidth - 24, int.MaxValue), measureFlags);
+        var bubbleWidth = Math.Clamp(naturalSize.Width + 24, Math.Min(112, maxBubbleWidth), maxBubbleWidth);
+        var contentWidth = Math.Max(48, bubbleWidth - 24);
+        var contentSize = TextRenderer.MeasureText(text, state.Content.Font,
+            new Size(contentWidth, int.MaxValue), measureFlags);
+        var contentHeight = Math.Max(state.Content.Font.Height, contentSize.Height);
+        var bubble = state.Bubble;
+        bubble.Width = bubbleWidth;
+        state.Content.Location = new Point(12, 10);
+        state.Content.Size = new Size(contentWidth, contentHeight);
+
+        var contentBottom = state.Content.Bottom;
+        if (state.Picture is not null)
+        {
+            state.Picture.Location = new Point(12, contentBottom + 8);
+            if (state.ScreenshotPlaceholder is not null)
+                state.ScreenshotPlaceholder.Location = state.Picture.Location;
+            bubble.Height = state.Picture.Bottom + 10;
+        }
+        else
+        {
+            bubble.Height = contentBottom + 10;
+        }
+
+        var x = state.FromWicked ? rowWidth - bubbleWidth - 4 : 4;
+        bubble.Location = new Point(Math.Max(0, x), 0);
+        state.Timestamp.Location = new Point(bubble.Left, bubble.Bottom + 2);
+        state.Timestamp.Size = new Size(bubble.Width, 14);
+        row.Size = new Size(rowWidth, state.Timestamp.Bottom + 2);
     }
 
     private void ResizeMessageCards()
     {
         foreach (Control control in messagesPanel.Controls)
         {
-            control.Width = Math.Max(320, messagesPanel.ClientSize.Width - 34);
-            if (control is Panel card &&
-                card.Controls.OfType<TableLayoutPanel>().FirstOrDefault() is { } cardLayout &&
-                cardLayout.Controls.Count > 1 &&
-                cardLayout.Controls[1] is RichTextBox content)
-            {
-                SizeMessageCard(card, cardLayout, content);
-            }
+            if (control is Panel row && row.Tag is MessageRowState state)
+                LayoutMessageRow(row, state);
         }
+    }
+
+    private void OpenScreenshot(PictureBox picture)
+    {
+        if (picture.Image is null || picture.IsDisposed) return;
+        var fullImage = new Bitmap(picture.Image);
+        var preview = new Form
+        {
+            Text = "Hangout screenshot",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.SizableToolWindow,
+            BackColor = Color.FromArgb(18, 20, 25),
+            Size = new Size(960, 680),
+            MinimumSize = new Size(420, 320),
+        };
+        var fullSizePicture = new PictureBox
+        {
+            Dock = DockStyle.Fill,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = preview.BackColor,
+            Image = fullImage,
+            Padding = new Padding(12),
+        };
+        preview.Controls.Add(fullSizePicture);
+        preview.FormClosed += (_, _) => fullImage.Dispose();
+        preview.Show(this);
     }
 
     private async Task EnsureChatSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)

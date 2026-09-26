@@ -4,6 +4,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 
 ## Run & Operate
 
+- The owner uses the **published** Stillwater app at `https://stillwater-ash.replit.app/ash`. When discussing live behavior or delivering a change intended for Ash, check the published deployment; do not infer its settings from the workspace preview or development database. Restarting preview workflows does not publish changes. Confirm the current production URL through deployment metadata before using it, since generated hostnames can change.
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages

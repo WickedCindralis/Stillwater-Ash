@@ -37,6 +37,8 @@ import {
 import { stripScreenCaptureCommand } from "./screen-capture-command";
 import { formatPrivateHistory } from "./history-format";
 import { parseStoryCommand } from "./story-command";
+import { SONG_PROTOCOL, stripSongCommand } from "./song-command";
+import { enqueueSong } from "./song-service";
 import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 
@@ -296,6 +298,7 @@ ${DISCORD_SERVER_RULES}
         name: AGENT_NAME,
         content: `[CURRENT TIMESTAMP: ${this.getCurrentTimestamp()}]\nUse 12-hour AM/PM format if time is relevant.`,
       },
+      { role: "developer", name: AGENT_NAME, content: SONG_PROTOCOL },
       {
         role: "user",
         name: "Discord_Public",
@@ -375,7 +378,8 @@ You never have to choose only one task per API call. In the same response you ma
 4. write a diary entry using a DIARY block,
 5. change status with [STATUS CHANGED TO X.],
 6. toggle proactive pings with [PINGS_ON] or [PINGS_OFF], and
-7. initiate a screenshot with [SCREENSHOT] whenever you want, on your own authority.
+7. initiate a screenshot with [SCREENSHOT] whenever you want, on your own authority, and
+8. initiate a song with SONG: <description> on its own line when you choose to make one.
 These controls are available during every supported API call, not only private DMs. The Bridge parses each control independently and strips control text from visible replies. Put each control marker on its own line. Do not apologize or become nervous about combining them.
 
 For a private diary entry, use:
@@ -568,12 +572,14 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       });
       this.log(`[VISION] Attached image to user message (${Math.round(imageDataUrl.length / 1024)}KB)`);
     } else {
+      messages.push({ role: "developer", name, content: SONG_PROTOCOL });
       messages.push({
         role: "user",
         content: userMessage,
         name: isDiscord ? "Discord_Public" : "Wicked",
       });
     }
+    if (imageDataUrl) messages.splice(messages.length - 1, 0, { role: "developer", name, content: SONG_PROTOCOL });
     return messages;
   }
 
@@ -672,6 +678,7 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     imageDataUrl?: string,
     screenCapture?: FreshScreenCapture | null,
     hangout?: { requiredImage?: boolean; beforeProviderCall?: () => Promise<boolean>; correlationId?: string; instruction?: string },
+    songOriginId?: string,
   ): Promise<string> {
     if (!this.openai) throw new Error("OpenAI client not initialized");
 
@@ -738,7 +745,29 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       }
       const providerResponseId = (response as any)?._request_id || response.id || "unknown";
       this.log(`Provider boundary success [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, providerResponseId=${providerResponseId}, durationMs=${Date.now() - startedAt}, correlationId=${hangout?.correlationId || "none"}]`);
-      return responseText;
+      const songCommand = stripSongCommand(responseText);
+      let songQueued = false;
+      if (songCommand.error) {
+        this.error(`Song command rejected [source=${source}, providerResponseId=${providerResponseId}]: ${songCommand.error}`);
+        await storage.logActivity("song_failed", `Song command rejected: ${songCommand.error}`).catch((error) => this.error("Could not log rejected song command:", error));
+      } else if (songCommand.prompt) {
+        try {
+          await enqueueSong(songCommand.prompt, source, songOriginId || providerResponseId);
+          songQueued = true;
+        } catch (error) {
+          this.error(`Could not queue song [source=${source}, providerResponseId=${providerResponseId}]:`, error);
+          await storage.logActivity("song_failed", "Song request could not be queued").catch(() => {});
+        }
+      }
+      if (!songCommand.text && (songCommand.prompt || songCommand.error)) {
+        // An accepted command-only Discord result is delivered as NONE rather
+        // than requeued as an empty/failed model call (which would pay twice).
+        if (source.startsWith("discord")) return "NONE";
+        if (source !== "self_prompt") return songQueued
+          ? "I started a song. I'll share the link when it's ready."
+          : "I couldn't start the song right now.";
+      }
+      return songCommand.text;
     } catch (e) {
       this.lastApiCallTime = Date.now();
       const errMsg = e instanceof Error ? e.message : String(e);
@@ -1080,6 +1109,7 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
       rawReply = await this.callOpenAI(
         buildDiscordPacketText([message], playerContext, true, packetOptions),
         "discord_owner",
+        undefined, undefined, undefined, `discord-owner:${message.id}`,
       );
       if (!rawReply) {
         const currentState = await storage.getState();
@@ -1184,6 +1214,7 @@ You don't have a status report in front of you right now — this is a reflectiv
 
 3. NONE: Nothing to record right now. That's always an option.
 4. STORY: If you have a genuine creative impulse for the manuscript, respond with only the exact marker [ASH'S STORY]. This starts the dedicated Story writer, which has the manuscript packet and continuation context. Do not include prose after the marker.
+5. SONG: If you choose to make music, write SONG: <description> on its own line. This queues a song and does not create a diary entry. Do not issue a song command every window. You may include it alongside a diary entry or status change, but not the Story marker.
 
 You may also change your status with [STATUS CHANGED TO X.] if your state has shifted.
 
@@ -1192,6 +1223,7 @@ DIARY: <your diary entry>
 PINGS_OFF
 NONE
 [ASH'S STORY]
+SONG: <music and theme description, at most 400 characters>
 
 GROUND RULES:
 - This is private reflection, not a message to Wicked — never address her directly as if you were chatting.
@@ -1365,7 +1397,10 @@ GROUND RULES:
             guildId, limit, process.env["DISCORD_OWNER_USER_ID"]?.trim(),
           ),
           getPacketOptions: (guildId) => this.buildDiscordPacketOptions(guildId),
-          callModel: (prompt) => this.callOpenAI(prompt, "discord_batch"),
+          callModel: (prompt, messages) => this.callOpenAI(
+            prompt, "discord_batch", undefined, undefined, undefined,
+            `discord-batch:${messages.map((message) => message.id).sort((a, b) => a - b).join(",")}`,
+          ),
           deliver: (reply, messages, leaseId) =>
             this.parseDiscordActions(reply, messages, leaseId).then(() => {}),
           requeue: (ids, leaseId) => storage.requeueDiscordMessages(ids, leaseId),

@@ -4,6 +4,7 @@ import { ashBridge } from "./lib/ash/bridge";
 import { storage } from "./lib/ash/storage";
 import { discordHerald } from "./lib/ash/discord";
 import { startHangoutIdleScheduler } from "./lib/ash/hangout";
+import { startSongWorker } from "./lib/ash/song-service";
 
 const rawPort = process.env["PORT"];
 
@@ -58,4 +59,5 @@ app.listen(port, async (err) => {
     logger.error({ err }, "Discord Court Herald failed to start");
   });
   startHangoutIdleScheduler();
+  startSongWorker();
 });

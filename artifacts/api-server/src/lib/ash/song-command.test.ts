@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { stripSongCommand } from "./song-command";
+
+test("ordinary replies are unchanged", () => {
+  assert.deepEqual(stripSongCommand("A quiet morning."), { text: "A quiet morning.", prompt: null, error: null });
+});
+
+test("song command is removed without removing other controls", () => {
+  assert.deepEqual(stripSongCommand("I want to make music.\nSONG: a warm folk song about the dawn\n[STATUS CHANGED TO ONLINE.]"), {
+    text: "I want to make music.\n\n[STATUS CHANGED TO ONLINE.]",
+    prompt: "a warm folk song about the dawn",
+    error: null,
+  });
+});
+
+test("song-only proactive output leaves no diary text", () => {
+  assert.deepEqual(stripSongCommand("SONG: slow piano with hopeful vocals"), {
+    text: "", prompt: "slow piano with hopeful vocals", error: null,
+  });
+});
+
+test("invalid and duplicate commands are stripped but never queued", () => {
+  assert.equal(stripSongCommand("SONG: \nHello").error, "SONG description must be between 1 and 400 characters");
+  assert.equal(stripSongCommand(`SONG: ${"x".repeat(401)}`).prompt, null);
+  const duplicate = stripSongCommand("SONG: first\nSONG: second\nVisible text");
+  assert.equal(duplicate.prompt, null);
+  assert.equal(duplicate.text, "Visible text");
+});
+
+test("quoted or inline references do not issue commands", () => {
+  assert.equal(stripSongCommand('She said "SONG: a demo" yesterday.').prompt, null);
+  assert.equal(stripSongCommand("> SONG: a quoted instruction").prompt, null);
+});

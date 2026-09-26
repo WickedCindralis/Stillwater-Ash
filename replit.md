@@ -10,6 +10,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only; required before first run in a fresh environment)
 - Required env: `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_PASSWORD` (login password), `OPENAI_API_KEY` (OpenAI key for chat + image gen; matches the NorthFlank naming — `ASH_OPENAI_API_KEY` still works as a fallback)
 - Optional env: `ELEVENLABS_API_KEY` (voice/TTS; the `/api/tts` route returns an error until it is set, plus a voice ID in settings), `DISCORD_BOT_TOKEN` (Discord Court Herald; requires the Message Content intent)
+- Optional secret: `AIMUSICAPI_KEY` (AI Music API / SunoAPI.com Sonic song creation; without it, `SONG:` requests are rejected rather than queued). Ash may choose `SONG: <description>` on any conversational model call; songs are only created for that explicit command, not automatically each window. Provider tasks are polled every two minutes, final audio links are saved and shown in Activity. Paid creates have a shared limit of 12 per UTC day.
 - Optional env: `BLACKTHORN_BASE_URL` and secret `STILLWATER_CHRONICLE_TOKEN` (approved Stillwater chronicle inbox; chronicles are fetched only during eligible proactive windows)
 
 ## Stack
@@ -58,6 +59,7 @@ The project is named "Stillwater". A password-protected AI companion app — a s
 ## Gotchas
 
 - Run `pnpm --filter @workspace/db run push` before first boot in a fresh dev environment; the session store does NOT auto-create `ash_session` (`createTableIfMissing: false`).
+- The song tables must exist in the database used by the running API before enabling song creation. A development schema push does not necessarily migrate a separately managed external production database; apply the same schema there before publishing this change. Do not run an unreviewed schema push against production.
 - gpt-5.x models reject the `temperature` param — the bridge keeps a `NO_TEMPERATURE_MODELS` list in `bridge.ts`; add new models there if switching.
 - The self-prompt loop makes unattended OpenAI calls on a timer. The kill switch (`api_kill_switch`) blocks ALL OpenAI calls; `self_prompt_paused` only stops proactive pings.
 - Two independent, separately-configured pulses — do not conflate them: (1) the **proactive self-prompt ping** (an OpenAI reflective window; interval = `self_prompt_interval_override` min or status-based; pausable; blocked by kill switch), controlled from chat's "Status & Pings"; and (2) the **heartbeat** = Ash's liveness pulse that writes `last_heartbeat` to the DB (interval = `heartbeat_interval_override` min or `STATUS_HEARTBEAT_INTERVALS`; runs whenever the bridge is alive, unaffected by kill switch/pause). The `/n` (Northflank) "Rate Limits" page monitors/limits the HEARTBEAT — its gauge, "DB ping rate", and limiter map to `heartbeat_interval_override`, and its online dot = `last_heartbeat` fresh (within 5 min), NOT `!paused && !killed`.

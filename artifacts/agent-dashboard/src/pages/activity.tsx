@@ -11,7 +11,28 @@ const KIND_LABELS: Record<string, string> = {
   pings_off: "pings_off",
   pings_on: "pings_on",
   screen_capture: "Screenshot",
+  song_generated: "Song",
+  song_failed: "Song failed",
 };
+
+function SongActivityMessage({ message }: { message: string }) {
+  const [title, link] = message.split("\n", 2);
+  let safeUrl: string | null = null;
+  try {
+    const url = new URL(link);
+    if (url.protocol === "https:") safeUrl = url.toString();
+  } catch {
+    // Old or malformed activity messages are displayed as text, never as links.
+  }
+  return (
+    <p className="text-white/70 text-[15px] mt-1">
+      {title}
+      {safeUrl && (
+        <> · <a href={safeUrl} target="_blank" rel="noopener noreferrer" className="text-gold underline underline-offset-2 hover:text-white">Listen to song</a></>
+      )}
+    </p>
+  );
+}
 
 function formatEst(iso: string): string {
   const d = new Date(iso);
@@ -74,7 +95,9 @@ export default function ActivityPage() {
                     {KIND_LABELS[e.kind] || e.kind}
                   </span>
                 </div>
-                <p className="text-white/70 text-[15px] mt-1">{e.message}</p>
+                {e.kind === "song_generated"
+                  ? <SongActivityMessage message={e.message} />
+                  : <p className="text-white/70 text-[15px] mt-1">{e.message}</p>}
                 {e.kind === "screen_capture" && e.hasScreenshot && (
                   <button
                     type="button"

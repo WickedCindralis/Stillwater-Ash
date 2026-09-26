@@ -19,7 +19,7 @@ export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
     claim: (limit: number) => Promise<{ leaseId: string; messages: T[] }>;
     getContext: (guildId: string, limit: number) => Promise<T[]>;
     getPacketOptions?: (guildId: string) => Promise<DiscordPacketOptions>;
-    callModel: (prompt: string) => Promise<string>;
+    callModel: (prompt: string, messages: T[]) => Promise<string>;
     deliver: (
       reply: string,
       messages: ReadonlyMap<number, T>,
@@ -40,6 +40,7 @@ export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
       : {};
     const response = await dependencies.callModel(
       buildDiscordPacketText(claim.messages, context, false, packetOptions),
+      claim.messages,
     );
     if (!response) {
       await dependencies.requeue(ids, claim.leaseId);

@@ -125,8 +125,9 @@ function formatDiscordCommentHistory(messages: readonly AshDiscordMessage[]): st
   return messages
     .filter((message) => message.content.trim().length > 0)
     .map((message) => JSON.stringify({
+      source: "Discord public channel",
       channel: message.channelName,
-      author: message.authorName,
+      speaker: message.authorName,
       text: message.content,
       sentAt: message.createdAt.toISOString(),
     }))
@@ -659,16 +660,13 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
   }
 
   private async buildDiscordPacketOptions(guildId: string): Promise<DiscordPacketOptions> {
-    const ownerUserId = process.env["DISCORD_OWNER_USER_ID"]?.trim() ?? "";
-    const [wickedMessages, stillwaterHistory, ownerDmHistory] = await Promise.all([
-      storage.getRecentDiscordOwnerComments(guildId, DISCORD_WICKED_WINDOW, ownerUserId),
+    const [stillwaterHistory, ownerDmHistory] = await Promise.all([
       storage.getRecentStillwaterHistory(DISCORD_WICKED_WINDOW),
       guildId === DISCORD_OWNER_DM_GUILD_ID
         ? storage.getRecentOwnerDiscordHistory(DISCORD_WICKED_WINDOW)
         : Promise.resolve([]),
     ]);
     return {
-      wickedMessages,
       stillwaterHistory,
       ownerDmHistory,
     };
@@ -1138,18 +1136,10 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
     let rawReply = "";
     try {
       const packetOptions = await this.buildDiscordPacketOptions(message.guildId);
-      const playerContext = message.guildId === DISCORD_OWNER_DM_GUILD_ID
-        ? await storage.getRecentDiscordPlayerComments(
-          DISCORD_COMMENT_HISTORY_LIMIT,
-          process.env["DISCORD_OWNER_USER_ID"]?.trim() ?? "",
-        )
-        : await storage.getRecentDiscordContext(
-          message.guildId,
-          DISCORD_COMMENT_HISTORY_LIMIT,
-          process.env["DISCORD_OWNER_USER_ID"]?.trim(),
-        );
+      const { discordHerald } = await import("./discord");
+      const conversation = await discordHerald.getConversationContext([message]);
       rawReply = await this.callOpenAI(
-        buildDiscordPacketText([message], playerContext, true, packetOptions),
+        buildDiscordPacketText(conversation.calls, conversation.timeline, true, packetOptions),
         "discord_owner",
         undefined, undefined, undefined, `discord-owner:${message.id}`,
       );
@@ -1435,9 +1425,10 @@ GROUND RULES:
       try {
         await processDiscordBatchOnce<AshDiscordMessage>({
           claim: (limit) => storage.claimDiscordMentions(limit),
-          getContext: (guildId, limit) => storage.getRecentDiscordContext(
-            guildId, limit, process.env["DISCORD_OWNER_USER_ID"]?.trim(),
-          ),
+          getConversation: async (calls) => {
+            const { discordHerald } = await import("./discord");
+            return discordHerald.getConversationContext(calls);
+          },
           getPacketOptions: (guildId) => this.buildDiscordPacketOptions(guildId),
           callModel: (prompt, messages) => this.callOpenAI(
             prompt, "discord_batch", undefined, undefined, undefined,

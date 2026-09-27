@@ -118,6 +118,7 @@ export interface IStorage {
   failDiscordDelivery(id: number, leaseId: string, error: string): Promise<boolean>;
   withDiscordChannelLock<T>(channelId: string, work: () => Promise<T>): Promise<T>;
   getRecentDiscordContext(guildId: string, limit: number, ownerUserId?: string): Promise<AshDiscordMessage[]>;
+  getAuthorizedDiscordChannelMessages(guildId: string, channelId: string): Promise<AshDiscordMessage[]>;
   getRecentDiscordPlayerComments(limit: number, ownerUserId: string): Promise<AshDiscordMessage[]>;
   getRecentDiscordCommentHistory(limit: number): Promise<AshDiscordMessage[]>;
   getRecentDiscordOwnerComments(guildId: string, limit: number, ownerUserId: string): Promise<AshDiscordMessage[]>;
@@ -1258,7 +1259,7 @@ export class DbStorage implements IStorage {
 
   async claimDiscordMentions(limit: number): Promise<{ leaseId: string; messages: AshDiscordMessage[] }> {
     const firstPending = await db
-      .select({ guildId: ashDiscordMessages.guildId })
+      .select({ guildId: ashDiscordMessages.guildId, channelId: ashDiscordMessages.channelId })
       .from(ashDiscordMessages)
       .where(eq(ashDiscordMessages.deliveryStatus, "queued"))
       .orderBy(ashDiscordMessages.id)
@@ -1270,6 +1271,7 @@ export class DbStorage implements IStorage {
       .where(and(
         eq(ashDiscordMessages.deliveryStatus, "queued"),
         eq(ashDiscordMessages.guildId, firstPending[0].guildId),
+        eq(ashDiscordMessages.channelId, firstPending[0].channelId),
       ))
       .orderBy(ashDiscordMessages.id)
       .limit(limit);
@@ -1444,6 +1446,28 @@ export class DbStorage implements IStorage {
       .orderBy(desc(ashDiscordMessages.createdAt), desc(ashDiscordMessages.id))
       .limit(limit);
     return rows.reverse();
+  }
+
+  async getAuthorizedDiscordChannelMessages(guildId: string, channelId: string): Promise<AshDiscordMessage[]> {
+    if (guildId !== DISCORD_OWNER_DM_GUILD_ID) {
+      const selected = await db.select({ id: ashDiscordChannels.id })
+        .from(ashDiscordChannels)
+        .where(and(
+          eq(ashDiscordChannels.guildId, guildId),
+          eq(ashDiscordChannels.channelId, channelId),
+        ))
+        .limit(1);
+      if (selected.length === 0) throw new Error("Discord channel is no longer selected");
+    }
+    // These records exist only for opted-in intake and are erased on revocation.
+    // Their original/reply IDs are the boundary for live Discord history reads.
+    return db.select().from(ashDiscordMessages)
+      .where(and(
+        eq(ashDiscordMessages.guildId, guildId),
+        eq(ashDiscordMessages.channelId, channelId),
+      ))
+      .orderBy(desc(ashDiscordMessages.id))
+      .limit(500);
   }
 
   async getRecentDiscordPlayerComments(limit: number, ownerUserId: string): Promise<AshDiscordMessage[]> {

@@ -6,6 +6,7 @@ import {
   Partials,
   OAuth2Scopes,
   PermissionsBitField,
+  MessageType,
   type Message,
 } from "discord.js";
 import { randomUUID } from "node:crypto";
@@ -17,7 +18,10 @@ import {
   DISCORD_OWNER_DM_GUILD_ID,
   isDiscordCall,
   isDiscordPlayerTicketChannel,
+  isReplyInAshThread,
+  resolveDiscordReplyChain,
 } from "./discord-policy";
+import type { DiscordPacketMessage } from "./discord-policy";
 import { storage } from "./storage";
 
 const MESSAGE_CHARS = 1_600;
@@ -277,16 +281,112 @@ class DiscordHerald {
     return saved;
   }
 
-  private calledAsh(message: Message<true>): boolean {
+  private async calledAsh(message: Message<true>): Promise<boolean> {
     const botId = this.client?.user?.id;
-    return isDiscordCall(
-      message.content,
-      !!botId && message.mentions.users.has(botId),
+    if (isDiscordCall(message.content, !!botId && message.mentions.users.has(botId))) return true;
+    if (!botId || message.type !== MessageType.Reply || !message.reference?.messageId) return false;
+    try {
+      const authorized = await storage.getAuthorizedDiscordChannelMessages(message.guildId, message.channelId);
+      const authorizedIds = new Set(authorized.flatMap((entry) =>
+        [entry.discordMessageId, entry.replyDiscordMessageId].filter(Boolean)));
+      const replyingToAsh = await isReplyInAshThread<Message>(
+        message,
+        botId,
+        (current) => current.fetchReference(),
+        (current) => current.type === MessageType.Reply,
+        authorizedIds,
+      );
+      return isDiscordCall(message.content, false, replyingToAsh);
+    } catch (error) {
+      logger.warn({ err: error, discordMessageId: message.id }, "[discord-herald] Reply target unavailable");
+      return false;
+    }
+  }
+
+  async getConversationContext(
+    calls: readonly AshDiscordMessage[],
+  ): Promise<{ timeline: DiscordPacketMessage[]; calls: DiscordPacketMessage[] }> {
+    if (calls.length === 0) throw new Error("A Discord conversation requires a call");
+    const channelId = calls[0]!.channelId;
+    if (calls.some((call) => call.channelId !== channelId))
+      throw new Error("Discord calls must be grouped by channel");
+    const client = this.client;
+    if (!client?.isReady()) throw new Error("Discord is not connected");
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased() || !("messages" in channel))
+      throw new Error("Discord conversation channel is unavailable");
+
+    const authorized = await storage.getAuthorizedDiscordChannelMessages(calls[0]!.guildId, channelId);
+    const authorizedIds = new Set(authorized.flatMap((entry) =>
+      [entry.discordMessageId, entry.replyDiscordMessageId].filter(Boolean)));
+    // Only fetch IDs retained during opted-in intake. A bulk "latest" request
+    // could read pre-selection conversation or resurrect revoked history.
+    const newestIds = [...authorizedIds]
+      .sort((a, b) => BigInt(a) > BigInt(b) ? -1 : BigInt(a) < BigInt(b) ? 1 : 0);
+    const cached = new Map<string, Promise<Message | null>>();
+    const fetchMessage = (id: string): Promise<Message | null> => {
+      if (!authorizedIds.has(id)) return Promise.resolve(null);
+      const existing = cached.get(id);
+      if (existing) return existing;
+      const pending = channel.messages.fetch(id).catch((error: unknown) => {
+        logger.warn({ err: error, channelId, discordMessageId: id },
+          "[discord-herald] Authorized Discord message unavailable");
+        return null;
+      });
+      cached.set(id, pending);
+      return pending;
+    };
+    const nameOf = (entry: Message): string =>
+      entry.author.id === client.user.id
+        ? "Ash"
+        : entry.member?.displayName || entry.author.globalName || entry.author.username;
+    const ancestorsOf = (entry: Message) => resolveDiscordReplyChain(
+      entry,
+      fetchMessage,
+      channelId,
+      client.user.id,
+      nameOf,
+      (message) => message.type === MessageType.Reply,
     );
+    const recent: Message[] = [];
+    for (let offset = 0; offset < newestIds.length && recent.length < 20; offset += 20) {
+      // Deleted/inaccessible messages must not reduce the window if older
+      // authorized messages are still available.
+      const batch = await Promise.all(newestIds.slice(offset, offset + 20).map(fetchMessage));
+      recent.push(...batch.filter((entry): entry is Message => !!entry && entry.channelId === channelId));
+    }
+    const timeline = await Promise.all(
+      recent.slice(0, 20)
+        .sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0)
+        .map(async (entry): Promise<DiscordPacketMessage> => ({
+          id: 0,
+          guildId: calls[0]!.guildId,
+          channelId,
+          discordMessageId: entry.id,
+          channelName: calls[0]!.channelName,
+          authorName: nameOf(entry),
+          content: (entry.content.trim() || (entry.attachments.size ? "(attachment)" : "(message without text)"))
+            .slice(0, MESSAGE_CHARS),
+          createdAt: new Date(entry.createdTimestamp),
+          isAsh: entry.author.id === client.user.id,
+          replyChain: await ancestorsOf(entry),
+        })),
+    );
+    const enrichedCalls = await Promise.all(calls.map(async (call): Promise<DiscordPacketMessage> => {
+      const original = await fetchMessage(call.discordMessageId);
+      return {
+        ...call,
+        authorName: original ? nameOf(original) : call.authorName,
+        replyChain: original ? await ancestorsOf(original) : [],
+      };
+    }));
+    return { timeline, calls: enrichedCalls };
   }
 
   private async handleMessage(message: Message): Promise<void> {
-    if (message.author.bot) return;
+    // Ash's sent reply is already authorized by its originating delivery ID.
+    // Other bots' messages are context, never calls, after channel opt-in.
+    if (message.author.bot && message.author.id === this.client?.user?.id) return;
     if (message.channel.isDMBased()) {
       await this.handleOwnerDirectMessage(message);
       return;
@@ -299,7 +399,7 @@ class DiscordHerald {
         const state = await storage.getState();
         if (state.discordKillSwitch === 1) return null;
         if (!await storage.isDiscordChannelConfigured(message.channelId)) return null;
-        const called = this.calledAsh(message);
+        const called = !message.author.bot && await this.calledAsh(message);
         const kind = classifyDiscordMessage(called, message.author.id, message.guild.ownerId);
         const deliveryStatus = kind === "owner_call"
           ? "processing"
@@ -307,8 +407,8 @@ class DiscordHerald {
             ? "queued"
             : "context";
         const rawContent = message.content.trim()
-          || (called ? "(called Ash without additional text)" : "");
-        if (!rawContent) return null;
+          || (message.attachments.size ? "(attachment)"
+            : called ? "(called Ash without additional text)" : "(message without text)");
         const deliveryLeaseId = kind === "owner_call" ? randomUUID() : "";
         const deliveryLeaseExpiresAt = kind === "owner_call"
           ? new Date(Date.now() + 10 * 60_000)

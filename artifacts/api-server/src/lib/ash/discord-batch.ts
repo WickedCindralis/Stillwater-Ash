@@ -17,7 +17,10 @@ export function discordBatchEnabled(state: {
 export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
   dependencies: {
     claim: (limit: number) => Promise<{ leaseId: string; messages: T[] }>;
-    getContext: (guildId: string, limit: number) => Promise<T[]>;
+    getConversation: (calls: T[]) => Promise<{
+      timeline: DiscordPacketMessage[];
+      calls: DiscordPacketMessage[];
+    }>;
     getPacketOptions?: (guildId: string) => Promise<DiscordPacketOptions>;
     callModel: (prompt: string, messages: T[]) => Promise<string>;
     deliver: (
@@ -34,12 +37,12 @@ export async function processDiscordBatchOnce<T extends DiscordPacketMessage>(
   const ids = claim.messages.map((message) => message.id);
   try {
     const guildId = claim.messages[0]!.guildId;
-    const context = await dependencies.getContext(guildId, 10);
+    const conversation = await dependencies.getConversation(claim.messages);
     const packetOptions = dependencies.getPacketOptions
       ? await dependencies.getPacketOptions(guildId)
       : {};
     const response = await dependencies.callModel(
-      buildDiscordPacketText(claim.messages, context, false, packetOptions),
+      buildDiscordPacketText(conversation.calls, conversation.timeline, false, packetOptions),
       claim.messages,
     );
     if (!response) {

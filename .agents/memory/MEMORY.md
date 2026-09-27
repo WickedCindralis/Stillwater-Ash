@@ -7,7 +7,7 @@
 - [Ephemeral capture generations](ephemeral-capture-generations.md) — OFF/revoke must invalidate pending and delivered images through the final provider boundary, including OFF→ON races.
 - [External DB publish schema](external-db-publish-schema.md) — stale managed-dev schema can block publishing even when runtime intentionally uses an external DATABASE_URL.
 - [Published Ash state](published-ash-state.md) — verify and repair live mutable settings through the authenticated production API; development database writes may not reach production.
-- [Discord continuity boundary](discord-continuity-handoff.md) — user explicitly wants bounded raw Stillwater chat in Discord packets; keep public reply non-disclosure and OFF delivery separate.
+- [Discord continuity boundary](discord-continuity-handoff.md) — preserve private Stillwater continuity beside authorized same-channel Discord timelines; keep public non-disclosure and OFF delivery separate.
 - [Integration-test isolation](integration-test-isolation.md) — DB integration tests can briefly expose synthetic messages and toggle live controls; use a separate disposable database.
 - [Story workspace continuity](story-workspace-continuity.md) — Story is isolated from chat/Diary/Discord; interrupted streams stay resumable and cross-instance writing uses a renewable DB lease.
 - [API call observability](api-call-observability.md) — user requires actual calls and lifecycle logs for every new API-powered feature; accepted jobs alone are not evidence of provider execution.

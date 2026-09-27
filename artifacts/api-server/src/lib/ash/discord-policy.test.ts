@@ -212,7 +212,7 @@ test("Discord packet keeps one ordered 20-message channel timeline, including As
   assert.equal(privateMessages.filter((message) => message.speaker === "ash").length, 10);
   assert.match(channel[0].text, /channel message 3/);
   assert.match(channel[19].text, /channel message 22/);
-  assert.equal(channel[0].speaker, "Ash (HIS)");
+  assert.equal(channel[0].speaker, "Ash (you)");
   assert.equal(channel[1].speaker, "Wicked");
   assert.equal(channel[2].speaker, "Cheesy");
   assert.ok(channel.every((message) => message.source === "Discord"));
@@ -243,7 +243,7 @@ test("a reply-to-a-reply identifies its current speaker, direct parent, and Ash'
   assert.equal(current.currentReplyTarget, true);
   assert.deepEqual(current.replyingTo, { speaker: "Wicked", text: "He absolutely will.", messageId: "102" });
   assert.deepEqual(current.replyChain[1], {
-    speaker: "Ash (HIS)", text: "You want me to bully your server owner...", messageId: "101",
+    speaker: "Ash (you)", text: "You want me to bully your server owner...", messageId: "101",
   });
 });
 

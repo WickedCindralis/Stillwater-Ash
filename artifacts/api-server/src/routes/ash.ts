@@ -755,18 +755,22 @@ router.post(
     const audio = req.body;
     const durationMs = Number(req.get("x-recording-duration-ms"));
     if (!extension || !Buffer.isBuffer(audio)) {
+      req.log.warn({ mime }, "[cell-stt] Upload rejected: unsupported recording format");
       res.status(415).json({ error: "This recording format is not supported on this phone." });
       return;
     }
     if (audio.length < 128 || !Number.isFinite(durationMs) || durationMs < 100 || durationMs > 120_500) {
+      req.log.warn({ bytes: audio.length, durationMs }, "[cell-stt] Upload rejected: empty or over limit");
       res.status(400).json({ error: "Recording is empty or longer than two minutes." });
       return;
     }
-    const actualSeconds = await getAudioDurationSeconds(audio);
-    if (actualSeconds === null) {
+    const durationResult = await getAudioDurationSeconds(audio);
+    if ("error" in durationResult) {
+      req.log.warn({ reason: durationResult.error, mime, bytes: audio.length }, "[cell-stt] Upload rejected: media duration unavailable");
       res.status(422).json({ error: "Could not read this recording. Please try again." });
       return;
     }
+    const actualSeconds = durationResult.seconds;
     if (actualSeconds < 0.1) {
       res.status(400).json({ error: "No audio was recorded. Please try again." });
       return;

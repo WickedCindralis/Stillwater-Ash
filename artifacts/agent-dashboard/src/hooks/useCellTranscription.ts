@@ -155,7 +155,11 @@ export function useCellTranscription(onTranscript: (text: string) => void) {
           if (!response.ok) {
             if (response.status === 413) throw new Error("Recording is too large. Please try a shorter one.");
             if (response.status === 401) throw new Error("Your session expired. Please sign in again.");
-            throw new Error("Transcription failed. Please try again.");
+            const payload: unknown = await response.json().catch(() => null);
+            const serverError = payload && typeof payload === "object" && "error" in payload
+              && typeof payload.error === "string" && payload.error.length <= 200
+              ? payload.error : null;
+            throw new Error(serverError ?? "Transcription failed. Please try again.");
           }
           const result: unknown = await response.json();
           if (!result || typeof result !== "object" || !("text" in result) || typeof result.text !== "string") {
@@ -173,11 +177,7 @@ export function useCellTranscription(onTranscript: (text: string) => void) {
           transcriptCallbackRef.current(result.text.trim());
         } catch (cause) {
           if (mountedRef.current && generation === generationRef.current && !abort.signal.aborted) {
-            setError(cause instanceof Error && (
-              cause.message.startsWith("Recording is too large")
-              || cause.message.startsWith("Your session expired")
-            )
-              ? cause.message : "Transcription failed. Please try again.");
+            setError(cause instanceof Error ? cause.message : "Transcription failed. Please try again.");
           }
         } finally {
           if (mountedRef.current && generation === generationRef.current) setIsTranscribing(false);

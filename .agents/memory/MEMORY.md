@@ -3,6 +3,7 @@
 - [Replit deploy health probe](replit-deploy-health.md) — platform probes the bare service path (/api), not just configured /api/healthz; answer 200 at base path or logs show healthcheck 500s (also transient on cold starts).
 - [Blackthorn chronicle endpoint](blackthorn-chronicle-endpoint.md) — Stillwater-only route is live; verify exact payload and acknowledgement flow without touching Summer Palace.
 - [Replit VM URL change](replit-vm-url-change.md) — Reserved VM can receive a new generated hostname while keeping the same app image and run configuration.
+- [VM native-binary parity](vm-native-binary-parity.md) — a command present in the development runtime is not necessarily bundled into the published VM; declare native tools as Nix dependencies.
 - [Background chat refresh](background-chat-refresh.md) — Stillwater must refresh messages on tab focus/reconnect and continue polling while backgrounded; history paging is not retention.
 - [Ephemeral capture generations](ephemeral-capture-generations.md) — OFF/revoke must invalidate pending and delivered images through the final provider boundary, including OFF→ON races.
 - [External DB publish schema](external-db-publish-schema.md) — stale managed-dev schema can block publishing even when runtime intentionally uses an external DATABASE_URL.

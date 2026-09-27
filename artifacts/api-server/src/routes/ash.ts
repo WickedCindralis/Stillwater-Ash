@@ -1,5 +1,6 @@
 import {
   Router,
+  raw,
   type IRouter,
   type Request,
   type Response,
@@ -24,6 +25,7 @@ import {
   setHangoutIdleInterval,
 } from "../lib/ash/hangout";
 import { ashBridge, type AshPacketPreview } from "../lib/ash/bridge";
+import { getAudioDurationSeconds } from "../lib/ash/cell-stt-duration";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
 import { discordHerald } from "../lib/ash/discord";
@@ -725,6 +727,120 @@ router.post("/messages/purge", requireAuth, async (_req, res): Promise<void> => 
   await storage.logActivity("status", `Chat purged — ${removed} messages removed, last 20 kept`);
   res.json({ removed });
 });
+
+// ── CELL-only ElevenLabs batch STT. Audio stays in memory and is not persisted. ──
+const cellAudioTypes: Record<string, string> = {
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/webm": "webm",
+  "audio/ogg": "ogg",
+  "audio/aac": "aac",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+};
+
+router.get("/cell/stt/usage", requireAuth, async (_req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await storage.getCellSttUsage());
+});
+
+router.post(
+  "/cell/stt",
+  requireAuth,
+  raw({ type: Object.keys(cellAudioTypes), limit: "20mb" }),
+  async (req, res): Promise<void> => {
+    const mime = req.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    const extension = cellAudioTypes[mime];
+    const audio = req.body;
+    const durationMs = Number(req.get("x-recording-duration-ms"));
+    if (!extension || !Buffer.isBuffer(audio)) {
+      res.status(415).json({ error: "This recording format is not supported on this phone." });
+      return;
+    }
+    if (audio.length < 128 || !Number.isFinite(durationMs) || durationMs < 100 || durationMs > 120_500) {
+      res.status(400).json({ error: "Recording is empty or longer than two minutes." });
+      return;
+    }
+    const actualSeconds = await getAudioDurationSeconds(audio);
+    if (actualSeconds === null) {
+      res.status(422).json({ error: "Could not read this recording. Please try again." });
+      return;
+    }
+    if (actualSeconds < 0.1) {
+      res.status(400).json({ error: "No audio was recorded. Please try again." });
+      return;
+    }
+    if (actualSeconds > 120.5) {
+      res.status(400).json({ error: "Recording is longer than two minutes." });
+      return;
+    }
+    const apiKey = process.env["ELEVENLABS_API_KEY"];
+    if (!apiKey) {
+      res.status(503).json({ error: "Speech transcription is not configured." });
+      return;
+    }
+    // Record the estimate before the paid call. A disconnect or timeout can
+    // leave provider billing uncertain; keep that separate from confirmed use.
+    const attemptId = await storage.beginCellSttAttempt(actualSeconds * 1000);
+
+    const form = new FormData();
+    form.append("model_id", "scribe_v2");
+    form.append("tag_audio_events", "false");
+    form.append("file", new Blob([Uint8Array.from(audio)], { type: mime }), `cell-recording.${extension}`);
+    const upstreamAbort = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        upstreamAbort.abort();
+        req.log.info("[cell-stt] Client disconnected; ElevenLabs request aborted");
+      }
+    });
+    req.log.info({ model: "scribe_v2", bytes: audio.length, durationSeconds: actualSeconds, attemptId }, "[cell-stt] ElevenLabs request started");
+    try {
+      const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+        method: "POST",
+        headers: { "xi-api-key": apiKey },
+        body: form,
+        signal: AbortSignal.any([upstreamAbort.signal, AbortSignal.timeout(120_000)]),
+      });
+      if (!response.ok) {
+        req.log.warn({ status: response.status }, "[cell-stt] ElevenLabs request failed");
+        if (response.status >= 400 && response.status < 500) {
+          await storage.failCellSttAttempt(attemptId).catch((error: unknown) =>
+            req.log.error({ err: error, attemptId }, "[cell-stt] Failed to record rejected attempt"));
+        }
+        res.status(502).json({ error: "Transcription failed. Please try again." });
+        return;
+      }
+      const result: unknown = await response.json();
+      if (!result || typeof result !== "object" || !("text" in result) || typeof result.text !== "string") {
+        req.log.warn("[cell-stt] ElevenLabs returned an invalid transcript");
+        res.status(502).json({ error: "Transcription failed. Please try again." });
+        return;
+      }
+      const seconds = "audio_duration_secs" in result
+        && typeof result.audio_duration_secs === "number"
+        && Number.isFinite(result.audio_duration_secs)
+        && result.audio_duration_secs > 0
+        ? result.audio_duration_secs
+        : actualSeconds;
+      let usageWarning = "";
+      try {
+        await storage.completeCellSttAttempt(attemptId, seconds * 1000);
+      } catch (usageError) {
+        req.log.error({ err: usageError }, "[cell-stt] Transcription completed, but usage logging failed");
+        usageWarning = "Transcribed, but this usage is still marked unconfirmed.";
+      }
+      req.log.info({ model: "scribe_v2", durationSeconds: seconds }, "[cell-stt] ElevenLabs request completed");
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ text: result.text.trim(), usageWarning });
+    } catch (error) {
+      if (upstreamAbort.signal.aborted) return;
+      req.log.error({ err: error }, "[cell-stt] ElevenLabs request errored");
+      res.status(502).json({ error: "Transcription could not finish. Please try again." });
+    }
+  },
+);
 
 // ── ElevenLabs TTS (streaming, Summer Palace pathing) ──
 // Client POSTs { text }; the server looks up Ash's voice from ash_state and

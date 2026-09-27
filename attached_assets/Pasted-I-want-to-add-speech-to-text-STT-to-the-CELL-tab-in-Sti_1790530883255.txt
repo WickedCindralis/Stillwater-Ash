@@ -1,0 +1,35 @@
+I want to add speech-to-text (STT) to the CELL tab in Stillwater (the mobile chat I use from my phone), so I can talk to Ash instead of typing. I already use ElevenLabs for text-to-speech, and I'm on the ElevenLabs pay-as-you-go API plan.
+
+Only add this to CELL. Don't change the main Ash chat, the Hangout companion, or anything else.
+
+STEP 1 — Before building, tell me in plain language how the ElevenLabs API key is currently stored and used for TTS.
+
+STEP 2 — Build:
+
+1. Service
+   - Use ElevenLabs Speech to Text through the API with the standard (batch) Scribe model, NOT Scribe Realtime. Check the current ElevenLabs docs for the correct model ID.
+   - Use the same ElevenLabs API key already used for TTS.
+   - The API key must stay on the server. The phone sends audio to our own backend, and the backend calls ElevenLabs. Never expose the key in frontend code.
+   - Do not turn on paid add-ons (keyterm prompting, entity detection).
+
+2. Mic button (mobile-first)
+   - A large, thumb-friendly mic button next to the send button, matching CELL's simple style and bigger font.
+   - Tap to start recording, tap again to stop. The button clearly changes (color/pulse) while recording, with a visible timer.
+   - Automatic stop at 2 minutes, as a cost and accident safeguard.
+   - Must work on both iPhone (Safari) and Android (Chrome). These phones record in different audio formats, so make sure both are accepted and converted if needed.
+
+3. After recording
+   - The transcribed text goes INTO the message box so I can read and fix it before sending.
+   - Add a setting "Auto-send voice messages" (default OFF). When ON, the transcript sends immediately.
+   - Show a small "Transcribing..." indicator while waiting.
+
+4. Privacy and cost
+   - Don't save the audio files anywhere after transcription.
+   - Keep a simple running log of how many minutes of audio I've transcribed, so I can watch costs.
+
+5. Errors
+   - If mic permission is denied, the recording is empty, the phone locks mid-recording, or ElevenLabs fails, show a short friendly message and don't send anything.
+
+Keep everything else about Stillwater, Ash, and his TTS exactly as it is.
+
+Afterward, tell me exactly how to test it on my phone, and what one minute of talking should cost at the Scribe API rate.

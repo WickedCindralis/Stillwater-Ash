@@ -13,6 +13,9 @@ RUN dotnet publish ./desktop-companion/Stillwater.Companion.csproj \
 
 FROM node:24-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@10.26.1 --activate
 
 WORKDIR /app

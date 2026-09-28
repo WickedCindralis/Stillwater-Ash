@@ -5,6 +5,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getClipboardImage } from "@/lib/clipboardImage";
 import type { AshMessage, AshState } from "@/lib/types";
 import { useCellTranscription } from "@/hooks/useCellTranscription";
+import { useCellVoiceCall } from "@/hooks/useCellVoiceCall";
+import CellVoiceCallBar from "@/components/cell-voice-call-bar";
 
 type SendMessageResponse = {
   wickedMessage: AshMessage;
@@ -23,7 +25,7 @@ function mergeLatestMessages(
 }
 import {
   Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords, CircleDot,
-  Volume2, VolumeX, Mic,
+  Volume2, VolumeX, Mic, Phone,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
 import Connect4Panel from "@/components/connect4-panel";
@@ -67,6 +69,7 @@ function dayStamp(m: AshMessage): string {
 
 export default function CellPage() {
   const [message, setMessage] = useState("");
+  const [voiceCallMode, setVoiceCallMode] = useState(false);
   const [autoSendVoice, setAutoSendVoice] = useState(() => {
     try { return localStorage.getItem("cell:autoSendVoice") === "true"; } catch { return false; }
   });
@@ -86,6 +89,7 @@ export default function CellPage() {
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [ttsError, setTtsError] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playbackCompletionRef = useRef<{ generation: number; resolve: () => void } | null>(null);
   const lastSpokenIdRef = useRef<number | null>(null);
   // Each speak() call gets a generation number + abort controller; only the
   // newest generation may create audio or touch playback state.
@@ -93,6 +97,9 @@ export default function CellPage() {
   const ttsAbortRef = useRef<AbortController | null>(null);
 
   const stopSpeaking = useCallback(() => {
+    const completion = playbackCompletionRef.current;
+    playbackCompletionRef.current = null;
+    completion?.resolve();
     ttsGenRef.current += 1; // invalidate any in-flight speak()
     ttsAbortRef.current?.abort();
     ttsAbortRef.current = null;
@@ -108,7 +115,7 @@ export default function CellPage() {
   // Stop speech (and abort the request) when leaving the page.
   useEffect(() => stopSpeaking, [stopSpeaking]);
 
-  const speak = useCallback(async (text: string) => {
+  const speak = useCallback(async (text: string, playbackVolume = 1) => {
     if (!text.trim()) return;
     stopSpeaking();
     setTtsError("");
@@ -117,8 +124,15 @@ export default function CellPage() {
     const abort = new AbortController();
     ttsAbortRef.current = abort;
     setTtsPlaying(true);
+    let resolvePlayback!: () => void;
+    const playbackFinished = new Promise<void>((resolve) => { resolvePlayback = resolve; });
+    playbackCompletionRef.current = { generation: gen, resolve: resolvePlayback };
     const cleanup = (url?: string) => {
       if (url) { try { URL.revokeObjectURL(url); } catch { /* noop */ } }
+      if (playbackCompletionRef.current?.generation === gen) {
+        playbackCompletionRef.current = null;
+        resolvePlayback();
+      }
       if (!alive()) return;
       setTtsPlaying(false);
       audioRef.current = null;
@@ -134,6 +148,7 @@ export default function CellPage() {
         const mediaSource = new MS();
         const audio = new Audio();
         (audio as unknown as { disableRemotePlayback?: boolean }).disableRemotePlayback = true;
+        audio.volume = playbackVolume;
         const objUrl = URL.createObjectURL(mediaSource);
         audio.src = objUrl;
         audioRef.current = audio;
@@ -163,7 +178,7 @@ export default function CellPage() {
               if (!alive()) { try { reader.cancel(); } catch { /* noop */ } break; }
               sb.appendBuffer(value as BufferSource);
               if (!started) {
-                audio.play().catch(() => {});
+                audio.play().catch(() => cleanup(objUrl));
                 started = true;
               }
             }
@@ -179,12 +194,15 @@ export default function CellPage() {
         if (!alive()) return;
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
+        audio.volume = playbackVolume;
         audioRef.current = audio;
         audio.onended = () => cleanup(url);
         audio.onerror = () => cleanup(url);
         try { await audio.play(); } catch { cleanup(url); }
       }
+      await playbackFinished;
     } catch (error) {
+      if (!alive()) { cleanup(); return; }
       const raw = error instanceof Error ? error.message : "";
       const serverMessage = raw.match(/"error"\s*:\s*"([^"]+)"/)?.[1];
       setTtsError(serverMessage || "Ash’s voice could not be played.");
@@ -197,9 +215,9 @@ export default function CellPage() {
     refetchInterval: 20_000,
     refetchIntervalInBackground: true,
   });
-  const { data: messages = [] } = useQuery<AshMessage[]>({
+  const { data: messages = [], isFetched: messagesLoaded } = useQuery<AshMessage[]>({
     queryKey: ["/api/messages"],
-    refetchInterval: 8_000,
+    refetchInterval: voiceCallMode ? 2_000 : 8_000,
     refetchIntervalInBackground: true,
   });
   // Older history is loaded on demand; no messages are removed from storage.
@@ -238,6 +256,28 @@ export default function CellPage() {
         mergeLatestMessages(current, [wickedMessage, ashMessage]),
       );
     },
+  });
+  const sendVoiceCallTranscript = useCallback(async (content: string) => {
+    try {
+      const response = await apiRequest("POST", "/api/messages", { content, requestImage: false });
+      const { wickedMessage, ashMessage } = (await response.json()) as SendMessageResponse;
+      queryClient.setQueryData<AshMessage[]>(["/api/messages"], (current) =>
+        mergeLatestMessages(current, [wickedMessage, ashMessage]),
+      );
+    } catch {
+      setMessage((current) => current.trim() ? `${current.trimEnd()} ${content}` : content);
+      throw new Error("Could not confirm the voice message was sent. End the call to review the saved transcript before retrying.");
+    }
+  }, []);
+  const voiceCall = useCellVoiceCall({
+    active: voiceCallMode,
+    setActive: setVoiceCallMode,
+    messages,
+    voiceId: state?.voiceId,
+    isSpeaking: ttsPlaying,
+    speak,
+    stopSpeaking,
+    sendTranscript: sendVoiceCallTranscript,
   });
   const { data: sttUsage, isError: sttUsageError } = useQuery<{
     totalMilliseconds: number;
@@ -284,10 +324,20 @@ export default function CellPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [latestMessageId, sendMutation.isPending]);
 
+  useEffect(() => {
+    if (voiceCallMode || !inputRef.current) return;
+    inputRef.current.style.height = "auto";
+    inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+  }, [message, voiceCallMode]);
+
   // Auto-speak new Ash replies while the voice toggle is on.
   useEffect(() => {
     if (messages.length === 0) return;
     const last = messages[messages.length - 1]!;
+    if (voiceCallMode) {
+      lastSpokenIdRef.current = last.id;
+      return;
+    }
     if (lastSpokenIdRef.current === null) {
       // First load — don't speak history, just remember where we are.
       lastSpokenIdRef.current = last.id;
@@ -299,12 +349,16 @@ export default function CellPage() {
     } else if (last.id > (lastSpokenIdRef.current ?? 0)) {
       lastSpokenIdRef.current = last.id;
     }
-  }, [messages, ttsEnabled, speak]);
+  }, [messages, ttsEnabled, speak, voiceCallMode]);
 
   // Stop any playback when the voice toggle is switched off.
   useEffect(() => {
     if (!ttsEnabled) stopSpeaking();
   }, [ttsEnabled, stopSpeaking]);
+
+  useEffect(() => {
+    if (voiceCallMode && audioRef.current) audioRef.current.volume = voiceCall.volume;
+  }, [voiceCall.volume, voiceCallMode]);
 
   const handleSend = () => {
     const content = message.trim();
@@ -399,6 +453,11 @@ export default function CellPage() {
           {voice.error}
         </div>
       )}
+      {voiceCall.error && (
+        <div className="border-b border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-300" role="alert" data-testid="text-cell-call-error">
+          {voiceCall.error}
+        </div>
+      )}
 
       {showChess && <ChessPanel onClose={() => setShowChess(false)} />}
       {showConnect4 && <Connect4Panel onClose={() => setShowConnect4(false)} />}
@@ -470,6 +529,20 @@ export default function CellPage() {
 
       {/* Composer */}
       <div className="border-t border-white/10 bg-black px-3 py-2.5">
+        {voiceCallMode ? (
+          <CellVoiceCallBar
+            listening={voiceCall.listening}
+            speaking={ttsPlaying}
+            processing={voiceCall.processing}
+            volume={voiceCall.volume}
+            showVolume={voiceCall.showVolume}
+            onToggleVolume={() => voiceCall.setShowVolume((visible) => !visible)}
+            onVolumeChange={voiceCall.setVolume}
+            onEnd={voiceCall.endCall}
+            onToggleMic={voiceCall.toggleListening}
+          />
+        ) : (
+        <>
         <div className="flex items-center justify-between gap-2 mb-2 text-sm text-white/60">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -569,6 +642,17 @@ export default function CellPage() {
           />
           <button
             type="button"
+            onClick={voiceCall.startCall}
+            disabled={!state?.voiceId || !messagesLoaded || voice.isRecording || voice.isTranscribing || voiceSending}
+            aria-label="Start a voice call with Ash"
+            title={!state?.voiceId ? "Ash has no voice configured" : "Start a voice call with Ash"}
+            className="min-w-11 min-h-11 flex items-center justify-center rounded-xl bg-emerald-600/15 text-emerald-300 hover:bg-emerald-600/25 disabled:opacity-30"
+            data-testid="button-cell-start-voice-call"
+          >
+            <Phone className="w-5 h-5" />
+          </button>
+          <button
+            type="button"
             onClick={voice.toggle}
             disabled={voice.isTranscribing || voiceSending}
             aria-label={voice.isRecording ? "Stop recording and transcribe" : "Start voice recording"}
@@ -592,6 +676,8 @@ export default function CellPage() {
             {sendMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

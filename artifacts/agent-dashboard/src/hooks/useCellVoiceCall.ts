@@ -104,6 +104,7 @@ export function useCellVoiceCall({
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     if (recognition) {
+      recognition.onstart = null;
       recognition.onend = null;
       recognition.onresult = null;
       recognition.onerror = null;
@@ -288,7 +289,10 @@ export function useCellVoiceCall({
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     if (recognition) {
+      recognition.onstart = null;
       recognition.onend = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
       try { recognition.abort(); } catch { /* recognition already stopped */ }
     }
     stopSpeakingRef.current();

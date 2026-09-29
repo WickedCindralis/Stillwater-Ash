@@ -76,14 +76,6 @@ export interface IStorage {
   recordChronicleError(chronicleId: string, error: string): Promise<void>;
   deleteDiaryEntry(id: number): Promise<void>;
   logActivity(kind: string, message: string): Promise<void>;
-  beginCellSttAttempt(milliseconds: number): Promise<number>;
-  completeCellSttAttempt(id: number, milliseconds: number): Promise<void>;
-  failCellSttAttempt(id: number): Promise<void>;
-  getCellSttUsage(): Promise<{
-    totalMilliseconds: number;
-    unconfirmedMilliseconds: number;
-    recent: Array<{ milliseconds: number; createdAt: Date; confirmed: boolean }>;
-  }>;
   stageScreenCapture(requestId: string, imageDataUrl: string): Promise<number | null>;
   publishCaptureRequest(requestId: string, activityId: number): Promise<boolean>;
   discardScreenCapture(activityId: number): Promise<void>;
@@ -943,52 +935,6 @@ export class DbStorage implements IStorage {
     await db.insert(ashActivity).values({ kind, message });
   }
 
-  async beginCellSttAttempt(milliseconds: number): Promise<number> {
-    const [row] = await db.insert(ashActivity)
-      .values({ kind: "cell_stt_attempt", message: String(Math.round(milliseconds)) })
-      .returning({ id: ashActivity.id });
-    return row!.id;
-  }
-
-  async completeCellSttAttempt(id: number, milliseconds: number): Promise<void> {
-    await db.update(ashActivity)
-      .set({ kind: "cell_stt", message: String(Math.round(milliseconds)) })
-      .where(and(eq(ashActivity.id, id), eq(ashActivity.kind, "cell_stt_attempt")));
-  }
-
-  async failCellSttAttempt(id: number): Promise<void> {
-    await db.update(ashActivity)
-      .set({ kind: "cell_stt_failed" })
-      .where(and(eq(ashActivity.id, id), eq(ashActivity.kind, "cell_stt_attempt")));
-  }
-
-  async getCellSttUsage(): Promise<{
-    totalMilliseconds: number;
-    unconfirmedMilliseconds: number;
-    recent: Array<{ milliseconds: number; createdAt: Date; confirmed: boolean }>;
-  }> {
-    const totals = await db.select({
-      kind: ashActivity.kind,
-      total: sql<string>`coalesce(sum(${ashActivity.message}::bigint), 0)::text`,
-    }).from(ashActivity)
-      .where(inArray(ashActivity.kind, ["cell_stt", "cell_stt_attempt"]))
-      .groupBy(ashActivity.kind);
-    const rows = await db.select({ kind: ashActivity.kind, message: ashActivity.message, createdAt: ashActivity.createdAt })
-      .from(ashActivity)
-      .where(inArray(ashActivity.kind, ["cell_stt", "cell_stt_attempt"]))
-      .orderBy(desc(ashActivity.id))
-      .limit(10);
-    return {
-      totalMilliseconds: Number(totals.find((row) => row.kind === "cell_stt")?.total ?? 0),
-      unconfirmedMilliseconds: Number(totals.find((row) => row.kind === "cell_stt_attempt")?.total ?? 0),
-      recent: rows.map((row) => ({
-        milliseconds: Number(row.message),
-        createdAt: row.createdAt,
-        confirmed: row.kind === "cell_stt",
-      })),
-    };
-  }
-
   async stageScreenCapture(requestId: string, imageDataUrl: string): Promise<number | null> {
     return db.transaction(async (tx) => {
       const [request] = await tx.select().from(ashCaptureRequest)
@@ -1051,6 +997,7 @@ export class DbStorage implements IStorage {
       )
       .where(and(
         ne(ashActivity.kind, "discord"),
+        // Keep previously recorded Scribe usage out of the general activity feed.
         ne(ashActivity.kind, "cell_stt"),
         ne(ashActivity.kind, "cell_stt_attempt"),
         ne(ashActivity.kind, "cell_stt_failed"),

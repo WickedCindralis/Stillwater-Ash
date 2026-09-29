@@ -4,7 +4,6 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { getClipboardImage } from "@/lib/clipboardImage";
 import type { AshMessage, AshState } from "@/lib/types";
-import { useCellTranscription } from "@/hooks/useCellTranscription";
 import { useCellVoiceCall } from "@/hooks/useCellVoiceCall";
 import CellVoiceCallBar from "@/components/cell-voice-call-bar";
 
@@ -25,7 +24,7 @@ function mergeLatestMessages(
 }
 import {
   Send, Loader2, ImagePlus, Wand2, X, ArrowLeft, Swords, CircleDot,
-  Volume2, VolumeX, Mic, Phone,
+  Volume2, VolumeX, Phone,
 } from "lucide-react";
 import ChessPanel from "@/components/chess-panel";
 import Connect4Panel from "@/components/connect4-panel";
@@ -70,12 +69,6 @@ function dayStamp(m: AshMessage): string {
 export default function CellPage() {
   const [message, setMessage] = useState("");
   const [voiceCallMode, setVoiceCallMode] = useState(false);
-  const [autoSendVoice, setAutoSendVoice] = useState(() => {
-    try { return localStorage.getItem("cell:autoSendVoice") === "true"; } catch { return false; }
-  });
-  const [voiceSending, setVoiceSending] = useState(false);
-  const [voicePending, setVoicePending] = useState("");
-  const voiceSendingRef = useRef(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [imageMode, setImageMode] = useState(false);
   const [showChess, setShowChess] = useState(false);
@@ -279,46 +272,6 @@ export default function CellPage() {
     stopSpeaking,
     sendTranscript: sendVoiceCallTranscript,
   });
-  const { data: sttUsage, isError: sttUsageError } = useQuery<{
-    totalMilliseconds: number;
-    unconfirmedMilliseconds: number;
-    recent: Array<{ milliseconds: number; createdAt: string; confirmed: boolean }>;
-  }>({ queryKey: ["/api/cell/stt/usage"] });
-  const voice = useCellTranscription((text) => {
-    if (autoSendVoice && !sendMutation.isPending && !voiceSendingRef.current) {
-      // Voice sends only its own transcript. Leave any typed draft or image intact.
-      voiceSendingRef.current = true;
-      setVoiceSending(true);
-      setVoicePending(text);
-      void (async () => {
-        try {
-          const response = await apiRequest("POST", "/api/messages", { content: text, requestImage: false });
-          const { wickedMessage, ashMessage } = (await response.json()) as SendMessageResponse;
-          queryClient.setQueryData<AshMessage[]>(["/api/messages"], (current) =>
-            mergeLatestMessages(current, [wickedMessage, ashMessage]),
-          );
-          setVoicePending("");
-        } catch {
-          setMessage((current) => current.trim() ? `${current.trimEnd()} ${text}` : text);
-          setVoicePending("");
-          voice.setError("Could not confirm the voice message was sent. Check recent messages before sending the saved transcript again.");
-          void queryClient.invalidateQueries({ queryKey: ["/api/messages"] });
-        } finally {
-          voiceSendingRef.current = false;
-          setVoiceSending(false);
-        }
-      })();
-    } else {
-      setMessage((current) => current.trim() ? `${current.trimEnd()} ${text}` : text);
-      if (autoSendVoice) voice.setError("Ash is still replying. Your transcript is in the message box.");
-      inputRef.current?.focus();
-    }
-  });
-  const updateAutoSendVoice = (enabled: boolean) => {
-    setAutoSendVoice(enabled);
-    try { localStorage.setItem("cell:autoSendVoice", String(enabled)); } catch { /* browser storage unavailable */ }
-  };
-
   const latestMessageId = allMessages[allMessages.length - 1]?.id ?? 0;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -448,11 +401,6 @@ export default function CellPage() {
           {ttsError}
         </div>
       )}
-      {voice.error && (
-        <div className="border-b border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-300" role="alert" data-testid="text-cell-stt-error">
-          {voice.error}
-        </div>
-      )}
       {voiceCall.error && (
         <div className="border-b border-red-500/30 bg-red-950/40 px-3 py-2 text-sm text-red-300" role="alert" data-testid="text-cell-call-error">
           {voiceCall.error}
@@ -543,41 +491,6 @@ export default function CellPage() {
           />
         ) : (
         <>
-        <div className="flex items-center justify-between gap-2 mb-2 text-sm text-white/60">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoSendVoice}
-              onChange={(event) => updateAutoSendVoice(event.target.checked)}
-              className="accent-amber-400 w-4 h-4"
-              data-testid="toggle-cell-auto-send-voice"
-            />
-            Auto-send voice messages
-          </label>
-          {voice.isRecording && <span className="text-red-300 tabular-nums animate-pulse" role="status" data-testid="text-cell-recording-timer">● {Math.floor(voice.elapsedSeconds / 60)}:{String(voice.elapsedSeconds % 60).padStart(2, "0")} / 2:00</span>}
-          {voice.isTranscribing && <span className="text-gold flex items-center gap-1" role="status" data-testid="text-cell-transcribing"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Transcribing...</span>}
-          {voiceSending && <span className="text-gold flex items-center gap-1" role="status"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending voice...</span>}
-        </div>
-        {voicePending && <p className="mb-2 text-sm text-white/60 break-words" role="status">Voice message pending: {voicePending}</p>}
-        <details className="mb-2 text-xs text-white/45" data-testid="cell-stt-usage">
-          <summary className="cursor-pointer w-fit">
-            {sttUsageError ? "Voice usage unavailable" : `Voice transcribed: ${((sttUsage?.totalMilliseconds ?? 0) / 60_000).toFixed(2)} min confirmed`}
-          </summary>
-          {sttUsage && (
-            <div className="pt-1.5 space-y-0.5">
-              {sttUsage.unconfirmedMilliseconds > 0 && (
-                <p className="text-amber-300/80">
-                  {(sttUsage.unconfirmedMilliseconds / 60_000).toFixed(2)} min in unconfirmed attempts (may have been billed).
-                </p>
-              )}
-              {sttUsage.recent.length === 0
-                ? <p>No voice transcriptions yet.</p>
-                : sttUsage.recent.map((entry, index) => (
-                  <p key={`${entry.createdAt}-${index}`}>{new Date(entry.createdAt).toLocaleString()} — {(entry.milliseconds / 60_000).toFixed(2)} min {entry.confirmed ? "" : "(unconfirmed)"}</p>
-                ))}
-            </div>
-          )}
-        </details>
         {pendingImage && (
           <div className="relative inline-block mb-2">
             <img src={pendingImage} alt="attached" className="max-h-28 rounded-lg border border-white/20" data-testid="img-cell-pending" />
@@ -643,29 +556,13 @@ export default function CellPage() {
           <button
             type="button"
             onClick={voiceCall.startCall}
-            disabled={!state?.voiceId || !messagesLoaded || voice.isRecording || voice.isTranscribing || voiceSending}
+            disabled={!state?.voiceId || !messagesLoaded}
             aria-label="Start a voice call with Ash"
             title={!state?.voiceId ? "Ash has no voice configured" : "Start a voice call with Ash"}
             className="min-w-11 min-h-11 flex items-center justify-center rounded-xl bg-emerald-600/15 text-emerald-300 hover:bg-emerald-600/25 disabled:opacity-30"
             data-testid="button-cell-start-voice-call"
           >
             <Phone className="w-5 h-5" />
-          </button>
-          <button
-            type="button"
-            onClick={voice.toggle}
-            disabled={voice.isTranscribing || voiceSending}
-            aria-label={voice.isRecording ? "Stop recording and transcribe" : "Start voice recording"}
-            aria-pressed={voice.isRecording}
-            title={voice.isRecording ? "Stop and transcribe" : "Record a voice message"}
-            className={`min-w-12 min-h-12 flex items-center justify-center rounded-xl transition-colors disabled:opacity-40 ${
-              voice.isRecording
-                ? "bg-red-600 text-white animate-pulse"
-                : "bg-white/10 text-gold hover:bg-white/20"
-            }`}
-            data-testid="button-cell-mic"
-          >
-            <Mic className="w-6 h-6" />
           </button>
           <button
             onClick={handleSend}

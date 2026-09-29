@@ -482,8 +482,11 @@ export default function CellPage() {
             listening={voiceCall.listening}
             speaking={ttsPlaying}
             processing={voiceCall.processing}
+            liveTranscript={voiceCall.liveTranscript}
+            handsFree={voiceCall.handsFree}
             volume={voiceCall.volume}
             showVolume={voiceCall.showVolume}
+            onToggleHandsFree={() => voiceCall.setHandsFree(!voiceCall.handsFree)}
             onToggleVolume={() => voiceCall.setShowVolume((visible) => !visible)}
             onVolumeChange={voiceCall.setVolume}
             onEnd={voiceCall.endCall}

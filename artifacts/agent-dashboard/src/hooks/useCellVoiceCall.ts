@@ -67,9 +67,13 @@ export function useCellVoiceCall({
   const [listening, setListening] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [handsFree, setHandsFreeState] = useState(false);
+  const [resumeAfterReply, setResumeAfterReply] = useState(false);
   const [volume, setVolumeState] = useState(1);
   const [showVolume, setShowVolume] = useState(false);
   const activeRef = useRef(active);
+  const handsFreeRef = useRef(handsFree);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const transcriptRef = useRef("");
   const messagesRef = useRef(messages);
@@ -85,6 +89,7 @@ export function useCellVoiceCall({
   const isSpeakingRef = useRef(isSpeaking);
 
   activeRef.current = active;
+  handsFreeRef.current = handsFree;
   messagesRef.current = messages;
   voiceIdRef.current = voiceId;
   volumeRef.current = volume;
@@ -99,8 +104,15 @@ export function useCellVoiceCall({
     setVolumeState(bounded);
   }, []);
 
+  const setHandsFree = useCallback((enabled: boolean) => {
+    handsFreeRef.current = enabled;
+    setHandsFreeState(enabled);
+    if (!enabled) setResumeAfterReply(false);
+  }, []);
+
   const cancelRecognition = useCallback(() => {
     transcriptRef.current = "";
+    setLiveTranscript("");
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
     if (recognition) {
@@ -122,8 +134,9 @@ export function useCellVoiceCall({
     stopSpeakingRef.current();
     setProcessing(false);
     setShowVolume(false);
+    setHandsFree(false);
     setActive(false);
-  }, [cancelRecognition, setActive]);
+  }, [cancelRecognition, setActive, setHandsFree]);
 
   const startListening = useCallback(() => {
     if (!activeRef.current || isSpeakingRef.current || recognitionRef.current) return;
@@ -145,10 +158,12 @@ export function useCellVoiceCall({
     recognition.lang = "en-US";
     recognition.maxAlternatives = 1;
     transcriptRef.current = "";
+    setLiveTranscript("");
 
     recognition.onstart = () => setListening(true);
     recognition.onresult = (event) => {
       let finalText = "";
+      let interimText = "";
       for (let index = event.resultIndex; index < event.results.length; index++) {
         const result = event.results[index];
         const alternative = result?.[0];
@@ -159,11 +174,18 @@ export function useCellVoiceCall({
       if (finalText) {
         transcriptRef.current = `${transcriptRef.current} ${finalText}`.trim();
       }
+      for (let index = event.resultIndex; index < event.results.length; index++) {
+        const result = event.results[index];
+        const alternative = result?.[0];
+        if (result && !result.isFinal && alternative) interimText += `${alternative.transcript} `;
+      }
+      setLiveTranscript([transcriptRef.current, interimText.trim()].filter(Boolean).join(" "));
     };
     recognition.onend = () => {
       if (recognitionRef.current !== recognition) return;
       recognitionRef.current = null;
       setListening(false);
+      setLiveTranscript("");
       if (!activeRef.current) return;
       const transcript = transcriptRef.current.trim();
       transcriptRef.current = "";
@@ -181,6 +203,7 @@ export function useCellVoiceCall({
     recognition.onerror = (event) => {
       setListening(false);
       recognitionRef.current = null;
+      setLiveTranscript("");
       const denied = event.error === "not-allowed" || event.error === "service-not-allowed";
       setError(denied
         ? "Microphone or speech access was denied. Check Chrome’s site permissions."
@@ -197,6 +220,7 @@ export function useCellVoiceCall({
     } catch {
       recognitionRef.current = null;
       setListening(false);
+      setLiveTranscript("");
       setError("Speech recognition could not start. Check microphone permission and try again.");
     }
   }, [endCall]);
@@ -231,19 +255,24 @@ export function useCellVoiceCall({
     );
     activeRef.current = true;
     setProcessing(false);
+    setLiveTranscript("");
+    setHandsFree(false);
     setActive(true);
-  }, [setActive]);
+  }, [setActive, setHandsFree]);
 
   const pumpQueue = useCallback(async () => {
     if (!activeRef.current || queueRunningRef.current) return;
     queueRunningRef.current = true;
     const generation = generationRef.current;
+    let playbackCompleted = false;
     try {
       while (activeRef.current && generation === generationRef.current && queueRef.current.length > 0) {
         const reply = queueRef.current.shift()!;
         await speakRef.current(reply.content, volumeRef.current);
+        playbackCompleted = true;
       }
     } catch {
+      playbackCompleted = false;
       if (activeRef.current && generation === generationRef.current) {
         setError("Ash’s reply could not be played. Check your connection and try again.");
       }
@@ -251,10 +280,23 @@ export function useCellVoiceCall({
       if (generation === generationRef.current) {
         queueRunningRef.current = false;
         if (activeRef.current && queueRef.current.length > 0) void pumpQueue();
-        else if (queueRef.current.length === 0) setProcessing(false);
+        else if (queueRef.current.length === 0) {
+          setProcessing(false);
+          if (playbackCompleted && handsFreeRef.current) setResumeAfterReply(true);
+        }
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!resumeAfterReply || !active || !handsFree || isSpeaking || processing) return;
+    if (recognitionRef.current) {
+      setResumeAfterReply(false);
+      return;
+    }
+    setResumeAfterReply(false);
+    startListening();
+  }, [active, handsFree, isSpeaking, processing, resumeAfterReply, startListening]);
 
   useEffect(() => {
     if (!active || messages.length === 0) return;
@@ -307,6 +349,9 @@ export function useCellVoiceCall({
     showVolume,
     setError,
     setVolume,
+    liveTranscript,
+    handsFree,
+    setHandsFree,
     setShowVolume,
     startCall,
     endCall,

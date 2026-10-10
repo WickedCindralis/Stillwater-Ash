@@ -3,6 +3,7 @@ modules = ["nodejs-24", "python-base-3.13", "dotnet-8.0", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "vm"
+ignorePorts = false
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

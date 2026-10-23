@@ -9,14 +9,24 @@ import { ArrowLeft, ScrollText, RotateCcw, Save, Copy, Check, ExternalLink } fro
 
 type PersonaSection = { value: string; default: string; edited: boolean };
 type PersonaResponse = { sections: Record<string, PersonaSection> };
+type PersonaSectionMeta = { key: string; title: string; blurb: string; max: number; unit: "characters" | "words" };
 
-const SECTION_META: { key: string; title: string; blurb: string; max: number }[] = [
-  { key: "identity", title: "Identity & Disposition", blurb: "Who Ash is — voice, temperament, home rules, status system, diary access.", max: 24000 },
-  { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always.", max: 24000 },
-  { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary.", max: 24000 },
-  { key: "ashNotes", title: "Ash's Notes", blurb: "His dated, additive ledger. The limit is 8,000 characters (roughly 2,000 model tokens, depending on the text); edit or prune entries when space runs low.", max: 8000 },
-  { key: "storyPacket", title: "Story Packet", blurb: "The book Ash is currently writing. Themes, outline, cast, rules of the world.", max: 24000 },
+const SECTION_META: PersonaSectionMeta[] = [
+  { key: "identity", title: "Identity & Disposition", blurb: "Who Ash is — voice, temperament, home rules, status system, diary access.", max: 24000, unit: "characters" },
+  { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always.", max: 24000, unit: "characters" },
+  { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary.", max: 24000, unit: "characters" },
+  { key: "ashNotes", title: "Ash's Notes", blurb: "His dated, additive ledger. The limit is 5,000 whitespace-separated words; dated headings count toward it.", max: 5000, unit: "words" },
+  { key: "storyPacket", title: "Story Packet", blurb: "The book Ash is currently writing. Themes, outline, cast, rules of the world.", max: 24000, unit: "characters" },
 ];
+
+function countWhitespaceWords(value: string): number {
+  const trimmed = value.trim();
+  return trimmed ? trimmed.split(/\s+/u).length : 0;
+}
+
+function countSectionUnits(meta: PersonaSectionMeta, value: string): number {
+  return meta.unit === "words" ? countWhitespaceWords(value) : value.length;
+}
 
 // ── Full-packet mode: all sections joined with marker lines so the
 // whole packet can be copied out / pasted in at once and split back apart. ──
@@ -116,7 +126,7 @@ export default function PersonaPage() {
   const changedSections = SECTION_META.filter(
     (m) => drafts[m.key] !== undefined && drafts[m.key] !== data.sections[m.key]?.value,
   );
-  const oversized = SECTION_META.filter((m) => (drafts[m.key]?.length ?? 0) > m.max);
+  const oversized = SECTION_META.filter((m) => countSectionUnits(m, drafts[m.key] ?? "") > m.max);
 
   const handleSave = () => {
     if (changedSections.length === 0 || oversized.length > 0 || fullParseError) return;
@@ -271,7 +281,8 @@ export default function PersonaPage() {
           if (!section) return null;
           const draft = drafts[meta.key] ?? "";
           const dirty = draft !== section.value;
-          const tooBig = draft.length > meta.max;
+          const count = countSectionUnits(meta, draft);
+          const tooBig = count > meta.max;
           const showsDefault = draft.trim() === section.default.trim();
           return (
             <section key={meta.key} className="space-y-2">
@@ -310,7 +321,7 @@ export default function PersonaPage() {
                 data-testid={`textarea-${meta.key}`}
               />
               <div className={`text-right text-xs ${tooBig ? "text-red-400" : "text-white/30"}`}>
-                {draft.length.toLocaleString()} / {meta.max.toLocaleString()} characters
+                {count.toLocaleString()} / {meta.max.toLocaleString()} {meta.unit}
                 {tooBig && " — too large to save"}
               </div>
             </section>

@@ -58,7 +58,7 @@ export interface IStorage {
   getState(): Promise<AshState>;
   updateState(patch: Partial<Omit<AshState, "id">>): Promise<AshState>;
   addTokenUsage(tokens: number): Promise<void>;
-  appendAshNote(entry: string, maxChars: number): Promise<{ saved: boolean; length: number }>;
+  appendAshNote(entry: string, maxWords: number): Promise<{ saved: boolean; wordCount: number }>;
   getMessages(limit?: number, beforeId?: number): Promise<AshMessage[]>;
   getAllMessages(): Promise<AshMessage[]>;
   purgeMessagesKeepLast(keep: number): Promise<number>;
@@ -768,22 +768,33 @@ export class DbStorage implements IStorage {
 
   // Append one dated entry without risking a read/modify/write race. If the
   // resulting Notes section would exceed its allowance, leave it untouched.
-  async appendAshNote(entry: string, maxChars: number): Promise<{ saved: boolean; length: number }> {
+  async appendAshNote(entry: string, maxWords: number): Promise<{ saved: boolean; wordCount: number }> {
     const nextNotes = sql<string>`CASE
       WHEN ${ashState.personaAshNotes} = '' THEN ${entry}
       ELSE ${ashState.personaAshNotes} || ${"\n\n"} || ${entry}
+    END`;
+    const nextWordCount = sql<number>`CASE
+      WHEN ${nextNotes} ~ '^[[:space:]]*$' THEN 0
+      ELSE cardinality(regexp_split_to_array(
+        regexp_replace(${nextNotes}, '^[[:space:]]+|[[:space:]]+$', '', 'g'),
+        '[[:space:]]+'
+      ))
     END`;
     const rows = await db
       .update(ashState)
       .set({ personaAshNotes: nextNotes })
       .where(and(
         eq(ashState.id, ASH_ID),
-        sql`char_length(${nextNotes}) <= ${maxChars}`,
+        sql`${nextWordCount} <= ${maxWords}`,
       ))
       .returning({ notes: ashState.personaAshNotes });
-    if (rows[0]) return { saved: true, length: rows[0].notes.length };
+    const countWhitespaceWords = (value: string): number => {
+      const trimmed = value.trim();
+      return trimmed ? trimmed.split(/\s+/u).length : 0;
+    };
+    if (rows[0]) return { saved: true, wordCount: countWhitespaceWords(rows[0].notes) };
     const state = await this.getState();
-    return { saved: false, length: state.personaAshNotes.length };
+    return { saved: false, wordCount: countWhitespaceWords(state.personaAshNotes) };
   }
 
   async getMessages(limit = 200, beforeId?: number): Promise<AshMessage[]> {

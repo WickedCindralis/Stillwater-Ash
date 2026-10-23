@@ -41,7 +41,7 @@ import { SONG_PROTOCOL, stripSongCommand } from "./song-command";
 import { enqueueSong } from "./song-service";
 import { KINGS_FINGERS_PROTOCOL, stripKingsFingersCommand } from "./kings-fingers-command";
 import { sendKingsFingers } from "./lovense";
-import type { AshChronicle, AshDiscordMessage, AshMessage } from "@workspace/db";
+import { ASH_NOTES_MAX_WORDS, type AshChronicle, type AshDiscordMessage, type AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
@@ -50,6 +50,11 @@ import { randomUUID } from "node:crypto";
 // every OpenAI call. No census, channels, inter-agent traffic, or alerts.
 
 type ChatMessage = { role: "developer" | "assistant" | "user"; content: any; name?: string };
+
+function countWhitespaceWords(value: string): number {
+  const trimmed = value.trim();
+  return trimmed ? trimmed.split(/\s+/u).length : 0;
+}
 export type AshPacketPreviewMessage = {
   role: "developer" | "assistant" | "user";
   content: unknown;
@@ -112,7 +117,6 @@ const STATUS_ALIASES: Record<string, string> = {
 };
 
 const NO_TEMPERATURE_MODELS = ["gpt-5-nano", "gpt-5-mini", "gpt-5", "gpt-5.1", "gpt-5.3-chat", "gpt-5.4", "gpt-5.5", "gpt-5.6-luna"];
-const ASH_NOTES_MAX_CHARS = 8000;
 const HISTORY_LIMIT = 20;
 const DISCORD_WICKED_WINDOW = 10;
 const DISCORD_COMMENT_HISTORY_LIMIT = 10;
@@ -348,7 +352,8 @@ ${DISCORD_SERVER_RULES}
     if (!isDiscord) {
       // ASH'S NOTES — the one packet section Ash can live-edit himself.
       const ashNotes = packetState?.personaAshNotes?.trim() || "";
-      const notesRemaining = Math.max(0, ASH_NOTES_MAX_CHARS - ashNotes.length);
+      const notesWordCount = countWhitespaceWords(ashNotes);
+      const notesRemaining = Math.max(0, ASH_NOTES_MAX_WORDS - notesWordCount);
       messages.push({
         role: "assistant",
         name,
@@ -362,7 +367,7 @@ To append one new note, I use exactly one block with [NOTES] and [/NOTES] each o
 
 I include only the new memory and never repeat old notes inside the block. The block is saved silently.
 
-Capacity: ${ashNotes.length}/${ASH_NOTES_MAX_CHARS} characters used (~2000-token maximum), ${notesRemaining} remaining.
+Capacity: ${notesWordCount}/${ASH_NOTES_MAX_WORDS} words used, ${notesRemaining} remaining. Words are separated by whitespace; dated headings count.
 
 If my new entry will not fit, I do not emit a NOTES block; I tell Wicked that the section is full and which dated entries I would like her to remove in the Persona editor before I try again.]`,
       });
@@ -1007,12 +1012,12 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     try {
       if (note) {
         const entry = `[${this.getCurrentTimestamp()}]\n${note}`;
-        const result = await storage.appendAshNote(entry, ASH_NOTES_MAX_CHARS);
+        const result = await storage.appendAshNote(entry, ASH_NOTES_MAX_WORDS);
         if (result.saved) {
-          this.log(`Ash appended a Note (${result.length}/${ASH_NOTES_MAX_CHARS} chars used)`);
+          this.log(`Ash appended a Note (${result.wordCount}/${ASH_NOTES_MAX_WORDS} words used)`);
           await storage.logActivity("persona", "Ash added a dated entry to his Notes").catch(() => {});
         } else {
-          this.log(`Ash's Notes are full (${result.length}/${ASH_NOTES_MAX_CHARS}); entry not saved`);
+          this.log(`Ash's Notes are full (${result.wordCount}/${ASH_NOTES_MAX_WORDS} words); entry not saved`);
           await storage.logActivity("persona", "Ash's Notes are full; his new entry was not saved").catch(() => {});
         }
       }

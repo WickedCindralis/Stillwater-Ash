@@ -417,13 +417,20 @@ export type UpdateSettingsPayload = z.infer<typeof updateSettingsSchema>;
 // Persona packet editor. Each section is capped so an oversized packet can't
 // blow up the model's context window. Empty string = restore built-in default.
 export const PERSONA_SECTION_MAX = 24000;
-// ASH'S NOTES is capped at ~2k tokens (≈4 chars/token).
-export const ASH_NOTES_MAX = 8000;
+// Ash's Notes limit is whitespace-separated words, not characters or tokens.
+export const ASH_NOTES_MAX_WORDS = 5000;
+const countWhitespaceWords = (value: string): number => {
+  const trimmed = value.trim();
+  return trimmed ? trimmed.split(/\s+/u).length : 0;
+};
 export const updatePersonaSchema = z.object({
   identity: z.string().max(PERSONA_SECTION_MAX).optional(),
   soulSheet: z.string().max(PERSONA_SECTION_MAX).optional(),
   coreAnchors: z.string().max(PERSONA_SECTION_MAX).optional(),
-  ashNotes: z.string().max(ASH_NOTES_MAX).optional(),
+  ashNotes: z.string().refine(
+    (value) => countWhitespaceWords(value) <= ASH_NOTES_MAX_WORDS,
+    `Ash's Notes cannot exceed ${ASH_NOTES_MAX_WORDS} words.`,
+  ).optional(),
   storyPacket: z.string().max(48000).optional(),
 });
 export type UpdatePersonaPayload = z.infer<typeof updatePersonaSchema>;

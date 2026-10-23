@@ -14,7 +14,7 @@ const SECTION_META: { key: string; title: string; blurb: string; max: number }[]
   { key: "identity", title: "Identity & Disposition", blurb: "Who Ash is — voice, temperament, home rules, status system, diary access.", max: 24000 },
   { key: "soulSheet", title: "Soul-Sheet", blurb: "The call-in signal, countersign, and self-confirmation. Who he is, always.", max: 24000 },
   { key: "coreAnchors", title: "Core Memories", blurb: "The anchored memories — history, consequence, family, function, boundary.", max: 24000 },
-  { key: "ashNotes", title: "Ash's Notes", blurb: "His dated, additive ledger — new entries compound without erasing old ones. You can edit or prune it when space runs low.", max: 8000 },
+  { key: "ashNotes", title: "Ash's Notes", blurb: "His dated, additive ledger. The limit is 8,000 characters (roughly 2,000 model tokens, depending on the text); edit or prune entries when space runs low.", max: 8000 },
   { key: "storyPacket", title: "Story Packet", blurb: "The book Ash is currently writing. Themes, outline, cast, rules of the world.", max: 24000 },
 ];
 
@@ -310,7 +310,7 @@ export default function PersonaPage() {
                 data-testid={`textarea-${meta.key}`}
               />
               <div className={`text-right text-xs ${tooBig ? "text-red-400" : "text-white/30"}`}>
-                {draft.length.toLocaleString()} / {meta.max.toLocaleString()}
+                {draft.length.toLocaleString()} / {meta.max.toLocaleString()} characters
                 {tooBig && " — too large to save"}
               </div>
             </section>

@@ -39,7 +39,7 @@ import { formatPrivateHistory } from "./history-format";
 import { parseStoryCommand } from "./story-command";
 import { SONG_PROTOCOL, stripSongCommand } from "./song-command";
 import { enqueueSong } from "./song-service";
-import { KINGS_FINGERS_PROTOCOL, stripKingsFingersCommand } from "./kings-fingers-command";
+import { stripKingsFingersCommand } from "./kings-fingers-command";
 import { sendKingsFingers } from "./lovense";
 import { ASH_NOTES_MAX_WORDS, type AshChronicle, type AshDiscordMessage, type AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
@@ -711,7 +711,6 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
         typeof message.content !== "string" ||
         (!message.content.startsWith("[DISCORD COMMENT HISTORY") &&
          !message.content.startsWith("[OWNER DISCORD DM HISTORY")));
-      messages.splice(messages.length - 1, 0, { role: "developer", content: KINGS_FINGERS_PROTOCOL });
     }
 
     const requestParams = this.buildOpenAIRequestParams(model, messages, imageDataUrl);

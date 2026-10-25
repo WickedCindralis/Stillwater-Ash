@@ -2,6 +2,7 @@ import { db, ashTiktokComments, type InsertTiktokComment } from "@workspace/db";
 import { inArray, eq, and } from "drizzle-orm";
 import { logger } from "../logger";
 import { storage } from "./storage";
+import { normalizeTiktokHandle } from "./tiktok-handle";
 
 // Court Herald — read-only watcher of Ash's TikTok account via ScrapeCreators.
 // No login, no posting, no automation against TikTok itself: the scraper
@@ -9,7 +10,7 @@ import { storage } from "./storage";
 
 const API_BASE = "https://api.scrapecreators.com";
 const VIDEOS_TO_WATCH = 8; // latest N videos of the profile
-const FETCH_COOLDOWN_MS = 3 * 60 * 60_000; // auto-sweep every 3 hours (credit budget)
+const FETCH_COOLDOWN_MS = 3 * 60 * 60_000; // message-triggered auto-sweep cooldown (credit budget)
 const FORCE_COOLDOWN_MS = 2 * 60_000; // even manual "sweep now" is throttled
 const PACKET_MAX_CHARS = 6000; // total cap on the herald packet fed to the model
 const tag = "[herald]";
@@ -79,7 +80,7 @@ async function fetchComments(video: ScrapedVideo): Promise<InsertTiktokComment[]
 export async function sweepTheWalls(force = false): Promise<number> {
   if (!apiKey()) return 0;
   const state = await storage.getState();
-  const handle = state.tiktokUsername.trim().replace(/^@/, "");
+  const handle = normalizeTiktokHandle(state.tiktokUsername);
   if (!handle) return 0;
   if (fetchInFlight) return fetchInFlight;
   const cooldown = force ? FORCE_COOLDOWN_MS : FETCH_COOLDOWN_MS;

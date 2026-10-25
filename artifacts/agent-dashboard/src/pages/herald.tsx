@@ -107,7 +107,7 @@ export default function HeraldPage() {
           <Megaphone className="w-5 h-5 text-gold" />
           <div>
             <h1 className="font-serif text-xl text-gold leading-tight" data-testid="text-herald-title">The Court Herald</h1>
-            <span className="text-sm text-white/40">Most recent comments checked every 3 hours — read-only, no posting</span>
+            <span className="text-sm text-white/40">Checks when you message Ash, no more than every 3 hours — read-only, no posting</span>
           </div>
         </div>
         <button
@@ -129,7 +129,7 @@ export default function HeraldPage() {
           <input
             value={username}
             onChange={(e) => setUsernameDraft(e.target.value)}
-            placeholder="tiktok-username"
+            placeholder="username or profile URL"
             className="bg-white/10 rounded-lg px-3 py-1.5 text-sm outline-none border border-white/10 focus:border-gold/40 w-44"
             data-testid="input-herald-username"
           />

@@ -7,6 +7,7 @@ import {
 } from "express";
 import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema, updateStorySchema, writeStorySchema, updateStoryChapterSchema, type AshState } from "@workspace/db";
 import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
+import { normalizeTiktokHandle } from "../lib/ash/tiktok-handle";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
 import {
@@ -800,7 +801,7 @@ router.get("/herald/comments", requireAuth, async (_req, res): Promise<void> => 
   const state = await storage.getState();
   res.json({
     comments,
-    tiktokUsername: state.tiktokUsername,
+    tiktokUsername: normalizeTiktokHandle(state.tiktokUsername),
     scraperConfigured: !!process.env["SCRAPECREATORS_API_KEY"],
   });
 });

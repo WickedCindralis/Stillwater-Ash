@@ -43,6 +43,7 @@ import { stripKingsFingersCommand } from "./kings-fingers-command";
 import { sendKingsFingers } from "./lovense";
 import { ASH_NOTES_MAX_WORDS, type AshChronicle, type AshDiscordMessage, type AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
+import { getAshMemoryRecall, recordAshMemoryMessage, reviewAshMemories } from "./vector-memory";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
 // intervals, proactive self-prompt (reflective) windows, DIARY: parsing,
@@ -319,7 +320,7 @@ ${DISCORD_SERVER_RULES}
     userMessage: string,
     source: string,
     imageDataUrl?: string,
-    options: { includeHistory?: boolean } = {},
+    options: { includeHistory?: boolean; includeRecall?: boolean; recallContext?: string } = {},
   ): Promise<ChatMessage[]> {
     const name = AGENT_NAME;
     const isDiscord = source.startsWith("discord");
@@ -329,7 +330,11 @@ ${DISCORD_SERVER_RULES}
     const identity = packetState?.personaIdentity?.trim() || SYSTEM_PROMPT;
     const soulSheet = packetState?.personaSoulSheet?.trim() || DEFAULT_SOUL_SHEET;
     const coreAnchors = packetState?.personaCoreAnchors?.trim() || DEFAULT_CORE_ANCHORS;
-    if (isDiscord) return this.buildDiscordMessages(userMessage, identity, soulSheet);
+    if (isDiscord) {
+      const messages = this.buildDiscordMessages(userMessage, identity, soulSheet);
+      await this.appendMemoryRecall(messages, source, options);
+      return messages;
+    }
 
     const messages: ChatMessage[] = [
       { role: "developer", content: FICTION_PREAMBLE + IDENTITY_ANCHOR + identity, name },
@@ -549,7 +554,7 @@ RULES FOR YOUR REPLY:
       });
     }
 
-    if (!isDiscord && !imageDataUrl) {
+    if (!isDiscord && !imageDataUrl && source !== "memory_review") {
       messages.push({
         role: "developer",
         name,
@@ -588,7 +593,34 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       });
     }
     if (imageDataUrl) messages.splice(messages.length - 1, 0, { role: "developer", name, content: SONG_PROTOCOL });
+    if (source === "memory_review") {
+      messages.splice(messages.length - 1, 0, {
+        role: "developer",
+        name,
+        content: "[MEMORY REVIEW MODE] Return only the requested review response. Do not use persona controls, write messages, or initiate actions.",
+      });
+    }
+    await this.appendMemoryRecall(messages, source, options);
     return messages;
+  }
+
+  private async appendMemoryRecall(
+    messages: ChatMessage[],
+    source: string,
+    options: { includeRecall?: boolean; recallContext?: string },
+  ): Promise<void> {
+    const canRecall = source === "private_message" || source.startsWith("discord");
+    if (!canRecall || options.includeRecall === false) return;
+    const context = options.recallContext?.trim();
+    const block = await getAshMemoryRecall(context || messages.at(-1)?.content || "");
+    if (block) {
+      const userMessageIndex = messages.at(-1)?.role === "user" ? messages.length - 1 : messages.length;
+      messages.splice(userMessageIndex, 0, {
+        role: "developer",
+        name: AGENT_NAME,
+        content: `[RELEVANT ASH MEMORIES]\n${block}`,
+      });
+    }
   }
 
   private buildOpenAIRequestParams(
@@ -617,7 +649,10 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     const input = "[PACKET PREVIEW — MESSAGE HISTORY OMITTED]";
     const source = "private_message" as const;
     const model = await this.resolveModel();
-    const messages = await this.buildMessages(input, source, undefined, { includeHistory: false });
+    const messages = await this.buildMessages(input, source, undefined, {
+      includeHistory: false,
+      includeRecall: false,
+    });
     const request = this.buildOpenAIRequestParams(model, messages) as AshPacketPreviewRequest;
     return {
       generatedAt: new Date().toISOString(),
@@ -685,6 +720,7 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     hangout?: { requiredImage?: boolean; beforeProviderCall?: () => Promise<boolean>; correlationId?: string; instruction?: string },
     songOriginId?: string,
     allowKingsFingers = false,
+    recallContext?: string,
   ): Promise<string> {
     if (!this.openai) throw new Error("OpenAI client not initialized");
 
@@ -696,11 +732,19 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
     }
 
     const model = await this.resolveModel();
-    let messages = await this.buildMessages(userMessage, source, imageDataUrl);
+    let messages = await this.buildMessages(userMessage, source, imageDataUrl, {
+      includeHistory: source !== "memory_review",
+      includeRecall: source !== "memory_review",
+      recallContext,
+    });
     if (screenCapture && !isFreshScreenCaptureCurrent(screenCapture)) {
       if (hangout?.requiredImage) throw new Error("Hangout screenshot was invalidated before provider request");
       imageDataUrl = undefined;
-      messages = await this.buildMessages(userMessage, source);
+      messages = await this.buildMessages(userMessage, source, undefined, {
+        includeHistory: source !== "memory_review",
+        includeRecall: source !== "memory_review",
+        recallContext,
+      });
     }
     if (hangout?.requiredImage && !imageDataUrl) throw new Error("Hangout requires a fresh screenshot");
     if (hangout?.instruction) messages.splice(messages.length - 1, 0, { role: "developer", content: hangout.instruction });
@@ -759,6 +803,7 @@ Control blocks are saved or handled silently and stripped from the reply Wicked 
       }
       const providerResponseId = (response as any)?._request_id || response.id || "unknown";
       this.log(`Provider boundary success [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, providerResponseId=${providerResponseId}, durationMs=${Date.now() - startedAt}, correlationId=${hangout?.correlationId || "none"}]`);
+      if (source === "memory_review") return responseText;
       const fingersCommand = stripKingsFingersCommand(responseText);
       responseText = fingersCommand.text;
       let deviceAccepted = false;
@@ -1063,6 +1108,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
 
   // ── Public entry: Wicked sends a private message ──
   async handleWickedMessage(content: string, imageDataUrl?: string, requestImage = false): Promise<{ text: string; imageUrl: string }> {
+    await recordAshMemoryMessage("wicked", content, "chat");
     let prompt = maybeAddImageInstruction(content, requestImage);
     // Court Herald: sweep the TikTok walls (cooldown-limited) and route any
     // fresh comments to Ash inside this same live call. Comments are claimed
@@ -1087,7 +1133,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     try {
       // The Herald sweep can prepend untrusted public comments to this call.
       // Never allow those mixed-source packets to trigger physical controls.
-      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl, null, undefined, undefined, !hasHeraldPacket && !imageDataUrl);
+      rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl, null, undefined, undefined, !hasHeraldPacket && !imageDataUrl, content);
     } finally {
       if (!rawReply && heraldIds.length > 0 && releaseClaim) {
         // Kill switch / API failure — Ash never saw the comments; put them back.
@@ -1113,6 +1159,10 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
             "private_message",
             freshCapture.imageDataUrl,
             freshCapture,
+            undefined,
+            undefined,
+            false,
+            content,
           );
           rawReply = followUp || initialScreenCommand.text;
         } catch (error) {
@@ -1137,6 +1187,7 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
     const allowed = new Map([[message.id, message]]);
     const leaseId = message.deliveryLeaseId;
     if (!leaseId) throw new Error("Owner Discord call is missing a delivery lease");
+    await recordAshMemoryMessage(message.authorName, message.content, "discord");
     let rawReply = "";
     try {
       const packetOptions = await this.buildDiscordPacketOptions(message.guildId);
@@ -1146,6 +1197,7 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
         buildDiscordPacketText(conversation.calls, conversation.timeline, true, packetOptions),
         "discord_owner",
         undefined, undefined, undefined, `discord-owner:${message.id}`,
+        false, message.content,
       );
       if (!rawReply) {
         const currentState = await storage.getState();
@@ -1292,6 +1344,7 @@ GROUND RULES:
       if (this.processingLock) continue;
       this.processingLock = true;
       try {
+        await reviewAshMemories((prompt) => this.callOpenAI(prompt, "memory_review"));
         let prompt = this.buildStaticSelfPrompt();
         // Blackthorn delivery is deliberately limited to the approved
         // Stillwater inbox. A failed fetch must not prevent a normal
@@ -1437,6 +1490,7 @@ GROUND RULES:
           callModel: (prompt, messages) => this.callOpenAI(
             prompt, "discord_batch", undefined, undefined, undefined,
             `discord-batch:${messages.map((message) => message.id).sort((a, b) => a - b).join(",")}`,
+            false, messages.at(-1)?.content ?? "",
           ),
           deliver: (reply, messages, leaseId) =>
             this.parseDiscordActions(reply, messages, leaseId).then(() => {}),

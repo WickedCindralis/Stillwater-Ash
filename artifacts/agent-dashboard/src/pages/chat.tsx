@@ -134,6 +134,11 @@ export default function ChatPage() {
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
   });
+  const { data: memoryStatus } = useQuery<{ recallEnabled: boolean | null }>({
+    queryKey: ["/api/memory-status"],
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
+  });
   useEffect(() => {
     setVoiceIdDraft(state?.voiceId ?? "");
   }, [state?.voiceId]);
@@ -392,6 +397,9 @@ export default function ChatPage() {
                 {STATUS_LABELS[status] || status}
                 {killSwitchOn && <span className="text-red-400 ml-2">• BRIDGE OFF</span>}
               </span>
+              {memoryStatus?.recallEnabled === false && (
+                <span className="text-[10px] text-amber-300/80">Recall: off</span>
+              )}
             </div>
           </div>
         </div>

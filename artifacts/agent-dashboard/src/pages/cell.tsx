@@ -208,6 +208,11 @@ export default function CellPage() {
     refetchInterval: 20_000,
     refetchIntervalInBackground: true,
   });
+  const { data: memoryStatus } = useQuery<{ recallEnabled: boolean | null }>({
+    queryKey: ["/api/memory-status"],
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
+  });
   const { data: messages = [], isFetched: messagesLoaded } = useQuery<AshMessage[]>({
     queryKey: ["/api/messages"],
     refetchInterval: voiceCallMode ? 2_000 : 8_000,
@@ -358,7 +363,12 @@ export default function CellPage() {
           </Link>
           <div>
             <h1 className="font-serif text-xl text-gold leading-tight" data-testid="text-cell-title">Ash</h1>
-            <span className="text-lg text-white/40 leading-tight">{state?.status || "..."}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-lg text-white/40 leading-tight">{state?.status || "..."}</span>
+              {memoryStatus?.recallEnabled === false && (
+                <span className="text-[10px] text-amber-300/80">Recall: off</span>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center">

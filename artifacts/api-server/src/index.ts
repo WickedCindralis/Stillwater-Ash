@@ -5,6 +5,8 @@ import { storage } from "./lib/ash/storage";
 import { discordHerald } from "./lib/ash/discord";
 import { startHangoutIdleScheduler } from "./lib/ash/hangout";
 import { startSongWorker } from "./lib/ash/song-service";
+import { setVectorMemoryReady } from "./lib/ash/vector-memory";
+import { initMemory } from "./lib/ash/vector-memory-runtime.mjs";
 
 const rawPort = process.env["PORT"];
 
@@ -18,6 +20,15 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+try {
+  await initMemory();
+  setVectorMemoryReady(true);
+  logger.info("Vector Memory initialized");
+} catch (err) {
+  setVectorMemoryReady(false);
+  logger.error({ err }, "Vector Memory unavailable; starting Stillwater without memory");
 }
 
 app.listen(port, async (err) => {

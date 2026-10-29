@@ -25,6 +25,7 @@ import {
   setHangoutIdleInterval,
 } from "../lib/ash/hangout";
 import { ashBridge, type AshPacketPreview } from "../lib/ash/bridge";
+import { getAshRecallEnabled } from "../lib/ash/vector-memory";
 import { playWickedMove, startNewGame, resignGame, setGamePaused, ChessError } from "../lib/ash/chess";
 import { playWickedDrop, startNewConnect4Game, resignConnect4Game, setConnect4Paused, Connect4Error } from "../lib/ash/connect4";
 import { discordHerald } from "../lib/ash/discord";
@@ -251,6 +252,10 @@ router.get("/auth/me", (req, res): void => {
 router.get("/state", requireAuth, async (_req, res): Promise<void> => {
   const state = await storage.getState();
   res.json(publicState(state));
+});
+
+router.get("/memory-status", requireAuth, async (_req, res): Promise<void> => {
+  res.json({ recallEnabled: await getAshRecallEnabled() });
 });
 
 router.patch("/state", requireAuth, async (req, res): Promise<void> => {

@@ -14,6 +14,7 @@
 - [Integration-test isolation](integration-test-isolation.md) — DB integration tests can briefly expose synthetic messages and toggle live controls; use a separate disposable database.
 - [Story workspace continuity](story-workspace-continuity.md) — Story is isolated from chat/Diary/Discord; interrupted streams stay resumable and cross-instance writing uses a renewable DB lease.
 - [API call observability](api-call-observability.md) — user requires actual calls and lifecycle logs for every new API-powered feature; accepted jobs alone are not evidence of provider execution.
+- [Vector Memory imports](vector-memory-imports.md) — keep server and dashboard adapters around Vector Memory source imports to preserve artifact typecheck/build boundaries.
 - [Desktop companion responsiveness](desktop-companion-responsiveness.md) — each Hangout window starts fresh; keep capture off the UI thread and acknowledge chat only after rendering.
 - [Song generation cost boundary](song-generation-boundary.md) — paid music commands need a shared budget across public/private calls, no pre-key backlog, and no uncertain create retries.
 - [Hangout popup approval](hangout-popup-approval.md) — user explicitly approved the compact native Hangout redesign; preserve its Messenger-like look and existing behavior when making targeted adjustments.

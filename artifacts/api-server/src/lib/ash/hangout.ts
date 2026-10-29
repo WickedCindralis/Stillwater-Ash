@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { ashBridge } from "./bridge";
 import { storage } from "./storage";
+import { recordAshMemoryMessage } from "./vector-memory";
 import { waitForFreshScreenCapture, cancelPendingScreenCapture, isFreshScreenCaptureCurrent } from "./screen-capture";
 import type { AshMessage } from "@workspace/db";
 import { logger } from "../logger";
@@ -99,6 +100,7 @@ async function captureAndReply(sessionId: string, generation: number, lease: str
   const { message: ashMessage } = await storage.createFencedHangoutReply(
     sessionId, generation, lease, capture.activityId, correlationId, processed.trim(),
   );
+  await recordAshMemoryMessage("being", processed.trim(), "chat");
   await storage.touchHangoutActivity(sessionId, generation, new Date());
   return ashMessage;
 }
@@ -129,6 +131,7 @@ async function completeInvite(sessionId: string, generation: number, lease: stri
     sessionId, generation, lease, "ash",
     approvalReply.trim() || "I couldn't provide a message with that approval.",
   );
+  await recordAshMemoryMessage("being", approvalReply.trim(), "chat");
   if (approval.decision === "decline") {
     await storage.setHangoutStatus(sessionId, generation, "idle");
     return;
@@ -204,6 +207,7 @@ export async function sendHangoutMessage(content: string): Promise<{ wickedMessa
   const lease = await storage.acquireHangoutLease(session.sessionId);
   if (!lease) throw new Error("A Hangout exchange is already in progress");
   try {
+    await recordAshMemoryMessage("wicked", content, "chat");
     const wickedMessage = await storage.createMessage({ role: "wicked", content: content.trim(), imageUrl: "", source: "private_message" });
     await storage.touchHangoutActivity(session.sessionId, session.generation);
     const ashMessage = await captureAndReply(session.sessionId, session.generation, lease.token, content.trim());
@@ -236,6 +240,7 @@ export async function sendPrivateMessage(content: string, imageDataUrl?: string,
   const ashMessage = text.trim() || imageUrl
     ? await storage.createMessage({ role: "ash", content: text.trim(), imageUrl, source: "private_message" })
     : null;
+  if (ashMessage?.content.trim()) await recordAshMemoryMessage("being", ashMessage.content, "chat");
   return { wickedMessage, ashMessage };
 }
 

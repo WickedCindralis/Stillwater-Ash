@@ -23,6 +23,7 @@ import {
 } from "./discord-policy";
 import type { DiscordPacketMessage } from "./discord-policy";
 import { storage } from "./storage";
+import { recordAshMemoryMessage } from "./vector-memory";
 
 const MESSAGE_CHARS = 1_600;
 const REPLY_CHARS = 1_900;
@@ -565,6 +566,12 @@ class DiscordHerald {
         }
         this.lastSendAtByChannel.set(message.channelId, Date.now());
         const completed = await storage.completeDiscordDelivery(message.id, leaseId, replyId);
+        if (completed) {
+          if (message.guildId !== DISCORD_OWNER_DM_GUILD_ID) {
+            await recordAshMemoryMessage(message.authorName, message.content, "discord");
+          }
+          await recordAshMemoryMessage("being", replyText.trim().slice(0, REPLY_CHARS), "discord");
+        }
         if (completed && message.guildId === DISCORD_OWNER_DM_GUILD_ID) {
           await storage.createMessage({
             role: "ash",

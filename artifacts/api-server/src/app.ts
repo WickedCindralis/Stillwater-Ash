@@ -7,6 +7,7 @@ import connectPgSimple from "connect-pg-simple";
 import { pool } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { memoryRouter } from "./lib/ash/vector-memory-runtime.mjs";
 
 const app: Express = express();
 
@@ -59,6 +60,7 @@ app.use(
   }),
 );
 
+app.use("/api/memory", memoryRouter());
 app.use("/api", router);
 
 // When STATIC_DIR is set (e.g. Northflank single-service deployment), serve

@@ -1,0 +1,38 @@
+.memory-page .vm-root {
+  --mist: #080807;
+  --paper: #100f0c;
+  --ink: #f1ecdc;
+  --lake: #c9a84c;
+  --reed: rgba(255, 255, 255, 0.58);
+  --line: rgba(201, 168, 76, 0.24);
+  --green: #8caf83;
+  --amber: #e0c76a;
+  --red: #d9814e;
+  color: var(--ink);
+  background: linear-gradient(145deg, #0d0b07 0%, #050505 70%);
+  border: 1px solid rgba(201, 168, 76, 0.2);
+  border-radius: 12px;
+}
+
+.memory-page .vm-head h2 {
+  color: #c9a84c;
+  font-family: "Cormorant Garamond", Georgia, serif;
+  font-size: 1.65rem;
+}
+
+.memory-page .vm-btn.primary {
+  background: rgba(201, 168, 76, 0.18);
+  border-color: rgba(201, 168, 76, 0.45);
+  color: #f1d98b;
+}
+
+.memory-page .vm-error {
+  background: rgba(217, 129, 78, 0.12);
+  color: #efad83;
+  border: 1px solid rgba(217, 129, 78, 0.35);
+}
+
+.memory-page .vm-edit {
+  background: #090806;
+  color: #f1ecdc;
+}

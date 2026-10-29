@@ -7,7 +7,7 @@ import connectPgSimple from "connect-pg-simple";
 import { pool } from "@workspace/db";
 import router from "./routes";
 import { logger } from "./lib/logger";
-import { memoryRouter } from "./lib/ash/vector-memory-runtime.mjs";
+import { getConfig, memoryRouter } from "./lib/ash/vector-memory-runtime.mjs";
 
 const app: Express = express();
 
@@ -60,7 +60,20 @@ app.use(
   }),
 );
 
-app.use("/api/memory", memoryRouter());
+app.use("/api/memory", (req, res, next) => {
+  if (!req.session?.authenticated) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+  try {
+    // The memory module still validates its admin header; supply it server-side
+    // only after Stillwater's existing login has authenticated this session.
+    req.headers["x-memory-admin"] = getConfig().adminToken;
+    next();
+  } catch {
+    res.status(503).json({ error: "Memory service is unavailable" });
+  }
+}, memoryRouter());
 app.use("/api", router);
 
 // When STATIC_DIR is set (e.g. Northflank single-service deployment), serve

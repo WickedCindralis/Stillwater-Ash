@@ -28,3 +28,5 @@ channel = "stable-25_05"
 [userenv.shared]
 BLACKTHORN_BASE_URL = "https://blackthorn-manor.replit.app"
 MEMORY_EXPECTED_DB_HOST = "primary.stillwater-db--hb8nhtvw6kzc.addon.code.run"
+MEMORY_ALLOW_INIT = "false"
+MEMORY_HOUSE_NAME = "Stillwater"

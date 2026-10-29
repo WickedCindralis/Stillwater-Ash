@@ -1,0 +1,30 @@
+// Weighted Vector Memory — the only file the house app needs to import.
+import { verifyHouse } from './db.js';
+import { startCaptureLoop, stopCaptureLoop } from './capture.js';
+import { startNightlyScheduler, stopNightlyScheduler } from './nightly.js';
+
+export { recordMessage, captureBeing } from './capture.js';
+export { recallForPrompt, isRecallEnabled, setRecall } from './recall.js';
+export { runBeingReview, askWithPacket, pendingCount, type AskBeing } from './review.js';
+export { searchMemories } from './search.js';
+export { addMemory } from './memories.js';
+export { memoryRouter } from './routes.js';
+export { runNightly } from './nightly.js';
+
+/**
+ * Call once when the server starts, BEFORE anything else uses memory.
+ * Refuses to start (throws) if connected to the wrong database or house.
+ */
+export async function initMemory(opts: { startBackgroundJobs?: boolean } = {}) {
+  await verifyHouse();
+  if (opts.startBackgroundJobs !== false) {
+    startCaptureLoop();
+    startNightlyScheduler();
+  }
+  console.log('[memory] Ready.');
+}
+
+export function shutdownMemory() {
+  stopCaptureLoop();
+  stopNightlyScheduler();
+}

@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type ErrorRequestHandler, type Express } from "express";
 import path from "node:path";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -32,6 +32,33 @@ app.use(
     },
   }),
 );
+app.use((req, res, next) => {
+  let errorMessage: string | undefined;
+  const originalJson = res.json.bind(res);
+  res.json = ((body: unknown) => {
+    if (res.statusCode >= 400) {
+      const error = typeof body === "object" && body !== null && "error" in body
+        ? (body as { error?: unknown }).error
+        : undefined;
+      errorMessage = typeof error === "string" ? error : JSON.stringify(body);
+    }
+    return originalJson(body);
+  }) as typeof res.json;
+
+  res.on("finish", () => {
+    if (res.statusCode >= 400) {
+      logger.error(
+        {
+          url: req.originalUrl.split("?")[0],
+          status: res.statusCode,
+          error: errorMessage ?? res.statusMessage ?? "Request failed",
+        },
+        "HTTP request failed",
+      );
+    }
+  });
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
@@ -75,6 +102,20 @@ app.use("/api/memory", (req, res, next) => {
   }
 }, memoryRouter());
 app.use("/api", router);
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "API route not found" });
+});
+const apiErrorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  const candidateStatus = typeof err === "object" && err !== null && "status" in err
+    ? (err as { status?: unknown }).status
+    : undefined;
+  const status = typeof candidateStatus === "number" && candidateStatus >= 400 && candidateStatus < 600
+    ? candidateStatus
+    : 500;
+  const message = err instanceof Error ? err.message : "Internal server error";
+  res.status(status).json({ error: message });
+};
+app.use(apiErrorHandler);
 
 // When STATIC_DIR is set (e.g. Northflank single-service deployment), serve
 // the built frontend and fall back to index.html for client-side routes.

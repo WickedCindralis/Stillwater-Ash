@@ -448,10 +448,10 @@ export default function ChatPage() {
             <ScrollText className="w-5 h-5" />
           </Link>
           <Link
-            href="/story"
+            href="/library"
             className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors"
-            data-testid="link-story"
-            title="The Scriptorium (Story Workspace)"
+            data-testid="link-library"
+            title="Library"
           >
             <Feather className="w-5 h-5" />
           </Link>

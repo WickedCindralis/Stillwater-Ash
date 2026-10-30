@@ -33,6 +33,8 @@ export interface StoryBook {
   title: string;
   createdAt: string;
   lastWrittenAt: string | null;
+  chapterCount: number;
+  runStatus: "idle" | "running" | "complete" | "paused" | "failed";
 }
 
 export function useBooks() {

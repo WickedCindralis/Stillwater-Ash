@@ -143,10 +143,13 @@ function Router() {
           <NorthflankPage />
         </AuthGate>
       </Route>
-      <Route path="/story">
+      <Route path="/library">
         <AuthGate>
           <StoryPage />
         </AuthGate>
+      </Route>
+      <Route path="/story">
+        <Redirect to="/library" />
       </Route>
       <Route path="/memory">
         <AuthGate>

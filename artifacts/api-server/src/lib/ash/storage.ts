@@ -127,7 +127,7 @@ export interface IStorage {
   getRecentDiscordOwnerComments(guildId: string, limit: number, ownerUserId: string): Promise<AshDiscordMessage[]>;
   getRecentDiscordActivity(limit?: number): Promise<AshDiscordMessage[]>;
   pruneDiscordMessages(maxRows?: number): Promise<void>;
-  listBooks(): Promise<AshBook[]>;
+  listBooks(): Promise<Array<AshBook & { chapterCount: number }>>;
   getBook(bookId: string): Promise<{ book: AshBook; chapters: AshStoryChapter[]; run: AshStoryRun | null } | null>;
   createBook(title: string, storyPacket?: string): Promise<AshBook>;
   updateBookWhenIdle(bookId: string, patch: Partial<Pick<AshBook, "title" | "storyPacket">>): Promise<AshBook | null>;
@@ -454,8 +454,16 @@ export class DbStorage implements IStorage {
   }
 
 
-  async listBooks(): Promise<AshBook[]> {
-    return db.select().from(ashBooks).orderBy(desc(ashBooks.lastWrittenAt), desc(ashBooks.createdAt));
+  async listBooks(): Promise<Array<AshBook & { chapterCount: number }>> {
+    const [books, chapterCounts] = await Promise.all([
+      db.select().from(ashBooks).orderBy(desc(ashBooks.lastWrittenAt), desc(ashBooks.createdAt)),
+      db.select({
+        storyId: ashStoryChapters.storyId,
+        chapterCount: sql<number>`count(*)::int`,
+      }).from(ashStoryChapters).groupBy(ashStoryChapters.storyId),
+    ]);
+    const countsByBook = new Map(chapterCounts.map((row) => [row.storyId, row.chapterCount]));
+    return books.map((book) => ({ ...book, chapterCount: countsByBook.get(book.id) ?? 0 }));
   }
   async getBook(bookId: string): Promise<{ book: AshBook; chapters: AshStoryChapter[]; run: AshStoryRun | null } | null> {
     let [book] = await db.select().from(ashBooks).where(eq(ashBooks.id, bookId)).limit(1);

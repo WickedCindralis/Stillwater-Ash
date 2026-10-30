@@ -1,179 +1,404 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Feather, Download, Settings, FileText, ChevronUp, ChevronDown, Trash2, Loader2, Play, XCircle, Search, BookOpen } from "lucide-react";
-import { useBooks, useStory, useUpdateManuscript, useWriteStory, useUpdateChapter, useMoveChapter, useDeleteChapter, type StoryChapter, type StoryManuscript } from "@/hooks/use-story";
+import {
+  ArrowLeft,
+  BookOpen,
+  Check,
+  ChevronRight,
+  Feather,
+  Loader2,
+  PencilLine,
+  Play,
+  RefreshCw,
+  ScrollText,
+  Sparkles,
+} from "lucide-react";
+import {
+  useBooks,
+  useStory,
+  useUpdateManuscript,
+  useUpdateChapter,
+  useWriteStory,
+  type StoryChapter,
+  type StoryManuscript,
+} from "@/hooks/use-story";
+
+type LibraryBook = {
+  id: string;
+  title: string;
+  chapterCount?: number;
+  createdAt: string;
+  lastWrittenAt: string | null;
+  runStatus?: string;
+};
+
+const formatDate = (value?: string | null) => {
+  if (!value) return "Not written yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not written yet";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
+};
 
 export default function StoryPage() {
   const booksQuery = useBooks();
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
-  const bookId = selectedBookId ?? "";
-  const { data, isLoading, error } = useStory(selectedBookId);
-  const writeStory = useWriteStory(bookId);
-
-  const [activeTab, setActiveTab] = useState<"manuscript" | number>("manuscript");
+  const [activeChapterId, setActiveChapterId] = useState<number | null>(null);
+  const { data, isLoading, error, refetch, isFetching } = useStory(selectedBookId);
 
   if (!selectedBookId) {
-    const books = booksQuery.data?.books ?? [];
     return (
-      <div className="h-full overflow-y-auto bg-black text-white/90">
-        <header className="h-14 px-4 border-b border-gold/15 flex items-center gap-3">
-          <Link href="/" className="p-2 text-white/50 hover:text-gold"><ArrowLeft className="w-5 h-5" /></Link>
-          <BookOpen className="w-5 h-5 text-gold" />
-          <h1 className="font-serif text-lg text-gold">Library</h1>
-        </header>
-        <main className="max-w-4xl mx-auto p-6 md:p-10">
-          <h2 className="font-serif text-3xl text-gold/90 mb-2">Ash’s Books</h2>
-          <p className="text-white/45 mb-8">Open a book to read its chapters or edit its title and story packet.</p>
-          {booksQuery.isLoading ? <p className="text-white/40">Loading library…</p> :
-            books.length ? <div className="grid gap-3">{books.map((book) => (
-              <button key={book.id} onClick={() => { setSelectedBookId(book.id); setActiveTab("manuscript"); }}
-                className="w-full text-left p-5 rounded-xl border border-gold/15 bg-white/[0.03] hover:bg-gold/10 hover:border-gold/30 transition-colors">
-                <span className="block font-serif text-xl text-gold/90">{book.title}</span>
-                <span className="block mt-2 text-xs text-white/40">Last written: {book.lastWrittenAt ? new Date(book.lastWrittenAt).toLocaleDateString() : "Never"}</span>
-              </button>
-            ))}</div> : <p className="text-white/40 italic">No books yet.</p>}
-        </main>
-      </div>
+      <Library
+        books={(booksQuery.data?.books ?? []) as LibraryBook[]}
+        isLoading={booksQuery.isLoading}
+        isError={booksQuery.isError}
+        error={booksQuery.error}
+        onRetry={() => booksQuery.refetch()}
+        onOpen={(id) => {
+          setSelectedBookId(id);
+          setActiveChapterId(null);
+        }}
+      />
     );
   }
 
   if (isLoading) {
-    return (
-      <div className="h-full flex items-center justify-center bg-black">
-        <div className="text-gold/60 font-serif text-xl animate-pulse">Entering the Chamber...</div>
-      </div>
-    );
+    return <LoadingBook onBack={() => setSelectedBookId(null)} />;
   }
 
   if (error || !data) {
     return (
-      <div className="h-full flex flex-col items-center justify-center bg-black text-red-400">
-        <p>Failed to load the manuscript.</p>
-        <Link href="/" className="mt-4 text-gold hover:underline">Return Home</Link>
-      </div>
+      <BookLoadError
+        error={error}
+        isFetching={isFetching}
+        onRetry={() => refetch()}
+        onBack={() => {
+          setSelectedBookId(null);
+          setActiveChapterId(null);
+        }}
+      />
     );
   }
 
-  const { manuscript, chapters } = data;
-  const updateManuscript = useUpdateManuscript(manuscript.id);
-  const isWriting = manuscript.status === "running";
+  return (
+    <BookWorkspace
+      manuscript={data.manuscript}
+      chapters={data.chapters}
+      activeChapterId={activeChapterId}
+      onSelectChapter={setActiveChapterId}
+      onBack={() => {
+        setSelectedBookId(null);
+        setActiveChapterId(null);
+      }}
+    />
+  );
+}
 
-  const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, "");
+function Library({
+  books,
+  isLoading,
+  isError,
+  error,
+  onRetry,
+  onOpen,
+}: {
+  books: LibraryBook[];
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  onRetry: () => void;
+  onOpen: (id: string) => void;
+}) {
+  const activeBookId = books.find((book) => book.runStatus === "running")?.id;
+  const errorDetail = isError ? parseQueryError(error) : null;
 
   return (
-    <div className="h-full flex flex-col bg-black text-white/90 overflow-hidden">
-      <header className="shrink-0 md:h-14 px-4 py-3 md:py-0 border-b border-gold/15 bg-black/90 flex flex-col md:flex-row items-start md:items-center justify-between z-10 gap-3 md:gap-0">
-        <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-          <button onClick={() => setSelectedBookId(null)} className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors" aria-label="Back to library">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-2 text-gold">
-            <Feather className="w-5 h-5" />
-            <h1 className="font-serif text-lg leading-none">The Scriptorium</h1>
+    <div className="h-full min-h-0 overflow-y-auto bg-[#11100e] text-[#eee8dc]">
+      <header className="sticky top-0 z-10 border-b border-[#c9a84c]/15 bg-[#11100e]/95 px-5 py-3 backdrop-blur-md sm:px-8">
+        <div className="mx-auto flex max-w-6xl items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/" className="rounded-lg p-2 text-white/45 transition hover:bg-white/5 hover:text-[#e0c76a]" aria-label="Back to home" data-testid="link-library-home">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <span className="h-5 w-px bg-white/10" />
+            <BookOpen className="h-4 w-4 text-[#c9a84c]" />
+            <span className="font-serif text-lg tracking-wide text-[#e0c76a]">Stillwater</span>
+            <span className="hidden text-xs text-white/30 sm:inline">/</span>
+            <span className="hidden text-sm text-white/60 sm:inline">Library</span>
           </div>
-          
-          <div className="md:ml-4 flex items-center gap-2 md:border-l border-white/10 md:pl-4">
-            <span className="text-xs uppercase tracking-widest text-white/40 font-semibold hidden md:inline">Status:</span>
-            {manuscript.status === "running" && (
-              <span className="text-amber-400 text-sm flex items-center gap-1.5 font-serif italic">
-                <Loader2 className="w-4 h-4 animate-spin" /> Ash is writing...
-              </span>
-            )}
-            {manuscript.status === "idle" && (
-              <span className="text-white/40 text-sm font-serif italic">Resting</span>
-            )}
-            {manuscript.status === "incomplete" && (
-              <span className="text-blue-400 text-sm font-serif italic">Incomplete run</span>
-            )}
-            {manuscript.status === "error" && (
-              <span className="text-red-400 text-sm flex items-center gap-1.5 font-serif italic">
-                <XCircle className="w-4 h-4" /> Error
-              </span>
-            )}
-            {manuscript.lastError && (
-              <span className="text-red-400/70 text-xs max-w-xs truncate" title={manuscript.lastError}>
-                — {manuscript.lastError}
-              </span>
-            )}
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-white/35">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#c9a84c]" />
+            Ash’s private library
           </div>
-        </div>
-
-          <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 shrink-0">
-          <button 
-            onClick={() => writeStory.mutate()} 
-            disabled={isWriting || writeStory.isPending}
-            className="flex items-center gap-2 px-4 py-1.5 shrink-0 rounded-lg bg-gold/15 text-gold border border-gold/30 hover:bg-gold/25 transition-colors text-sm font-semibold disabled:opacity-40"
-          >
-            {isWriting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {manuscript.status === "incomplete" ? "Continue Writing" : "Write Now"}
-          </button>
-          
-          <div className="hidden md:block w-px h-5 bg-white/10 mx-1" />
-
-          <a href={`${baseUrl}/api/story/books/${manuscript.id}/packet-document`} target="_blank" rel="noreferrer" className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
-            <Search className="w-4 h-4" /> <span className="hidden sm:inline">Inspect Packet</span>
-          </a>
-          <a href={`${baseUrl}/api/story/books/${manuscript.id}/export.docx`} className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
-            <Download className="w-4 h-4" /> DOCX
-          </a>
-          <a href={`${baseUrl}/api/story/books/${manuscript.id}/export.txt`} className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
-            <FileText className="w-4 h-4" /> TXT
-          </a>
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-        <aside className="w-full md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-gold/10 bg-[#0a0908] flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto">
-          <div className="p-2 md:p-4 shrink-0 flex items-center md:items-stretch">
-            <button
-              onClick={() => setActiveTab("manuscript")}
-              className={`flex items-center gap-2 md:gap-3 px-3 py-2 md:py-2.5 rounded-lg transition-colors text-left ${
-                activeTab === "manuscript" 
-                  ? "bg-gold/10 text-gold border border-gold/20" 
-                  : "text-white/60 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <Settings className="w-4 h-4 shrink-0" />
-              <div className="hidden md:block flex-1 min-w-0">
-                <div className="text-sm font-semibold truncate">Manuscript Settings</div>
-                <div className="text-[10px] text-white/40 uppercase tracking-wider mt-0.5">Packet & Summary</div>
+      <main className="mx-auto max-w-6xl px-5 pb-16 pt-10 sm:px-8 sm:pt-14">
+        <div className="relative mb-10 overflow-hidden border-b border-[#c9a84c]/20 pb-9">
+          <div className="absolute -right-4 -top-12 select-none font-serif text-[13rem] leading-none text-[#c9a84c]/[0.035]">W</div>
+          <div className="relative">
+            <div className="mb-4 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-[#c9a84c]/65">
+              <Feather className="h-3.5 w-3.5" />
+              The working shelf
+            </div>
+            <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+              <div>
+                <h1 className="font-serif text-5xl tracking-[-0.04em] text-[#efe6d5] sm:text-6xl">Ash’s books</h1>
+                <p className="mt-3 max-w-lg text-sm leading-6 text-white/45">
+                  The stories in progress, and the pages they’ve left behind.
+                </p>
               </div>
-              <span className="md:hidden text-sm font-semibold whitespace-nowrap">Settings</span>
-            </button>
-          </div>
-
-          <div className="md:px-4 md:pb-2 p-2 flex flex-row md:flex-col gap-2 md:gap-0 shrink-0 items-center md:items-stretch min-w-0">
-            <div className="hidden md:block text-[10px] uppercase tracking-widest text-gold/40 font-semibold mb-2 px-1">Chapters</div>
-            <div className="flex flex-row md:flex-col gap-1 md:gap-1 w-full">
-              {chapters.map((chapter, index) => (
-                <ChapterNavItem 
-                  key={chapter.id} 
-                  chapter={chapter} 
-                  isActive={activeTab === chapter.id}
-                  onClick={() => setActiveTab(chapter.id)}
-                  isFirst={index === 0}
-                  isLast={index === chapters.length - 1}
-                  locked={isWriting}
-                  bookId={manuscript.id}
-                />
-              ))}
-              {chapters.length === 0 && (
-                <div className="text-xs text-white/30 italic px-2 py-4 text-center hidden md:block">No chapters yet</div>
-              )}
+              <div className="font-mono text-xs text-white/35">
+                <span className="text-[#d8bd70]">{books.length.toString().padStart(2, "0")}</span>
+                <span className="ml-2 uppercase tracking-[0.16em]">volumes</span>
+              </div>
             </div>
           </div>
-        </aside>
+        </div>
 
-        <main className="flex-1 min-w-0 bg-[#0d0c0a] relative flex flex-col overflow-y-auto">
-          {activeTab === "manuscript" ? (
-            <ManuscriptEditor manuscript={manuscript} readOnly={isWriting} />
+        {isLoading ? (
+          <div className="space-y-3" aria-label="Loading library">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="h-28 animate-pulse border border-white/[0.06] bg-white/[0.025]" />
+            ))}
+          </div>
+        ) : isError ? (
+          <div className="border border-[#9d5d4b]/30 bg-[#9d5d4b]/[0.06] px-6 py-8">
+            <p className="font-serif text-xl text-[#e6b7a2]">The shelf could not be reached.</p>
+            <p className="mt-2 font-mono text-xs text-[#dfa58c]">HTTP {errorDetail?.status}</p>
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-white/55" data-testid="text-library-error-message">{errorDetail?.message}</pre>
+            {errorDetail?.url && <p className="mt-2 break-all font-mono text-[10px] text-white/30">{errorDetail.url}</p>}
+            <button onClick={onRetry} className="mt-5 inline-flex items-center gap-2 text-xs uppercase tracking-widest text-[#e0c76a] hover:text-white" data-testid="button-retry-library">
+              <RefreshCw className="h-3.5 w-3.5" /> Try again
+            </button>
+          </div>
+        ) : books.length === 0 ? (
+          <div className="flex min-h-64 flex-col items-center justify-center border border-dashed border-[#c9a84c]/20 bg-[#c9a84c]/[0.025] px-6 text-center">
+            <ScrollText className="h-7 w-7 text-[#c9a84c]/45" />
+            <h2 className="mt-4 font-serif text-2xl text-[#e8decb]">An empty shelf, for now.</h2>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-white/40">When a book is ready to be opened, it will find its place here.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {books.map((book, index) => {
+              const isActive = book.id === activeBookId;
+              return (
+                <button
+                  key={book.id}
+                  onClick={() => onOpen(book.id)}
+                  className={`group relative grid w-full grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-4 overflow-hidden border px-4 py-5 text-left transition duration-200 sm:grid-cols-[3rem_minmax(0,1fr)_10rem_10rem_1.5rem] sm:px-6 ${
+                    isActive
+                      ? "border-[#c9a84c]/40 bg-[#c9a84c]/[0.075]"
+                      : "border-white/[0.075] bg-white/[0.018] hover:border-[#c9a84c]/25 hover:bg-white/[0.04]"
+                  }`}
+                  data-testid={`button-open-book-${book.id}`}
+                >
+                  {isActive && <span className="absolute inset-y-0 left-0 w-0.5 bg-[#d8bd70]" />}
+                  <span className="font-mono text-xs text-[#c9a84c]/45">{String(index + 1).padStart(2, "0")}</span>
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-serif text-xl text-[#eee5d5] transition group-hover:text-[#e0c76a]">{book.title || "Untitled book"}</span>
+                      {isActive && (
+                        <span className="inline-flex items-center gap-1.5 border border-[#c9a84c]/30 bg-[#c9a84c]/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-[#e0c76a]">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#e0c76a]" /> Ash is writing
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-1 block text-xs text-white/35 sm:hidden">{book.chapterCount ?? 0} chapters · {formatDate(book.lastWrittenAt)}</span>
+                  </span>
+                  <span className="hidden sm:block">
+                    <span className="block font-mono text-sm text-white/70">{(book.chapterCount ?? 0).toString().padStart(2, "0")}</span>
+                    <span className="mt-1 block text-[9px] uppercase tracking-[0.17em] text-white/30">Chapters</span>
+                  </span>
+                  <span className="hidden sm:block">
+                    <span className="block text-xs text-white/65">{formatDate(book.lastWrittenAt)}</span>
+                    <span className="mt-1 block text-[9px] uppercase tracking-[0.17em] text-white/30">Last written</span>
+                  </span>
+                  <ChevronRight className="h-4 w-4 text-white/25 transition group-hover:translate-x-0.5 group-hover:text-[#e0c76a]" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function LoadingBook({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#11100e] text-[#eee8dc]">
+      <DetailHeader onBack={onBack} title="Opening book…" status="loading" />
+      <div className="grid min-h-0 flex-1 md:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="hidden border-r border-white/[0.07] p-5 md:block">
+          <div className="h-4 w-28 animate-pulse bg-white/[0.08]" />
+          {[0, 1, 2, 3].map((item) => <div key={item} className="mt-5 h-8 animate-pulse bg-white/[0.045]" />)}
+        </aside>
+        <main className="mx-auto w-full max-w-3xl p-8 sm:p-12">
+          <div className="h-8 w-2/3 animate-pulse bg-white/[0.07]" />
+          <div className="mt-10 space-y-3">{[0, 1, 2, 3, 4, 5].map((item) => <div key={item} className="h-3 animate-pulse bg-white/[0.04]" style={{ width: `${68 + ((item * 13) % 30)}%` }} />)}</div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function parseQueryError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
+  const details = typeof error === "object" && error !== null
+    ? error as { status?: unknown; url?: unknown }
+    : {};
+  const match = message.match(/^(\d{3}):\s*([\s\S]*)$/);
+  return {
+    status: typeof details.status === "number" ? String(details.status) : match?.[1] ?? "No HTTP response",
+    message: (match?.[2] || message || "The server did not provide an error message").trim(),
+    url: typeof details.url === "string" ? details.url : "",
+  };
+}
+
+function BookLoadError({
+  error,
+  isFetching,
+  onRetry,
+  onBack,
+}: {
+  error: unknown;
+  isFetching: boolean;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  const detail = parseQueryError(error);
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#11100e] text-[#eee8dc]">
+      <DetailHeader onBack={onBack} title="Book unavailable" />
+      <main className="flex flex-1 items-center justify-center px-5 py-12">
+        <section className="w-full max-w-xl border border-[#9d5d4b]/30 bg-[#9d5d4b]/[0.055] p-6 sm:p-9">
+          <div className="mb-5 inline-flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-[#dfa58c]">
+            <span className="h-2 w-2 rounded-full bg-[#c47a5b]" /> HTTP {detail.status}
+          </div>
+          <h1 className="font-serif text-3xl text-[#efe2d5]">This page didn’t arrive.</h1>
+          <p className="mt-3 text-sm leading-6 text-white/55">The server returned this message:</p>
+          <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap break-words border-l border-[#c47a5b]/50 bg-black/20 px-4 py-3 font-mono text-xs leading-5 text-[#e2b5a0]" data-testid="text-book-error-message">{detail.message}</pre>
+          {detail.url && <p className="mt-3 break-all font-mono text-[10px] text-white/30">{detail.url}</p>}
+          <div className="mt-7 flex flex-wrap gap-3">
+            <button onClick={onRetry} disabled={isFetching} className="inline-flex items-center gap-2 border border-[#c9a84c]/35 bg-[#c9a84c]/10 px-4 py-2.5 text-xs uppercase tracking-widest text-[#e0c76a] transition hover:bg-[#c9a84c]/20 disabled:opacity-50" data-testid="button-retry-book">
+              {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Retry
+            </button>
+            <button onClick={onBack} className="border border-white/10 px-4 py-2.5 text-xs uppercase tracking-widest text-white/55 transition hover:bg-white/5 hover:text-white" data-testid="button-error-back-library">Back to library</button>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function RequestFailure({ error }: { error: unknown }) {
+  if (!error) return null;
+  const detail = parseQueryError(error);
+  return (
+    <div className="mx-5 mt-3 border border-[#9d5d4b]/25 bg-[#9d5d4b]/[0.045] px-4 py-3 sm:mx-7" role="alert" data-testid="request-failure">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-[#dfa58c]">HTTP {detail.status}</p>
+      <p className="mt-1 break-words font-mono text-xs leading-5 text-white/65">{detail.message}</p>
+      {detail.url && <p className="mt-1 break-all font-mono text-[10px] text-white/30">{detail.url}</p>}
+    </div>
+  );
+}
+
+function DetailHeader({ onBack, title, status }: { onBack: () => void; title: string; status?: string }) {
+  return (
+    <header className="shrink-0 border-b border-[#c9a84c]/15 bg-[#11100e] px-4 py-3 sm:px-7">
+      <div className="flex min-h-8 items-center gap-3">
+        <button onClick={onBack} className="rounded-lg p-2 text-white/45 transition hover:bg-white/5 hover:text-[#e0c76a]" aria-label="Back to library" data-testid="button-back-library">
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <span className="h-5 w-px bg-white/10" />
+        <Feather className="h-4 w-4 text-[#c9a84c]" />
+        <span className="font-serif text-base text-[#e0c76a]">Library</span>
+        <ChevronRight className="h-3 w-3 text-white/25" />
+        <span className="truncate text-sm text-white/65">{title}</span>
+        {status === "loading" && <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-[#c9a84c]" />}
+      </div>
+    </header>
+  );
+}
+
+function BookWorkspace({
+  manuscript,
+  chapters,
+  activeChapterId,
+  onSelectChapter,
+  onBack,
+}: {
+  manuscript: StoryManuscript;
+  chapters: StoryChapter[];
+  activeChapterId: number | null;
+  onSelectChapter: (id: number | null) => void;
+  onBack: () => void;
+}) {
+  const isWriting = manuscript.status === "running";
+  const writeStory = useWriteStory(manuscript.id);
+  const activeChapter = chapters.find((chapter) => chapter.id === activeChapterId);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#11100e] text-[#eee8dc]">
+      <DetailHeader onBack={onBack} title={manuscript.title || "Untitled book"} />
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-[#0e0d0b] px-5 py-2.5 sm:px-7">
+        <div className="flex min-w-0 items-center gap-2 text-xs">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isWriting ? "animate-pulse bg-[#e0c76a]" : manuscript.status === "error" ? "bg-[#c47a5b]" : "bg-white/25"}`} />
+          <span className={isWriting ? "text-[#e0c76a]" : "truncate text-white/40"}>
+            {isWriting ? "Ash is writing this book" : manuscript.status === "incomplete" ? "Writing was interrupted" : manuscript.status === "error" ? "Last writing run stopped" : "At rest"}
+          </span>
+          {manuscript.lastError && manuscript.status === "error" && <span className="hidden truncate text-[#c47a5b]/70 sm:inline" title={manuscript.lastError}>· {manuscript.lastError}</span>}
+        </div>
+        <button
+          onClick={() => writeStory.mutate()}
+          disabled={isWriting || writeStory.isPending}
+          className="inline-flex shrink-0 items-center gap-2 border border-[#c9a84c]/30 bg-[#c9a84c]/[0.08] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#e0c76a] transition hover:bg-[#c9a84c]/[0.16] disabled:cursor-not-allowed disabled:opacity-40"
+          data-testid="button-write-book"
+        >
+          {isWriting || writeStory.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+          {manuscript.status === "incomplete" ? "Continue" : "Write"}
+        </button>
+      </div>
+      {writeStory.isError && <RequestFailure error={writeStory.error} />}
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <aside className="shrink-0 border-b border-white/[0.07] bg-[#0e0d0b] md:w-64 md:overflow-y-auto md:border-b-0 md:border-r">
+          <div className="hidden px-5 pb-2 pt-6 md:block">
+            <div className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#c9a84c]/55">In this volume</div>
+          </div>
+          <div className="flex gap-1 overflow-x-auto px-3 py-2 md:flex-col md:overflow-visible md:px-3 md:py-1">
+            <button
+              onClick={() => onSelectChapter(null)}
+              className={`flex shrink-0 items-center gap-3 px-3 py-2.5 text-left text-sm transition md:w-full ${
+                activeChapterId === null ? "bg-[#c9a84c]/[0.09] text-[#e0c76a]" : "text-white/55 hover:bg-white/[0.04] hover:text-white/85"
+              }`}
+              data-testid="button-manuscript-settings"
+            >
+              <PencilLine className="h-4 w-4 shrink-0" />
+              <span className="md:flex-1">Book details</span>
+            </button>
+            <div className="mx-2 my-1 hidden h-px bg-white/[0.07] md:block" />
+            {chapters.map((chapter, index) => (
+              <button
+                key={chapter.id}
+                onClick={() => onSelectChapter(chapter.id)}
+                className={`flex max-w-[220px] shrink-0 items-center gap-3 px-3 py-2.5 text-left transition md:max-w-none ${
+                  activeChapterId === chapter.id ? "bg-white/[0.07] text-[#e0c76a]" : "text-white/55 hover:bg-white/[0.04] hover:text-white/85"
+                }`}
+                data-testid={`button-open-chapter-${chapter.id}`}
+              >
+                <span className="w-5 shrink-0 font-mono text-[10px] text-[#c9a84c]/45">{String(index + 1).padStart(2, "0")}</span>
+                <span className="truncate font-serif text-sm">{chapter.title || "Untitled chapter"}</span>
+                {chapter.status === "unfinished" && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#d19b5e]" title="Unfinished" />}
+              </button>
+            ))}
+            {chapters.length === 0 && <p className="hidden px-3 py-5 text-xs leading-5 text-white/30 md:block">No chapters have been written yet.</p>}
+          </div>
+        </aside>
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {activeChapter ? (
+            <ChapterReader chapter={activeChapter} bookId={manuscript.id} readOnly={isWriting} />
           ) : (
-            <ChapterEditor 
-              chapter={chapters.find(c => c.id === activeTab)} 
-              readOnly={isWriting}
-              bookId={manuscript.id}
-              key={`chapter-${activeTab}`} 
-            />
+            <ManuscriptEditor manuscript={manuscript} readOnly={isWriting} chapterCount={chapters.length} />
           )}
         </main>
       </div>
@@ -181,241 +406,182 @@ export default function StoryPage() {
   );
 }
 
-function ChapterNavItem({ chapter, isActive, onClick, isFirst, isLast, locked, bookId }: { chapter: StoryChapter, isActive: boolean, onClick: () => void, isFirst: boolean, isLast: boolean, locked: boolean, bookId: string }) {
-  const moveChapter = useMoveChapter(bookId);
-  const deleteChapter = useDeleteChapter(bookId);
-
-  const handleMove = (e: React.MouseEvent, direction: "up" | "down") => {
-    e.stopPropagation();
-    moveChapter.mutate({ id: chapter.id, direction });
-  };
-
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (confirm("Are you sure you want to delete this chapter?")) {
-      deleteChapter.mutate(chapter.id);
-    }
-  };
-
-  return (
-    <div 
-      onClick={onClick}
-      className={`group flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors whitespace-nowrap md:whitespace-normal ${
-        isActive ? "bg-white/10 text-gold" : "text-white/60 hover:bg-white/5 hover:text-white"
-      }`}
-    >
-      <div className="truncate text-sm flex-1 min-w-0 font-serif pr-2">
-        {chapter.title || "Untitled Chapter"}
-        {chapter.status === "unfinished" && <span className="ml-2 text-[10px] text-amber-500 uppercase tracking-widest hidden md:inline">Unfinished</span>}
-      </div>
-      <div className="flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-        <div className="flex flex-col">
-          <button 
-            onClick={(e) => handleMove(e, "up")} 
-            disabled={locked || isFirst || moveChapter.isPending}
-            className="p-0.5 text-white/30 hover:text-white disabled:opacity-30"
-          >
-            <ChevronUp className="w-3 h-3" />
-          </button>
-          <button 
-            onClick={(e) => handleMove(e, "down")} 
-            disabled={locked || isLast || moveChapter.isPending}
-            className="p-0.5 text-white/30 hover:text-white disabled:opacity-30"
-          >
-            <ChevronDown className="w-3 h-3" />
-          </button>
-        </div>
-        <button 
-          onClick={handleDelete}
-          disabled={locked || deleteChapter.isPending}
-          className="p-1.5 ml-1 text-white/30 hover:text-red-400 rounded transition-colors"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscript; readOnly: boolean }) {
+function ManuscriptEditor({
+  manuscript,
+  readOnly,
+  chapterCount,
+}: {
+  manuscript: StoryManuscript;
+  readOnly: boolean;
+  chapterCount: number;
+}) {
   const updateManuscript = useUpdateManuscript(manuscript.id);
-  const initialized = useRef(false);
+  const [title, setTitle] = useState(manuscript.title || "");
+  const [storyPacket, setStoryPacket] = useState(manuscript.storyPacket || "");
+  const [summary] = useState(manuscript.summary || "");
+  const initializedForId = useRef<string | null>(null);
   const lastSaved = useRef({ title: "", storyPacket: "" });
-  
-  const [title, setTitle] = useState("");
-  const [storyPacket, setStoryPacket] = useState("");
-  const [summary, setSummary] = useState("");
+  const mutateRef = useRef(updateManuscript.mutate);
+  mutateRef.current = updateManuscript.mutate;
 
   useEffect(() => {
-    if (!initialized.current || readOnly) {
-      initialized.current = true;
-      setTitle(manuscript.title || "");
-      setStoryPacket(manuscript.storyPacket || "");
-      setSummary(manuscript.summary || "");
-      lastSaved.current = { title: manuscript.title || "", storyPacket: manuscript.storyPacket || "" };
+    if (initializedForId.current !== manuscript.id) {
+      initializedForId.current = manuscript.id;
+      const nextTitle = manuscript.title || "";
+      const nextPacket = manuscript.storyPacket || "";
+      setTitle(nextTitle);
+      setStoryPacket(nextPacket);
+      lastSaved.current = { title: nextTitle, storyPacket: nextPacket };
     }
-  }, [manuscript.title, manuscript.storyPacket, manuscript.summary, readOnly]);
-
-  const mutateFnRef = useRef(updateManuscript.mutate);
-  mutateFnRef.current = updateManuscript.mutate;
+  }, [manuscript.id, manuscript.title, manuscript.storyPacket]);
 
   useEffect(() => {
-    if (!initialized.current || readOnly) return;
-    const timeout = setTimeout(() => {
-      const current = { title, storyPacket };
-      if (current.title !== lastSaved.current.title || current.storyPacket !== lastSaved.current.storyPacket) {
-        mutateFnRef.current(current);
-        lastSaved.current = current;
+    if (initializedForId.current !== manuscript.id || readOnly) return;
+    const timer = window.setTimeout(() => {
+      if (title !== lastSaved.current.title || storyPacket !== lastSaved.current.storyPacket) {
+        lastSaved.current = { title, storyPacket };
+        mutateRef.current({ title, storyPacket });
       }
-    }, 1000);
-    return () => clearTimeout(timeout);
-  }, [title, storyPacket, summary, readOnly]);
-
-  const isSaving = updateManuscript.isPending;
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [title, storyPacket, readOnly, manuscript.id]);
 
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-10 max-w-4xl mx-auto w-full">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="font-serif text-3xl text-gold/90">Manuscript Settings</h2>
-        {isSaving && <span className="text-xs text-white/40 flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin"/> Saving...</span>}
-        {readOnly && <span className="text-xs uppercase tracking-widest text-amber-400">Locked while Ash writes</span>}
+    <div className="mx-auto w-full max-w-4xl px-5 pb-16 pt-8 sm:px-10 sm:pt-12">
+      <div className="mb-8 border-b border-[#c9a84c]/15 pb-7">
+        <div className="mb-3 flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.22em] text-[#c9a84c]/60">
+          <Sparkles className="h-3 w-3" /> Manuscript
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="font-serif text-4xl tracking-[-0.03em] text-[#efe6d5] sm:text-5xl">{manuscript.title || "Untitled book"}</h1>
+            <p className="mt-2 text-xs text-white/38">{chapterCount} {chapterCount === 1 ? "chapter" : "chapters"} · Book details and story packet</p>
+          </div>
+          <SaveIndicator saving={updateManuscript.isPending} />
+        </div>
+        {readOnly && <p className="mt-4 inline-flex items-center gap-2 text-xs text-[#d8bd70]"><span className="h-1.5 w-1.5 rounded-full bg-[#d8bd70]" /> Ash is writing; edits are paused until he’s done.</p>}
       </div>
+      <RequestFailure error={updateManuscript.error} />
 
-      <div className="space-y-8">
+      <div className="space-y-9">
         <section>
-          <label className="block text-xs uppercase tracking-widest text-gold/60 font-semibold mb-2">Title</label>
+          <label htmlFor="book-title" className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c9a84c]/70">Book title</label>
           <input
-            type="text"
+            id="book-title"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(event) => setTitle(event.target.value)}
             readOnly={readOnly}
-            className="w-full bg-white/5 border border-white/10 focus:border-gold/40 rounded-xl px-4 py-3 text-lg font-serif text-white outline-none transition-colors"
-            placeholder="Untitled Manuscript"
+            placeholder="Name this book"
+            className="w-full border border-white/[0.09] bg-[#171512] px-4 py-3 font-serif text-xl text-[#efe6d5] outline-none transition placeholder:text-white/20 focus:border-[#c9a84c]/45 read-only:opacity-65"
+            data-testid="input-book-title"
           />
         </section>
 
         <section>
-          <div className="flex justify-between items-end mb-2">
-            <label className="block text-xs uppercase tracking-widest text-gold/60 font-semibold">Story Packet</label>
-            <span className="text-[10px] text-white/30">Auto-saves</span>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <label htmlFor="story-packet" className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c9a84c]/70">Story packet</label>
+            <SaveIndicator saving={updateManuscript.isPending} compact />
           </div>
-          <p className="text-sm text-white/40 mb-3 leading-relaxed">
-            The guiding rules, themes, outline, and cast for this book. Ash refers to this before writing every chapter. (Also editable via Persona Packet).
-          </p>
+          <p className="mb-4 max-w-2xl text-xs leading-5 text-white/38">The premise, cast, and guiding notes Ash uses to keep the story on course.</p>
           <textarea
+            id="story-packet"
             value={storyPacket}
-            onChange={(e) => setStoryPacket(e.target.value)}
+            onChange={(event) => setStoryPacket(event.target.value)}
             readOnly={readOnly}
             spellCheck={false}
-            className="w-full h-80 bg-[#080706] border border-white/10 focus:border-gold/40 rounded-xl px-5 py-4 text-[15px] leading-relaxed text-white/80 font-mono outline-none transition-colors resize-y"
-            placeholder="Outline and rules..."
+            placeholder="The world, its people, and where this story is headed…"
+            className="min-h-[300px] w-full resize-y border border-white/[0.09] bg-[#0c0b09] px-5 py-4 font-mono text-[13px] leading-6 text-white/75 outline-none transition placeholder:text-white/20 focus:border-[#c9a84c]/40 read-only:opacity-65 sm:min-h-[360px]"
+            data-testid="input-story-packet"
           />
         </section>
 
-        <section>
-          <div className="flex justify-between items-end mb-2">
-            <label className="block text-xs uppercase tracking-widest text-gold/60 font-semibold">Rolling Summary</label>
-            <span className="text-[10px] text-white/30">Maintained by Ash</span>
-          </div>
-          <p className="text-sm text-white/40 mb-3 leading-relaxed">
-            What has happened so far. Ash updates this automatically after writing each chapter to maintain continuity.
-          </p>
-          <textarea
-            value={summary}
-            readOnly
-            spellCheck={false}
-            className="w-full h-64 bg-[#080706] border border-white/10 focus:border-gold/40 rounded-xl px-5 py-4 text-[15px] leading-relaxed text-white/80 font-mono outline-none transition-colors resize-y"
-            placeholder="The story thus far..."
-          />
-        </section>
+        {summary && (
+          <section>
+            <label htmlFor="book-summary" className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">Story so far</label>
+            <textarea id="book-summary" value={summary} readOnly className="min-h-36 w-full resize-y border border-white/[0.06] bg-white/[0.018] px-5 py-4 font-serif text-sm leading-7 text-white/50 outline-none" data-testid="text-book-summary" />
+          </section>
+        )}
       </div>
     </div>
   );
 }
 
-function ChapterEditor({ chapter, readOnly = false, bookId }: { chapter?: StoryChapter; readOnly?: boolean; bookId: string }) {
+function SaveIndicator({ saving, compact = false }: { saving: boolean; compact?: boolean }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.13em] ${saving ? "text-[#d8bd70]" : "text-white/30"}`} aria-live="polite">
+      {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+      {saving ? "Saving" : compact ? "Auto-save" : "Changes save automatically"}
+    </span>
+  );
+}
+
+function ChapterReader({ chapter, bookId, readOnly }: { chapter: StoryChapter; bookId: string; readOnly: boolean }) {
   const updateChapter = useUpdateChapter(bookId);
-  
+  const [title, setTitle] = useState(chapter.title || "");
+  const [content, setContent] = useState(chapter.content || "");
   const initializedForId = useRef<number | null>(null);
   const lastSaved = useRef({ title: "", content: "" });
-  
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const mutateRef = useRef(updateChapter.mutate);
+  mutateRef.current = updateChapter.mutate;
 
   useEffect(() => {
-    if (chapter && (initializedForId.current !== chapter.id || readOnly)) {
+    if (initializedForId.current !== chapter.id) {
       initializedForId.current = chapter.id;
-      setTitle(chapter.title || "");
-      setContent(chapter.content || "");
-      lastSaved.current = { title: chapter.title || "", content: chapter.content || "" };
+      const nextTitle = chapter.title || "";
+      const nextContent = chapter.content || "";
+      setTitle(nextTitle);
+      setContent(nextContent);
+      lastSaved.current = { title: nextTitle, content: nextContent };
     }
-  }, [chapter?.id, chapter?.title, chapter?.content, readOnly]);
-
-  const mutateFnRef = useRef(updateChapter.mutate);
-  mutateFnRef.current = updateChapter.mutate;
+  }, [chapter.id, chapter.title, chapter.content]);
 
   useEffect(() => {
-    if (initializedForId.current !== chapter?.id) return;
-    const timeout = setTimeout(() => {
+    if (initializedForId.current !== chapter.id || readOnly) return;
+    const timer = window.setTimeout(() => {
       if (title !== lastSaved.current.title || content !== lastSaved.current.content) {
-        mutateFnRef.current({ id: chapter.id, data: { title, content } });
         lastSaved.current = { title, content };
+        mutateRef.current({ id: chapter.id, data: { title, content } });
       }
-    }, 1000);
-    return () => clearTimeout(timeout);
-  }, [title, content, chapter?.id]);
-
-  if (!chapter) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-white/30 italic font-serif">
-        Chapter not found.
-      </div>
-    );
-  }
-
-  const isSaving = updateChapter.isPending;
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [title, content, chapter.id, readOnly]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden max-w-5xl mx-auto w-full relative">
-      <div className="absolute top-4 right-6 flex items-center gap-2 z-10 pointer-events-none">
-        {isSaving && <span className="text-[10px] uppercase tracking-widest text-white/30 flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin"/> Saving</span>}
-        {readOnly && <span className="text-[10px] uppercase tracking-widest text-amber-400">Locked while Ash writes</span>}
-      </div>
-
-      <div className="shrink-0 px-4 md:px-10 pt-8 md:pt-12 pb-4 md:pb-6">
+    <article className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-5 pb-16 pt-8 sm:px-10 sm:pt-12">
+      <div className="mb-8 border-b border-[#c9a84c]/15 pb-6">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <span className="text-[9px] font-semibold uppercase tracking-[0.22em] text-[#c9a84c]/60">Chapter {String(chapter.position).padStart(2, "0")}</span>
+          <SaveIndicator saving={updateChapter.isPending} />
+        </div>
         <input
-          type="text"
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(event) => setTitle(event.target.value)}
           readOnly={readOnly}
-          className="w-full bg-transparent border-none text-2xl md:text-4xl font-serif text-gold/90 placeholder:text-gold/20 outline-none text-center"
-          placeholder="Chapter Title"
+          placeholder="Untitled chapter"
+          aria-label="Chapter title"
+          className="w-full border-0 bg-transparent p-0 font-serif text-3xl tracking-[-0.025em] text-[#efe6d5] outline-none placeholder:text-white/20 focus:ring-0 sm:text-4xl read-only:opacity-70"
+          data-testid={`input-chapter-title-${chapter.id}`}
         />
-        {chapter.status === "unfinished" && (
-          <div className="text-center mt-2">
-            <span className="text-xs uppercase tracking-widest text-amber-500 font-semibold border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 rounded-full">
-              Unfinished
-            </span>
-          </div>
-        )}
+        {chapter.status === "unfinished" && <span className="mt-3 inline-block border border-[#d19b5e]/30 bg-[#d19b5e]/[0.08] px-2 py-1 text-[9px] uppercase tracking-[0.16em] text-[#d8aa70]">Unfinished</span>}
       </div>
-
-      <div className="flex-1 min-h-0 px-4 md:px-10 pb-12 overflow-y-auto">
-        {chapter.continuation && (
-          <div className="mb-6 p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 text-sm font-mono text-amber-500/70 whitespace-pre-wrap leading-relaxed">
-            <div className="text-[10px] uppercase tracking-widest text-amber-500/50 mb-2 font-sans font-semibold">Continuation Prompt</div>
-            {chapter.continuation}
-          </div>
-        )}
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          readOnly={readOnly}
-          spellCheck={false}
-          className="w-full h-full min-h-[500px] bg-transparent border-none text-[15px] md:text-[17px] leading-[1.8] text-white/85 font-serif outline-none resize-none"
-          placeholder="Write the chapter content here..."
-        />
-      </div>
-    </div>
+      <RequestFailure error={updateChapter.error} />
+      {chapter.continuation && (
+        <aside className="mb-8 border-l-2 border-[#c9a84c]/45 bg-[#c9a84c]/[0.045] px-5 py-4">
+          <div className="mb-2 text-[9px] font-semibold uppercase tracking-[0.18em] text-[#c9a84c]/65">Continuation note</div>
+          <p className="whitespace-pre-wrap font-mono text-xs leading-5 text-[#d9c79d]/75">{chapter.continuation}</p>
+        </aside>
+      )}
+      <textarea
+        value={content}
+        onChange={(event) => setContent(event.target.value)}
+        readOnly={readOnly}
+        spellCheck={false}
+        placeholder="The chapter is waiting for its first line."
+        aria-label="Chapter text"
+        className="min-h-[60vh] w-full flex-1 resize-y border-0 bg-transparent p-0 font-serif text-[16px] leading-[1.95] text-[#e7dfd2]/85 outline-none placeholder:text-white/20 focus:ring-0 sm:text-[18px] read-only:opacity-80"
+        data-testid={`input-chapter-content-${chapter.id}`}
+      />
+      {readOnly && <p className="mt-6 text-xs text-[#d8bd70]">Editing is paused while Ash is writing.</p>}
+    </article>
   );
 }

@@ -7,6 +7,7 @@ import { startHangoutIdleScheduler } from "./lib/ash/hangout";
 import { startSongWorker } from "./lib/ash/song-service";
 import { setVectorMemoryReady } from "./lib/ash/vector-memory";
 import { initMemory } from "./lib/ash/vector-memory-runtime.mjs";
+import { migrateLegacyStoryToBook } from "./lib/ash/story-library-migration";
 
 const rawPort = process.env["PORT"];
 
@@ -29,6 +30,14 @@ try {
 } catch (err) {
   setVectorMemoryReady(false);
   logger.error({ err }, "Vector Memory unavailable; starting Stillwater without memory");
+}
+
+try {
+  const migrated = await migrateLegacyStoryToBook("Thoughts of Ash");
+  logger.info({ migrated }, "Story library startup migration checked");
+} catch (err) {
+  logger.error({ err }, "Story library startup migration failed");
+  process.exit(1);
 }
 
 app.listen(port, async (err) => {

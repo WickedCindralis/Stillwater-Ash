@@ -37,6 +37,7 @@ import {
   type AshDiscordMessage,
 } from "@workspace/db";
 import { randomUUID } from "node:crypto";
+import { normalizeBookTitle } from "./book-command";
 import { eq, ne, desc, asc, inArray, and, like, lt, gt, gte, lte, isNull, notInArray, or, sql, count } from "drizzle-orm";
 import {
   DISCORD_OWNER_DM_GUILD_ID,
@@ -480,8 +481,16 @@ export class DbStorage implements IStorage {
     return { book, chapters, run: run ?? null };
   }
   async createBook(title: string, storyPacket = ""): Promise<AshBook> {
-    const [book] = await db.insert(ashBooks).values({ id: randomUUID(), title: title.trim(), storyPacket }).returning();
-    return book!;
+    const cleanTitle = title.trim();
+    if (!cleanTitle) throw new Error("Book title is required");
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-book-title-create'))`);
+      const books = await tx.select().from(ashBooks);
+      const existing = books.find((book) => normalizeBookTitle(book.title) === normalizeBookTitle(cleanTitle));
+      if (existing) return existing;
+      const [book] = await tx.insert(ashBooks).values({ id: randomUUID(), title: cleanTitle, storyPacket }).returning();
+      return book!;
+    });
   }
   async updateBookWhenIdle(bookId: string, patch: Partial<Pick<AshBook, "title" | "storyPacket">>): Promise<AshBook | null> {
     return db.transaction(async (tx) => {

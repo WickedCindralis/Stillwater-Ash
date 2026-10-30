@@ -1,16 +1,16 @@
-import { and, eq, max } from "drizzle-orm";
-import { ashBooks, ashState, ashStory, ashStoryChapters, db, pool } from "@workspace/db";
-import { logger } from "../logger";
+import { eq, max, sql } from "drizzle-orm";
+import { ashBooks, ashState, ashStory, ashStoryChapters, db } from "@workspace/db";
 
 /**
  * Copies the legacy manuscript metadata into the first book without changing
  * any legacy row. Its existing chapter/run ids already use story_id = "ash".
  */
-export async function migrateLegacyStoryToBook(title: string): Promise<boolean> {
+export async function migrateLegacyStoryToBook(title = "Thoughts of Ash"): Promise<boolean> {
   const cleanTitle = title.trim();
   if (!cleanTitle) throw new Error("The first book title is required");
 
   return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ash-story-library-migration'))`);
     const [existingBook] = await tx.select({ id: ashBooks.id })
       .from(ashBooks)
       .where(eq(ashBooks.id, "ash"))
@@ -28,7 +28,7 @@ export async function migrateLegacyStoryToBook(title: string): Promise<boolean> 
       .limit(1);
     const [chapterDates] = await tx.select({
       lastWrittenAt: max(ashStoryChapters.updatedAt),
-    }).from(ashStoryChapters).where(and(eq(ashStoryChapters.storyId, "ash")));
+    }).from(ashStoryChapters).where(eq(ashStoryChapters.storyId, "ash"));
 
     await tx.insert(ashBooks).values({
       id: "ash",
@@ -42,17 +42,4 @@ export async function migrateLegacyStoryToBook(title: string): Promise<boolean> 
     });
     return true;
   });
-}
-
-const cliTitle = process.argv[2];
-if (process.argv[1]?.includes("story-library-migration")) {
-  void migrateLegacyStoryToBook(cliTitle || "")
-    .then((created) => {
-      logger.info({ created }, "Story library migration finished");
-    })
-    .catch((error) => {
-      logger.error({ err: error }, "Story library migration failed");
-      process.exitCode = 1;
-    })
-    .finally(() => pool.end());
 }

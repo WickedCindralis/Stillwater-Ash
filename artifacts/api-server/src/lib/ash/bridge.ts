@@ -37,7 +37,7 @@ import { sendKingsFingers } from "./lovense";
 import { ASH_NOTES_MAX_WORDS, type AshDiscordMessage, type AshMessage } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 import { getAshMemoryRecall, recordAshMemoryMessage, getPendingAshMemoryCount, runAshMemoryReview } from "./vector-memory";
-import { extractOpenDoors, type AshDoor } from "./door-command";
+import { extractOpenDoors, launchDoorFollowUps, type AshDoor } from "./door-command";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
 // intervals, proactive self-prompt (reflective) windows, DIARY: parsing,
@@ -1176,9 +1176,11 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
   }
 
   private launchDoors(doors: readonly AshDoor[]): void {
-    for (const door of doors) {
-      void this.runDoor(door).catch((error) => this.error(`Unhandled door failure [door=${door}]:`, error));
-    }
+    launchDoorFollowUps(
+      doors,
+      (door) => this.runDoor(door),
+      (door, error) => this.error(`Unhandled door failure [door=${door}]:`, error),
+    );
   }
 
   // ── Public entry: Wicked sends a private message ──

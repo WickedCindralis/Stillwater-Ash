@@ -14,6 +14,7 @@
     "test:screen-capture": "esbuild ./src/lib/ash/screen-capture.integration.test.ts --bundle --platform=node --format=cjs --outfile=/tmp/stillwater-screen-capture.integration.test.cjs && node --test /tmp/stillwater-screen-capture.integration.test.cjs",
     "test:screen-command": "esbuild ./src/lib/ash/screen-capture-command.test.ts --bundle --platform=node --format=esm --outfile=/tmp/stillwater-screen-capture-command.test.mjs && node --test /tmp/stillwater-screen-capture-command.test.mjs",
     "test:history": "esbuild ./src/lib/ash/history-format.test.ts --bundle --platform=node --format=esm --outfile=/tmp/stillwater-history-format.test.mjs && node --test /tmp/stillwater-history-format.test.mjs",
+    "test:doors": "esbuild ./src/lib/ash/door-command.test.ts --bundle --platform=node --format=esm --outfile=/tmp/stillwater-door-command.test.mjs && node --test /tmp/stillwater-door-command.test.mjs",
     "test:story-command": "esbuild ./src/lib/ash/story-command.test.ts --bundle --platform=node --format=esm --outfile=/tmp/stillwater-story-command.test.mjs",
     "test:hangout-policy": "esbuild ./src/lib/ash/hangout-policy.test.ts --bundle --platform=node --format=esm --outfile=/tmp/stillwater-hangout-policy.test.mjs && node --test /tmp/stillwater-hangout-policy.test.mjs",
     "test:hangout-integration": "node ./run-hangout-integration.mjs",

@@ -3,6 +3,18 @@ export type AshDoor = (typeof ASH_DOORS)[number];
 
 const ALLOWED_DOORS = new Set<string>(ASH_DOORS);
 
+export function launchDoorFollowUps(
+  doors: readonly AshDoor[],
+  runDoor: (door: AshDoor) => Promise<void>,
+  onFailure: (door: AshDoor, error: unknown) => void,
+): void {
+  for (const door of doors) {
+    void Promise.resolve()
+      .then(() => runDoor(door))
+      .catch((error) => onFailure(door, error));
+  }
+}
+
 export function extractOpenDoors(reply: string): { doors: AshDoor[]; text: string } {
   const doors: AshDoor[] = [];
   const kept: string[] = [];

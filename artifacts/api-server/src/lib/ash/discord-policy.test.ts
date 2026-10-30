@@ -32,9 +32,7 @@ test("numbered Discord channels are player-ticket channels", () => {
 test("the public model prompt protects private continuity context", () => {
   assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /Ash Cindralis/);
   assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /bounded Stillwater conversation history/);
-  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /STATUS CHANGED/);
-  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /PINGS_OFF/);
-  assert.match(DISCORD_PUBLIC_SYSTEM_PROMPT, /SCREENSHOT/);
+  assert.doesNotMatch(DISCORD_PUBLIC_SYSTEM_PROMPT, /STATUS CHANGED|PINGS_OFF|SCREENSHOT|DIARY|NOTES/);
 });
 
 test("Discord packets include private Stillwater chat as continuity context", () => {

@@ -37,7 +37,7 @@ import {
   type AshDiscordMessage,
 } from "@workspace/db";
 import { randomUUID } from "node:crypto";
-import { eq, ne, desc, asc, inArray, and, like, lt, gt, gte, lte, isNull, notInArray, or, sql } from "drizzle-orm";
+import { eq, ne, desc, asc, inArray, and, like, lt, gt, gte, lte, isNull, notInArray, or, sql, count } from "drizzle-orm";
 import {
   DISCORD_OWNER_DM_GUILD_ID,
   isDiscordPlayerTicketChannel,
@@ -69,6 +69,7 @@ export interface IStorage {
   getRecentStillwaterHistory(perRole: number): Promise<AshMessage[]>;
   getRecentOwnerDiscordHistory(perRole: number): Promise<AshMessage[]>;
   getDiaryEntries(): Promise<AshDiaryEntry[]>;
+  getRecentDiaryEntries(limit: number): Promise<AshDiaryEntry[]>;
   createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry>;
   saveChronicle(entry: InsertChronicle): Promise<{ chronicle: AshChronicle; created: boolean }>;
   getPendingChronicles(): Promise<AshChronicle[]>;
@@ -100,6 +101,7 @@ export interface IStorage {
     patch: Partial<Pick<AshTiktokComment, "status" | "draft">>,
   ): Promise<AshTiktokComment | null>;
   getUnseenTiktokComments(limit: number): Promise<AshTiktokComment[]>;
+  countUnseenTiktokComments(): Promise<number>;
   claimTiktokComments(ids: number[]): Promise<AshTiktokComment[]>;
   releaseTiktokCommentsClaim(ids: number[]): Promise<void>;
   listDiscordChannels(): Promise<AshDiscordChannel[]>;
@@ -898,6 +900,10 @@ export class DbStorage implements IStorage {
     return db.select().from(ashDiaryEntries).orderBy(desc(ashDiaryEntries.id));
   }
 
+  async getRecentDiaryEntries(limit: number): Promise<AshDiaryEntry[]> {
+    return db.select().from(ashDiaryEntries).orderBy(desc(ashDiaryEntries.id)).limit(limit);
+  }
+
   async createDiaryEntry(entry: InsertDiaryEntry): Promise<AshDiaryEntry> {
     const rows = await db.insert(ashDiaryEntries).values(entry).returning();
     return rows[0]!;
@@ -1154,6 +1160,12 @@ export class DbStorage implements IStorage {
       .where(eq(ashTiktokComments.seenByAsh, 0))
       .orderBy(ashTiktokComments.id)
       .limit(limit);
+  }
+
+  async countUnseenTiktokComments(): Promise<number> {
+    const [row] = await db.select({ count: count() }).from(ashTiktokComments)
+      .where(eq(ashTiktokComments.seenByAsh, 0));
+    return row?.count ?? 0;
   }
 
   // Atomically claim only the rows already selected for the packet. The

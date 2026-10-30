@@ -1,18 +1,12 @@
 import {
   isRecallEnabled,
-  pendingCount,
   recallForPrompt,
   recordMessage,
-  reviewLog,
-  runBeingReview,
 } from "./vector-memory-runtime.mjs";
 import { logger } from "../logger";
 
 let ready = false;
-let reviewRunning = false;
-let lastReviewAttempt = 0;
-const REVIEW_INTERVAL_MS = 12 * 60 * 60 * 1000;
-
+let manualReviewRunning = false;
 export function setVectorMemoryReady(value: boolean): void {
   ready = value;
 }
@@ -50,25 +44,23 @@ export async function getAshRecallEnabled(): Promise<boolean | null> {
   }
 }
 
-export async function reviewAshMemories(
-  askBeing: (prompt: string) => Promise<string>,
-): Promise<void> {
-  if (!ready || reviewRunning) return;
-  reviewRunning = true;
+export async function getPendingAshMemoryCount(): Promise<number> {
+  if (!ready) return 0;
   try {
-    const pending = await pendingCount("ash");
-    if (pending <= 0) return;
-    const [latest] = await reviewLog("ash", 1);
-    const lastReviewed = latest?.reviewed_at
-      ? new Date(latest.reviewed_at).getTime()
-      : 0;
-    const lastAttempt = Math.max(lastReviewed, lastReviewAttempt);
-    if (Date.now() - lastAttempt < REVIEW_INTERVAL_MS) return;
-    lastReviewAttempt = Date.now();
-    await runBeingReview("ash", askBeing);
+    return await (await import("./vector-memory-runtime.mjs")).pendingCount("ash");
   } catch (error) {
-    logger.warn({ err: error }, "Vector Memory review failed");
+    logger.warn({ err: error }, "Vector Memory pending-count lookup failed");
+    return 0;
+  }
+}
+
+export async function runAshMemoryReview(askBeing: (prompt: string) => Promise<string>): Promise<void> {
+  if (!ready) throw new Error("Vector Memory is not ready");
+  if (manualReviewRunning) return;
+  manualReviewRunning = true;
+  try {
+    await (await import("./vector-memory-runtime.mjs")).runBeingReview("ash", askBeing, 10);
   } finally {
-    reviewRunning = false;
+    manualReviewRunning = false;
   }
 }

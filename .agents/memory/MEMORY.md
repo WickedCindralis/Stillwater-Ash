@@ -14,6 +14,7 @@
 - [Integration-test isolation](integration-test-isolation.md) — DB integration tests can briefly expose synthetic messages and toggle live controls; use a separate disposable database.
 - [Story workspace continuity](story-workspace-continuity.md) — Story is isolated from chat/Diary/Discord; interrupted streams stay resumable and cross-instance writing uses a renewable DB lease.
 - [API call observability](api-call-observability.md) — user requires actual calls and lifecycle logs for every new API-powered feature; accepted jobs alone are not evidence of provider execution.
+- [Ash door isolation](ash-doors.md) — door follow-ups are invisible housekeeping: never add them to chat history or memory capture, and never let them delay the user reply.
 - [Vector Memory imports](vector-memory-imports.md) — keep server and dashboard adapters around Vector Memory source imports to preserve artifact typecheck/build boundaries.
 - [Memory dashboard authentication](memory-dashboard-auth.md) — the Stillwater memory dashboard uses the app’s existing login; its admin token stays server-side.
 - [Desktop companion responsiveness](desktop-companion-responsiveness.md) — each Hangout window starts fresh; keep capture off the UI thread and acknowledge chat only after rendering.

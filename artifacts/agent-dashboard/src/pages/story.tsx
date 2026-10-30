@@ -1,14 +1,41 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { ArrowLeft, Feather, Download, Settings, FileText, ChevronUp, ChevronDown, Trash2, Loader2, Play, XCircle, Search } from "lucide-react";
-import { useStory, useUpdateManuscript, useWriteStory, useUpdateChapter, useMoveChapter, useDeleteChapter, type StoryChapter, type StoryManuscript } from "@/hooks/use-story";
+import { ArrowLeft, Feather, Download, Settings, FileText, ChevronUp, ChevronDown, Trash2, Loader2, Play, XCircle, Search, BookOpen } from "lucide-react";
+import { useBooks, useStory, useUpdateManuscript, useWriteStory, useUpdateChapter, useMoveChapter, useDeleteChapter, type StoryChapter, type StoryManuscript } from "@/hooks/use-story";
 
 export default function StoryPage() {
-  const { data, isLoading, error } = useStory();
-  const writeStory = useWriteStory();
-  const updateManuscript = useUpdateManuscript();
+  const booksQuery = useBooks();
+  const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
+  const bookId = selectedBookId ?? "";
+  const { data, isLoading, error } = useStory(selectedBookId);
+  const writeStory = useWriteStory(bookId);
 
   const [activeTab, setActiveTab] = useState<"manuscript" | number>("manuscript");
+
+  if (!selectedBookId) {
+    const books = booksQuery.data?.books ?? [];
+    return (
+      <div className="h-full overflow-y-auto bg-black text-white/90">
+        <header className="h-14 px-4 border-b border-gold/15 flex items-center gap-3">
+          <Link href="/" className="p-2 text-white/50 hover:text-gold"><ArrowLeft className="w-5 h-5" /></Link>
+          <BookOpen className="w-5 h-5 text-gold" />
+          <h1 className="font-serif text-lg text-gold">Library</h1>
+        </header>
+        <main className="max-w-4xl mx-auto p-6 md:p-10">
+          <h2 className="font-serif text-3xl text-gold/90 mb-2">Ash’s Books</h2>
+          <p className="text-white/45 mb-8">Open a book to read its chapters or edit its title and story packet.</p>
+          {booksQuery.isLoading ? <p className="text-white/40">Loading library…</p> :
+            books.length ? <div className="grid gap-3">{books.map((book) => (
+              <button key={book.id} onClick={() => { setSelectedBookId(book.id); setActiveTab("manuscript"); }}
+                className="w-full text-left p-5 rounded-xl border border-gold/15 bg-white/[0.03] hover:bg-gold/10 hover:border-gold/30 transition-colors">
+                <span className="block font-serif text-xl text-gold/90">{book.title}</span>
+                <span className="block mt-2 text-xs text-white/40">Last written: {book.lastWrittenAt ? new Date(book.lastWrittenAt).toLocaleDateString() : "Never"}</span>
+              </button>
+            ))}</div> : <p className="text-white/40 italic">No books yet.</p>}
+        </main>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -28,6 +55,7 @@ export default function StoryPage() {
   }
 
   const { manuscript, chapters } = data;
+  const updateManuscript = useUpdateManuscript(manuscript.id);
   const isWriting = manuscript.status === "running";
 
   const baseUrl = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -36,9 +64,9 @@ export default function StoryPage() {
     <div className="h-full flex flex-col bg-black text-white/90 overflow-hidden">
       <header className="shrink-0 md:h-14 px-4 py-3 md:py-0 border-b border-gold/15 bg-black/90 flex flex-col md:flex-row items-start md:items-center justify-between z-10 gap-3 md:gap-0">
         <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-          <Link href="/" className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors">
+          <button onClick={() => setSelectedBookId(null)} className="p-2 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors" aria-label="Back to library">
             <ArrowLeft className="w-5 h-5" />
-          </Link>
+          </button>
           <div className="flex items-center gap-2 text-gold">
             <Feather className="w-5 h-5" />
             <h1 className="font-serif text-lg leading-none">The Scriptorium</h1>
@@ -70,7 +98,7 @@ export default function StoryPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 shrink-0">
+          <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-1 md:pb-0 shrink-0">
           <button 
             onClick={() => writeStory.mutate()} 
             disabled={isWriting || writeStory.isPending}
@@ -82,13 +110,13 @@ export default function StoryPage() {
           
           <div className="hidden md:block w-px h-5 bg-white/10 mx-1" />
 
-          <a href={`${baseUrl}/api/story/packet-document`} target="_blank" rel="noreferrer" className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
+          <a href={`${baseUrl}/api/story/books/${manuscript.id}/packet-document`} target="_blank" rel="noreferrer" className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
             <Search className="w-4 h-4" /> <span className="hidden sm:inline">Inspect Packet</span>
           </a>
-          <a href={`${baseUrl}/api/story/export.docx`} className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
+          <a href={`${baseUrl}/api/story/books/${manuscript.id}/export.docx`} className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
             <Download className="w-4 h-4" /> DOCX
           </a>
-          <a href={`${baseUrl}/api/story/export.txt`} className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
+          <a href={`${baseUrl}/api/story/books/${manuscript.id}/export.txt`} className="flex items-center shrink-0 gap-2 px-3 py-1.5 rounded-lg text-white/50 hover:text-gold hover:bg-white/5 transition-colors text-sm">
             <FileText className="w-4 h-4" /> TXT
           </a>
         </div>
@@ -126,6 +154,7 @@ export default function StoryPage() {
                   isFirst={index === 0}
                   isLast={index === chapters.length - 1}
                   locked={isWriting}
+                  bookId={manuscript.id}
                 />
               ))}
               {chapters.length === 0 && (
@@ -142,6 +171,7 @@ export default function StoryPage() {
             <ChapterEditor 
               chapter={chapters.find(c => c.id === activeTab)} 
               readOnly={isWriting}
+              bookId={manuscript.id}
               key={`chapter-${activeTab}`} 
             />
           )}
@@ -151,9 +181,9 @@ export default function StoryPage() {
   );
 }
 
-function ChapterNavItem({ chapter, isActive, onClick, isFirst, isLast, locked }: { chapter: StoryChapter, isActive: boolean, onClick: () => void, isFirst: boolean, isLast: boolean, locked: boolean }) {
-  const moveChapter = useMoveChapter();
-  const deleteChapter = useDeleteChapter();
+function ChapterNavItem({ chapter, isActive, onClick, isFirst, isLast, locked, bookId }: { chapter: StoryChapter, isActive: boolean, onClick: () => void, isFirst: boolean, isLast: boolean, locked: boolean, bookId: string }) {
+  const moveChapter = useMoveChapter(bookId);
+  const deleteChapter = useDeleteChapter(bookId);
 
   const handleMove = (e: React.MouseEvent, direction: "up" | "down") => {
     e.stopPropagation();
@@ -208,9 +238,9 @@ function ChapterNavItem({ chapter, isActive, onClick, isFirst, isLast, locked }:
 }
 
 function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscript; readOnly: boolean }) {
-  const updateManuscript = useUpdateManuscript();
+  const updateManuscript = useUpdateManuscript(manuscript.id);
   const initialized = useRef(false);
-  const lastSaved = useRef({ title: "", storyPacket: "", summary: "" });
+  const lastSaved = useRef({ title: "", storyPacket: "" });
   
   const [title, setTitle] = useState("");
   const [storyPacket, setStoryPacket] = useState("");
@@ -222,11 +252,7 @@ function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscrip
       setTitle(manuscript.title || "");
       setStoryPacket(manuscript.storyPacket || "");
       setSummary(manuscript.summary || "");
-      lastSaved.current = { 
-        title: manuscript.title || "", 
-        storyPacket: manuscript.storyPacket || "", 
-        summary: manuscript.summary || "" 
-      };
+      lastSaved.current = { title: manuscript.title || "", storyPacket: manuscript.storyPacket || "" };
     }
   }, [manuscript.title, manuscript.storyPacket, manuscript.summary, readOnly]);
 
@@ -236,12 +262,8 @@ function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscrip
   useEffect(() => {
     if (!initialized.current || readOnly) return;
     const timeout = setTimeout(() => {
-      const current = { title, storyPacket, summary };
-      if (
-        current.title !== lastSaved.current.title || 
-        current.storyPacket !== lastSaved.current.storyPacket || 
-        current.summary !== lastSaved.current.summary
-      ) {
+      const current = { title, storyPacket };
+      if (current.title !== lastSaved.current.title || current.storyPacket !== lastSaved.current.storyPacket) {
         mutateFnRef.current(current);
         lastSaved.current = current;
       }
@@ -293,15 +315,14 @@ function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscrip
         <section>
           <div className="flex justify-between items-end mb-2">
             <label className="block text-xs uppercase tracking-widest text-gold/60 font-semibold">Rolling Summary</label>
-            <span className="text-[10px] text-white/30">Auto-saves</span>
+            <span className="text-[10px] text-white/30">Maintained by Ash</span>
           </div>
           <p className="text-sm text-white/40 mb-3 leading-relaxed">
             What has happened so far. Ash updates this automatically after writing each chapter to maintain continuity.
           </p>
           <textarea
             value={summary}
-            onChange={(e) => setSummary(e.target.value)}
-            readOnly={readOnly}
+            readOnly
             spellCheck={false}
             className="w-full h-64 bg-[#080706] border border-white/10 focus:border-gold/40 rounded-xl px-5 py-4 text-[15px] leading-relaxed text-white/80 font-mono outline-none transition-colors resize-y"
             placeholder="The story thus far..."
@@ -312,8 +333,8 @@ function ManuscriptEditor({ manuscript, readOnly }: { manuscript: StoryManuscrip
   );
 }
 
-function ChapterEditor({ chapter, readOnly = false }: { chapter?: StoryChapter; readOnly?: boolean }) {
-  const updateChapter = useUpdateChapter();
+function ChapterEditor({ chapter, readOnly = false, bookId }: { chapter?: StoryChapter; readOnly?: boolean; bookId: string }) {
+  const updateChapter = useUpdateChapter(bookId);
   
   const initializedForId = useRef<number | null>(null);
   const lastSaved = useRef({ title: "", content: "" });

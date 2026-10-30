@@ -38,6 +38,7 @@ import { ASH_NOTES_MAX_WORDS, type AshDiscordMessage, type AshMessage } from "@w
 import { randomUUID } from "node:crypto";
 import { getAshMemoryRecall, recordAshMemoryMessage, getPendingAshMemoryCount, runAshMemoryReview } from "./vector-memory";
 import { extractOpenDoors, launchDoorFollowUps, type AshDoor } from "./door-command";
+import { normalizeBookTitle, parseBookCommand } from "./book-command";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
 // intervals, proactive self-prompt (reflective) windows, DIARY: parsing,
@@ -148,7 +149,7 @@ export class AshBridge {
   /** Generate only from the Story packet. This path deliberately excludes chat,
    * Discord, diary, games, and ordinary history. Durable checkpoints make a
    * dropped stream resumable without losing the partial chapter. */
-  async writeStory(prompt = "", resumeRunId?: string): Promise<{ runId: string; status: string; output: string }> {
+  async writeStory(bookId: string, prompt = "", resumeRunId?: string): Promise<{ runId: string; status: string; output: string }> {
     if (!this.openai) throw new Error("OpenAI client not initialized");
     const lease = randomUUID();
     const leaseGeneration = await storage.acquireStoryLease(lease, 15 * 60_000);
@@ -159,12 +160,13 @@ export class AshBridge {
     try {
       const model = await this.resolveModel();
       const ceiling = storyMaxCompletionTokens(model);
-      const current = await storage.getStory();
+      const current = await storage.getBook(bookId);
+      if (!current) throw new Error("Book not found");
       const state = await storage.getState();
       if (state.apiKillSwitch === 1) throw new Error("Story writing is disabled by the API kill switch");
       const effectiveResume = resumeRunId || (current.run && current.run.status !== "complete" ? current.run.id : undefined);
       const runId = effectiveResume || randomUUID();
-      const started = await storage.beginStoryRun(lease, leaseGeneration, runId, prompt, effectiveResume);
+      const started = await storage.beginStoryRun(bookId, lease, leaseGeneration, runId, prompt, effectiveResume);
       const run = started.run;
       const draftChapter = started.chapter;
       const prior = draftChapter.content;
@@ -173,10 +175,11 @@ export class AshBridge {
       output = prior;
       const packet = [
         `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${state.personaIdentity?.trim() || SYSTEM_PROMPT}`,
+        `[BOOK TITLE]\n${started.book.title}`,
         `[SOUL]\n${state.personaSoulSheet || DEFAULT_SOUL_SHEET}`,
         `[CORE VOICE]\n${state.personaCoreAnchors || DEFAULT_CORE_ANCHORS}`,
-        `[STORY PACKET]\n${started.story.storyPacket || state.personaStoryPacket || "(empty)"}`,
-        `[ROLLING SUMMARY]\n${started.story.rollingSummary || "(none)"}`,
+        `[STORY PACKET]\n${started.book.storyPacket || "(empty)"}`,
+        `[ROLLING SUMMARY]\n${started.book.rollingSummary || "(none)"}`,
         `[LATEST CHAPTER]\n${effectiveResume ? draftChapter.content : (started.chapters.at(-2)?.content || "(none)")}`,
         `[UNFINISHED CONTINUATION]\n${effectiveResume ? draftChapter.content.slice(-4000) : (started.chapters.at(-2)?.continuation || "(none)")}`,
         `[WRITING REQUEST]\n${prompt || (effectiveResume ? "Continue directly from the unfinished ending. Do not repeat existing prose." : "Write the next chapter.")}`,
@@ -194,22 +197,22 @@ export class AshBridge {
           if (!(await storage.renewStoryLease(lease, leaseGeneration, 15 * 60_000))) {
             throw new Error("Story lease was lost to another writer");
           }
-          await storage.checkpointStoryRun(lease, leaseGeneration, run.id, draftChapter.id, output, "running");
+          await storage.checkpointStoryRun(bookId, lease, leaseGeneration, run.id, draftChapter.id, output, "running");
           lastCheckpoint = Date.now();
         }
       }
       if (finishReason !== "stop") {
-        await storage.checkpointStoryRun(lease, leaseGeneration, run.id, draftChapter.id, output, "paused");
+        await storage.checkpointStoryRun(bookId, lease, leaseGeneration, run.id, draftChapter.id, output, "paused");
         return { runId: run.id, status: "paused", output };
       }
-      await storage.completeStoryRun(lease, leaseGeneration, run.id, draftChapter.id, output);
+      await storage.completeStoryRun(bookId, lease, leaseGeneration, run.id, draftChapter.id, output);
       try {
         const summaryResponse = await this.openai.chat.completions.create({
-          model, messages: [{ role: "developer", content: "Summarize the supplied fictional manuscript context in a bounded continuity summary. Return only the summary, no commentary." }, { role: "user", content: `[EXISTING SUMMARY]\n${started.story.rollingSummary}\n\n[NEW CHAPTER]\n${output}` }],
+          model, messages: [{ role: "developer", content: "Summarize the supplied fictional manuscript context in a bounded continuity summary. Return only the summary, no commentary." }, { role: "user", content: `[EXISTING SUMMARY]\n${started.book.rollingSummary}\n\n[NEW CHAPTER]\n${output}` }],
           max_completion_tokens: 2000, store: false,
         } as any);
         const summary = summaryResponse.choices?.[0]?.message?.content?.trim();
-        if (summary) await storage.updateStorySummaryIfUnchanged(started.story.rollingSummary, summary.slice(0, 24000));
+        if (summary) await storage.updateBookSummaryIfUnchanged(bookId, started.book.rollingSummary, summary.slice(0, 24000));
       } catch (summaryError) {
         this.error("Story summary update failed:", summaryError);
       }
@@ -219,7 +222,7 @@ export class AshBridge {
       if (activeRunId) {
         if (activeChapterId) {
           try {
-            await storage.failStoryRun(lease, leaseGeneration, activeRunId, activeChapterId, output, errorMessage);
+            await storage.failStoryRun(bookId, lease, leaseGeneration, activeRunId, activeChapterId, output, errorMessage);
           } catch (persistError) {
             throw new AggregateError([error, persistError], `Story stream failed and its latest buffer could not be persisted: ${errorMessage}`);
           }
@@ -232,8 +235,8 @@ export class AshBridge {
     }
   }
 
-  async startStoryWrite(prompt = "", resumeRunId?: string): Promise<void> {
-    void this.writeStory(prompt, resumeRunId).catch((error) => {
+  async startStoryWrite(bookId: string, prompt = "", resumeRunId?: string): Promise<void> {
+    void this.writeStory(bookId, prompt, resumeRunId).catch((error) => {
       this.error("Background story write failed:", error);
     });
   }
@@ -598,14 +601,15 @@ RULES FOR YOUR REPLY:
     };
   }
 
-  async buildStoryPacketPreview(): Promise<AshPacketPreview> {
+  async buildStoryPacketPreview(bookId: string): Promise<AshPacketPreview> {
     const state = await storage.getState();
-    const story = await storage.getStory();
+    const story = await storage.getBook(bookId);
+    if (!story) throw new Error("Book not found");
     const model = await this.resolveModel();
     const messages: ChatMessage[] = [{
       role: "developer",
       name: AGENT_NAME,
-      content: `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${state.personaIdentity?.trim() || SYSTEM_PROMPT}\n\n[SOUL]\n${state.personaSoulSheet || DEFAULT_SOUL_SHEET}\n\n[CORE VOICE]\n${state.personaCoreAnchors || DEFAULT_CORE_ANCHORS}\n\n[STORY PACKET]\n${story.story.storyPacket || state.personaStoryPacket || "(empty)"}\n\n[ROLLING SUMMARY]\n${story.story.rollingSummary || "(empty)"}\n\n[LATEST CHAPTER]\n${story.chapters.at(-1)?.content || "(empty)"}\n\n[UNFINISHED CONTINUATION]\n${story.chapters.at(-1)?.continuation || "(empty)"}`,
+      content: `${FICTION_PREAMBLE}${IDENTITY_ANCHOR}${state.personaIdentity?.trim() || SYSTEM_PROMPT}\n\n[SOUL]\n${state.personaSoulSheet || DEFAULT_SOUL_SHEET}\n\n[CORE VOICE]\n${state.personaCoreAnchors || DEFAULT_CORE_ANCHORS}\n\n[STORY PACKET]\n${story.book.storyPacket || "(empty)"}\n\n[ROLLING SUMMARY]\n${story.book.rollingSummary || "(empty)"}\n\n[LATEST CHAPTER]\n${story.chapters.at(-1)?.content || "(empty)"}\n\n[UNFINISHED CONTINUATION]\n${story.chapters.at(-1)?.continuation || "(empty)"}`,
     }, { role: "user", name: "Wicked", content: "[STORY PACKET PREVIEW — NO WRITING]" }];
     return {
       generatedAt: new Date().toISOString(),
@@ -1115,10 +1119,9 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         const dated = entries.map((entry) => `${new Date(entry.createdAt).toLocaleDateString("en-US")}: ${entry.content}`).join("\n");
         page = `[LAST THREE DIARY ENTRIES]\n${dated || "(none)"}\n\nWrite your entry in [DIARY] ... [/DIARY]. Private; it does not go in your packet.`;
       } else if (door === "BOOKS") {
-        const story = await storage.getStory();
-        const state = await storage.getState();
-        const title = story.story.title?.trim() || (story.story.storyPacket || state.personaStoryPacket ? "Untitled manuscript" : "");
-        page = `[AVAILABLE BOOKS]\n${title || "(No manuscript is available.)"}\n\nTo write, reply WRITE: <title>.`;
+        const books = await storage.listBooks();
+        const lines = books.map((book) => `- ${book.title} — last written ${book.lastWrittenAt ? book.lastWrittenAt.toLocaleDateString("en-US") : "never"}`);
+        page = `[AVAILABLE BOOKS]\n${lines.join("\n") || "(No books yet.)"}\n\nTo write, reply WRITE: <title>. To start a new book, reply NEW: <title>.`;
       } else if (door === "HERALD") {
         const { sweepTheWalls, claimHeraldPacket } = await import("./herald");
         await sweepTheWalls();
@@ -1154,15 +1157,16 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       } else if (door === "HERALD") {
         await this.parseHeraldDrafts(output, new Set(heraldIds));
       } else if (door === "BOOKS") {
-        const match = output.match(/^\s*WRITE:\s*(.+?)\s*$/im);
-        if (match) {
-          const story = await storage.getStory();
-          const state = await storage.getState();
-          const title = story.story.title?.trim() || (story.story.storyPacket || state.personaStoryPacket ? "Untitled manuscript" : "");
-          if (title && match[1]!.trim().toLocaleLowerCase() === title.toLocaleLowerCase()) {
-            await this.startStoryWrite();
+        const command = parseBookCommand(output);
+        if (command) {
+          const books = await storage.listBooks();
+          const book = books.find((item) => normalizeBookTitle(item.title) === normalizeBookTitle(command.title));
+          if (command.kind === "write" || book) {
+            if (book) await this.startStoryWrite(book.id);
+            else this.log(`Ignored BOOKS write for unavailable title "${command.title}"`);
           } else {
-            this.log("Ignored BOOKS door write request for an unavailable title");
+            const created = await storage.createBook(command.title, command.premise);
+            await this.startStoryWrite(created.id, command.premise ? "Write the opening chapter using the premise in this book's Story Packet." : "Write the opening chapter of this book.");
           }
         }
       }

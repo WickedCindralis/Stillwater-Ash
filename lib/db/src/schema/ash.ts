@@ -66,7 +66,20 @@ export const ashState = pgTable("ash_state", {
   tiktokUsername: text("tiktok_username").notNull().default(""),
 });
 
-// Story workspace. There is exactly one manuscript per Ash container.
+// Multi-book Story library. The legacy ash_story row is retained as a frozen
+// backup; the book with id "ash" is its first-book copy.
+export const ashBooks = pgTable("ash_books", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  storyPacket: text("story_packet").notNull().default(""),
+  rollingSummary: text("rolling_summary").notNull().default(""),
+  runStatus: text("run_status").notNull().default("idle"),
+  activeRunId: text("active_run_id").notNull().default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  lastWrittenAt: timestamp("last_written_at"),
+});
+// Frozen legacy source for the one-time library migration. Runtime Story reads
+// and writes use ash_books after the migration.
 export const ashStory = pgTable("ash_story", {
   id: text("id").primaryKey(), // always "ash"
   title: text("title").notNull().default(""),
@@ -341,6 +354,14 @@ export const insertChronicleSchema = createInsertSchema(ashChronicles).omit({
   acknowledgedAt: true,
 });
 export const insertStoryChapterSchema = createInsertSchema(ashStoryChapters).omit({ id: true, createdAt: true, updatedAt: true });
+export const createAshBookSchema = z.object({
+  title: z.string().trim().min(1).max(500),
+  storyPacket: z.string().max(48000).default(""),
+});
+export const updateAshBookSchema = z.object({
+  title: z.string().trim().min(1).max(500).optional(),
+  storyPacket: z.string().max(48000).optional(),
+});
 export const updateStorySchema = z.object({
   title: z.string().max(500).optional(),
   storyPacket: z.string().max(48000).optional(),
@@ -362,6 +383,7 @@ export type InsertDiaryEntry = z.infer<typeof insertDiaryEntrySchema>;
 export type AshChronicle = typeof ashChronicles.$inferSelect;
 export type InsertChronicle = z.infer<typeof insertChronicleSchema>;
 export type AshStory = typeof ashStory.$inferSelect;
+export type AshBook = typeof ashBooks.$inferSelect;
 export type AshStoryChapter = typeof ashStoryChapters.$inferSelect;
 export type AshStoryRun = typeof ashStoryRuns.$inferSelect;
 export type AshStoryLease = typeof ashStoryLease.$inferSelect;

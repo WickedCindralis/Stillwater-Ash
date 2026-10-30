@@ -28,53 +28,68 @@ export interface StoryResponse {
   chapters: StoryChapter[];
 }
 
-export function useStory() {
+export interface StoryBook {
+  id: string;
+  title: string;
+  createdAt: string;
+  lastWrittenAt: string | null;
+}
+
+export function useBooks() {
+  return useQuery<{ books: StoryBook[] }>({
+    queryKey: ["/api/story/books"],
+    refetchInterval: 10_000,
+  });
+}
+
+export function useStory(bookId: string | null) {
   return useQuery<StoryResponse>({
-    queryKey: ["/api/story"],
+    queryKey: [bookId ? `/api/story/books/${bookId}` : "/api/story/books/none"],
+    enabled: Boolean(bookId),
     refetchInterval: (query) => (query.state.data?.manuscript.status === "running" ? 3000 : false),
   });
 }
 
-export function useUpdateManuscript() {
+export function useUpdateManuscript(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { title?: string; storyPacket?: string; summary?: string }) => {
-      const res = await apiRequest("PATCH", "/api/story", data);
+    mutationFn: async (data: { title?: string; storyPacket?: string }) => {
+      const res = await apiRequest("PATCH", `/api/story/books/${bookId}`, data);
       return (await res.json()) as StoryManuscript;
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData<StoryResponse | undefined>(["/api/story"], (old) =>
+      queryClient.setQueryData<StoryResponse | undefined>([`/api/story/books/${bookId}`], (old) =>
         old ? { ...old, manuscript: { ...old.manuscript, ...updated } } : old
       );
     }
   });
 }
 
-export function useWriteStory() {
+export function useWriteStory(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/story/write");
+      const res = await apiRequest("POST", `/api/story/books/${bookId}/write`);
       return (await res.json()) as StoryManuscript;
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData<StoryResponse | undefined>(["/api/story"], (old) =>
+      queryClient.setQueryData<StoryResponse | undefined>([`/api/story/books/${bookId}`], (old) =>
         old ? { ...old, manuscript: { ...old.manuscript, ...updated } } : old
       );
-      queryClient.invalidateQueries({ queryKey: ["/api/story"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/story/books/${bookId}`] });
     }
   });
 }
 
-export function useUpdateChapter() {
+export function useUpdateChapter(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<StoryChapter> }) => {
-      const res = await apiRequest("PATCH", `/api/story/chapters/${id}`, data);
+      const res = await apiRequest("PATCH", `/api/story/books/${bookId}/chapters/${id}`, data);
       return (await res.json()) as StoryChapter;
     },
     onSuccess: (updated) => {
-      queryClient.setQueryData<StoryResponse | undefined>(["/api/story"], (old) => {
+      queryClient.setQueryData<StoryResponse | undefined>([`/api/story/books/${bookId}`], (old) => {
         if (!old) return old;
         return {
           ...old,
@@ -85,27 +100,27 @@ export function useUpdateChapter() {
   });
 }
 
-export function useMoveChapter() {
+export function useMoveChapter(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, direction }: { id: number; direction: "up" | "down" }) => {
-      const res = await apiRequest("POST", `/api/story/chapters/${id}/move`, { direction });
+      const res = await apiRequest("POST", `/api/story/books/${bookId}/chapters/${id}/move`, { direction });
       return (await res.json()) as StoryResponse;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/story"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/story/books/${bookId}`] });
     }
   });
 }
 
-export function useDeleteChapter() {
+export function useDeleteChapter(bookId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/story/chapters/${id}`);
+      await apiRequest("DELETE", `/api/story/books/${bookId}/chapters/${id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/story"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/story/books/${bookId}`] });
     }
   });
 }

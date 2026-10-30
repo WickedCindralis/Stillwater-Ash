@@ -35,7 +35,7 @@ export const TUNING = {
   captureChunkMessages: 60,
 
   // Being review
-  reviewBatchSize: 25,
+  reviewBatchSize: 10,
 
   // Nightly tidy-up
   nightlyHourLocal: 3,

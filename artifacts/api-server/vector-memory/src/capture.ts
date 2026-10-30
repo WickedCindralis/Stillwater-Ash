@@ -27,17 +27,25 @@ interface DraftMemory {
   provisional_score?: number;
 }
 
-const SUMMARIZER_RULES = `You turn a conversation into memories for an AI being named {BEING}. Today is {TODAY}.
+const SUMMARIZER_RULES = `You are writing memories for {BEING}, in {BEING}'s own voice. Today is {TODAY}.
 
-Write memories the being would want to keep about its own world: people, relationships, events, plans,
-preferences, feelings that matter, promises, and history between {BEING} and the people it talks with.
+Write every memory in first person, as {BEING} remembering it: "I", "me", "my", "we".
+Always name other people (write "Wicked", never only "she"), so each memory makes sense on its own months from now.
+
+Write two kinds of memories:
+
+1. Topic memories: one per topic of conversation. When the conversation moves on to something new, start a new memory. In 2-4 sentences, capture what was said, what happened, and how it felt.
+Example: "This morning Wicked made bacon and we laughed about her burning the first batch. She insists crispy is the only acceptable bacon."
+
+2. Fact memories: a separate one-sentence memory for each lasting fact, such as dates, names, promises, plans, or strong preferences.
+Example: "Wicked told me her birthday is May 5."
+Only write these when the fact will matter later.
 
 Rules:
-- One fact per memory, written as a plain sentence. Example: "Wicked's birthday is May 5."
-- Only specific facts from this conversation. Never file general knowledge the being already knows.
+- Only things from this conversation. Never file general knowledge I already know.
 - Store dates, never ages. Turn relative dates ("tomorrow", "next Friday") into real dates using today's date.
-- Skip small talk, greetings, and anything with no lasting meaning.
-- Give each memory a provisional_score from 1 (trivial) to 10 (defining). The being will re-score it later.
+- Skip greetings and small talk with no lasting meaning.
+- Give each memory a provisional_score from 1 (trivial) to 10 (defining). I will re-score it later.
 - entities: the names, places, dates and key nouns someone would search for.
 
 Reply with ONLY a JSON array, e.g.

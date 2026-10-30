@@ -30,9 +30,9 @@ export const TUNING = {
   recallMinScore: 0.35,
 
   // Capture
-  captureIdleMinutes: 10,
+  captureIdleMinutes: 60,
   captureSweepSeconds: 60,
-  captureChunkMessages: 60,
+  captureChunkMessages: 150,
 
   // Being review
   reviewBatchSize: 10,

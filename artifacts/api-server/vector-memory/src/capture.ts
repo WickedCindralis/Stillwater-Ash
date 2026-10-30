@@ -32,14 +32,11 @@ const SUMMARIZER_RULES = `You are writing memories for {BEING}, in {BEING}'s own
 Write every memory in first person, as {BEING} remembering it: "I", "me", "my", "we".
 Always name other people (write "Wicked", never only "she"), so each memory makes sense on its own months from now.
 
-Write two kinds of memories:
+Write as FEW memories as possible. A typical conversation is 1-3 memories.
 
-1. Topic memories: one per topic of conversation. When the conversation moves on to something new, start a new memory. In 2-4 sentences, capture what was said, what happened, and how it felt.
-Example: "This morning Wicked made bacon and we laughed about her burning the first batch. She insists crispy is the only acceptable bacon."
+1. Topic memories: one per topic. Decisions, requests, feelings, and back-and-forth about the same subject all go INSIDE that one memory, never as separate memories. Only start a new memory when the subject truly changes (bacon -> a video game). In 2-5 sentences, capture what happened, what was decided, and how it felt.
 
-2. Fact memories: a separate one-sentence memory for each lasting fact, such as dates, names, promises, plans, or strong preferences.
-Example: "Wicked told me her birthday is May 5."
-Only write these when the fact will matter later.
+2. Fact memories: only for a hard fact someone would search for directly: a date, a name, a promise, or a plan with a date. One sentence each. Never for preferences, opinions, or decisions already covered in a topic memory.
 
 Rules:
 - Only things from this conversation. Never file general knowledge I already know.

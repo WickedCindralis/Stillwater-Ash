@@ -192,6 +192,28 @@ export const hideMemory = (id: string, note = 'hidden') =>
 export const restoreMemory = (id: string) =>
   simpleUpdate(id, 'wicked', 'restored', `status = 'active'`, []);
 
+/** Permanently delete a memory and its dependent records, leaving a content-free audit row. */
+export async function deleteMemory(id: string): Promise<void> {
+  await withTransaction(async (c) => {
+    const row = await lockRow(c, id);
+    await c.query('DELETE FROM memory_revisions WHERE memory_id = $1', [id]);
+    await c.query('DELETE FROM memory_conflicts WHERE memory_a = $1 OR memory_b = $1', [id]);
+
+    const reviewMemoryColumn = await c.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'review_log' AND column_name = 'memory_id'
+       ) AS exists`,
+    );
+    if (reviewMemoryColumn.rows[0]?.exists) {
+      await c.query('DELETE FROM review_log WHERE memory_id = $1', [id]);
+    }
+
+    await c.query('DELETE FROM memories WHERE id = $1', [id]);
+    await c.query('INSERT INTO memory_deletions (memory_id, being_id) VALUES ($1, $2)', [id, row.being_id]);
+  });
+}
+
 // ---- Being's controls (always scoped to its own memories) ----
 export const beingScoreMemory = (beingId: string, id: string, score: number) =>
   simpleUpdate(id, beingId, `being scored ${clampScore(score)}`, 'being_score = $2, being_scored = true', [clampScore(score)], beingId);

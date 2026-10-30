@@ -1,7 +1,7 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { getConfig } from './config.js';
 import {
-  addMemory, editMemory, rateMemory, pinMemory, unpinMemory, declinePinRequest, hideMemory, restoreMemory,
+  addMemory, editMemory, rateMemory, pinMemory, unpinMemory, declinePinRequest, hideMemory, restoreMemory, deleteMemory,
   acceptProposedWording, declineProposedWording, listMemories, getRevisions, type MemoryFilter,
 } from './memories.js';
 import { searchMemories } from './search.js';
@@ -72,6 +72,10 @@ export function memoryRouter() {
   r.post('/memories/:id/decline-pin', wrap(async (req, res) => res.json(await declinePinRequest(req.params.id))));
   r.post('/memories/:id/hide', wrap(async (req, res) => res.json(await hideMemory(req.params.id))));
   r.post('/memories/:id/restore', wrap(async (req, res) => res.json(await restoreMemory(req.params.id))));
+  r.delete('/memories/:id', wrap(async (req, res) => {
+    await deleteMemory(req.params.id);
+    res.json({ ok: true });
+  }));
   r.post('/memories/:id/accept-wording', wrap(async (req, res) => res.json(await acceptProposedWording(req.params.id))));
   r.post('/memories/:id/decline-wording', wrap(async (req, res) => {
     await declineProposedWording(req.params.id);

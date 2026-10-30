@@ -12,8 +12,10 @@ async function main() {
     throw new Error(`[memory] WRONG DATABASE: "${host}" is not "${cfg.expectedDbHost}". Migration stopped.`);
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const sql = await readFile(path.join(here, '..', 'sql', '001_schema.sql'), 'utf8');
-  await getPool().query(sql);
+  for (const file of ['001_schema.sql', '002_deletions.sql']) {
+    const sql = await readFile(path.join(here, '..', 'sql', file), 'utf8');
+    await getPool().query(sql);
+  }
   console.log('[memory] Schema is in place.');
   await verifyHouse();
   await getPool().end();

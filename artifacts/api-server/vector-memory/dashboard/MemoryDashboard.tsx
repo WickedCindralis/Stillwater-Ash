@@ -150,6 +150,15 @@ export default function MemoryDashboard({ apiBase = '/api/memory', adminToken }:
     await Promise.all([loadHealth(), tab === 'queue' ? loadQueue() : loadMemories()]);
   });
 
+  const permanentlyDelete = (m: Memory) => run(async () => {
+    if (!window.confirm('Delete this memory permanently? This cannot be undone.')) return;
+    await api(`/memories/${m.id}`, 'DELETE');
+    setMemories((items) => items.filter((item) => item.id !== m.id));
+    setPinReqs((items) => items.filter((item) => item.id !== m.id));
+    setWording((items) => items.filter((item) => item.id !== m.id));
+    await loadHealth();
+  });
+
   if (!token) {
     return (
       <div className="vm-root"><style>{CSS}</style>
@@ -202,6 +211,7 @@ export default function MemoryDashboard({ apiBase = '/api/memory', adminToken }:
                 <button className="vm-btn" onClick={() => act(`/memories/${m.id}/hide`)}>Hide</button>
               </>}
         </>)}
+        <button className="vm-btn" data-testid={`button-delete-memory-${m.id}`} onClick={() => permanentlyDelete(m)}>Delete</button>
       </div>
       <div className="vm-meta">
         <span className="vm-strength" title={`Importance ${m.score.importance.toFixed(1)}`}>

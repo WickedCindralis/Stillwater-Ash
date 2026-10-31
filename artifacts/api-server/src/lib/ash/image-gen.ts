@@ -42,26 +42,23 @@ export async function generateImageDataUrl(prompt: string): Promise<string | nul
   const client = getClient();
   if (!client || !prompt) return null;
 
-  const attempts: Array<{ model: string; useResponseFormat: boolean }> = [
-    { model: "gpt-image-1", useResponseFormat: false },
-    { model: "dall-e-3", useResponseFormat: true },
-  ];
-
-  for (const { model, useResponseFormat } of attempts) {
-    try {
-      const params: any = { model, prompt, size: "1024x1024", n: 1 };
-      if (useResponseFormat) params.response_format = "b64_json";
-      const res = await client.images.generate(params);
-      const b64 = res.data?.[0]?.b64_json;
-      if (b64) {
-        logger.info(`[image-gen] Generated image via ${model} (${Math.round(b64.length / 1024)}KB)`);
-        return `data:image/png;base64,${b64}`;
-      }
-    } catch (e) {
-      logger.error(`[image-gen] ${model} generation failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  const model = process.env.IMAGE_MODEL?.trim() || "gpt-image-2";
+  try {
+    const res = await client.images.generate({
+      model,
+      prompt,
+      size: "1024x1024",
+      n: 1,
+      output_format: "png",
+    });
+    const b64 = res.data?.[0]?.b64_json;
+    if (!b64) throw new Error("Images API response did not contain base64 image data");
+    logger.info(`[image-gen] Generated image via ${model} (${Math.round(b64.length / 1024)}KB)`);
+    return `data:image/png;base64,${b64}`;
+  } catch (e) {
+    logger.error(`[image-gen] ${model} generation failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
   }
-  return null;
 }
 
 // Strip the hidden IMAGE: line and (only when picture mode was on) draw the

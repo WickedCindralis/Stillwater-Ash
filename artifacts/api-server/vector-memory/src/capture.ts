@@ -84,6 +84,10 @@ export async function runCaptureSweep(): Promise<{ beingId: string; created: num
 
 /** Captures everything queued for one being right now, idle or not. */
 export async function captureBeing(beingId: string): Promise<number> {
+  const processName = process.env['REPLIT_DEPLOYMENT'] === '1' || process.env['NODE_ENV'] === 'production'
+    ? 'production'
+    : 'dev';
+  console.log(`[memory] Capture run started; model=${getConfig().summarizerModel}; process=${processName}; being=${beingId}`);
   let created = 0;
   for (;;) {
     const batch = await query<{ id: string; role: string; content: string; source: string }>(

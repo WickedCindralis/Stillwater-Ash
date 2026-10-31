@@ -1389,8 +1389,6 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
           freshCapture = await waitForFreshScreenCapture();
           if (freshCapture && isFreshScreenCaptureCurrent(freshCapture)) {
             screenshotDataUrl = freshCapture.imageDataUrl;
-          } else {
-            prompt += "\n\n[DESKTOP SCREENSHOT] No fresh desktop screenshot was available for this window. Do not infer or invent one.";
           }
         }
 

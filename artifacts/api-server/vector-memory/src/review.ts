@@ -61,7 +61,7 @@ export async function runBeingReview(beingId: string, askBeing: AskBeing, batchS
   if (!pending.rows.length) {
     await query('INSERT INTO review_log (being_id, scored_count, pending_after) VALUES ($1, 0, 0)', [beingId]);
     console.log(`[memory] Review complete for ${beingId}: explicit scores=0; silence accepted=0.`);
-    return { scored: 0, pinRequests: 0, wordingProposals: 0, pendingAfter: 0 };
+    return { shown: 0, scored: 0, silenceAccepted: 0, pinRequests: 0, wordingProposals: 0, pendingAfter: 0 };
   }
 
   const reply = await askBeing(buildReviewPrompt(pending.rows));
@@ -102,5 +102,5 @@ export async function runBeingReview(beingId: string, askBeing: AskBeing, batchS
     pendingAfter,
   ]);
   console.log(`[memory] Review complete for ${beingId}: explicit scores=${scored}; silence accepted=${silenceAccepted}.`);
-  return { scored, silenceAccepted, pinRequests, wordingProposals, pendingAfter };
+  return { shown: pending.rows.length, scored, silenceAccepted, pinRequests, wordingProposals, pendingAfter };
 }

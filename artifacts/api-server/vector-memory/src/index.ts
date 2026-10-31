@@ -1,7 +1,7 @@
 // Weighted Vector Memory — the only file the house app needs to import.
 import { verifyHouse } from './db.js';
 import { getConfig } from './config.js';
-import { startCaptureLoop, stopCaptureLoop } from './capture.js';
+import { setCaptureActivityLogger, startCaptureLoop, stopCaptureLoop } from './capture.js';
 import { startNightlyScheduler, stopNightlyScheduler } from './nightly.js';
 
 export { recordMessage, captureBeing } from './capture.js';
@@ -16,8 +16,12 @@ export { runNightly } from './nightly.js';
  * Call once when the server starts, BEFORE anything else uses memory.
  * Refuses to start (throws) if connected to the wrong database or house.
  */
-export async function initMemory(opts: { startBackgroundJobs?: boolean } = {}) {
+export async function initMemory(opts: {
+  startBackgroundJobs?: boolean;
+  onCaptureEvent?: (kind: string, message: string) => Promise<void>;
+} = {}) {
   await verifyHouse();
+  if (opts.onCaptureEvent) setCaptureActivityLogger(opts.onCaptureEvent);
   if (opts.startBackgroundJobs !== false) {
     if (getConfig().captureEnabled) {
       startCaptureLoop();

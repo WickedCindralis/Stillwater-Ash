@@ -57,6 +57,11 @@ async function summarize(beingId: string, transcript: string): Promise<DraftMemo
 }
 
 let sweeping = false;
+let captureActivityLogger: (kind: string, message: string) => Promise<void> = async () => {};
+
+export function setCaptureActivityLogger(logger: (kind: string, message: string) => Promise<void>): void {
+  captureActivityLogger = logger;
+}
 
 /** Captures every being whose conversation has been quiet for captureIdleMinutes. */
 export async function runCaptureSweep(): Promise<{ beingId: string; created: number }[]> {
@@ -87,10 +92,18 @@ export async function captureBeing(beingId: string): Promise<number> {
   const processName = process.env['REPLIT_DEPLOYMENT'] === '1' || process.env['NODE_ENV'] === 'production'
     ? 'production'
     : 'dev';
-  console.log(`[memory] Capture run started; model=${getConfig().summarizerModel}; process=${processName}; being=${beingId}`);
+  const runStartedAt = Date.now();
+  const logFailure = (error: unknown) => captureActivityLogger(
+    'memory_capture_failure',
+    `Capture failed; messages read=${messagesRead}, memories created=${created}; process=${processName}; pid=${process.pid}; startedAt=${new Date(runStartedAt).toISOString()}; durationMs=${Date.now() - runStartedAt}; error=${error instanceof Error ? error.message : String(error)}`,
+  ).catch(() => {});
+  console.log(`[memory] Capture run started; model=${getConfig().summarizerModel}; process=${processName}; pid=${process.pid}; being=${beingId}`);
   let created = 0;
+  let messagesRead = 0;
   for (;;) {
-    const batch = await withTransaction(async (client) => {
+    let batch: { id: string; role: string; content: string; source: string }[];
+    try {
+      batch = await withTransaction(async (client) => {
       const selected = await client.query<{ id: string; role: string; content: string; source: string }>(
         `SELECT id, role, content, source FROM capture_buffer
          WHERE being_id = $1 AND captured = false
@@ -105,8 +118,13 @@ export async function captureBeing(beingId: string): Promise<number> {
         );
       }
       return selected.rows;
-    });
+      });
+    } catch (error) {
+      await logFailure(error);
+      throw error;
+    }
     if (!batch.length) break;
+    messagesRead += batch.length;
 
     const transcript = batch
       .map((m) => `${m.role === 'being' ? beingId : m.role === 'wicked' ? 'Wicked' : m.role}: ${m.content}`)
@@ -130,9 +148,14 @@ export async function captureBeing(beingId: string): Promise<number> {
     } catch (error) {
       await query('UPDATE capture_buffer SET captured = false WHERE id = ANY($1::bigint[])', [ids])
         .catch((releaseError) => console.error('[memory] Failed to release claimed capture batch', releaseError));
+      await logFailure(error);
       throw error;
     }
   }
+  await captureActivityLogger(
+    'memory_capture',
+    `Messages read=${messagesRead}; memories created=${created}; process=${processName}; pid=${process.pid}; startedAt=${new Date(runStartedAt).toISOString()}; durationMs=${Date.now() - runStartedAt}`,
+  ).catch(() => {});
   if (created) console.log(`[memory] Captured ${created} new memories for ${beingId}.`);
   return created;
 }

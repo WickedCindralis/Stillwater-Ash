@@ -54,12 +54,12 @@ export async function getPendingAshMemoryCount(): Promise<number> {
   }
 }
 
-export async function runAshMemoryReview(askBeing: (prompt: string) => Promise<string>): Promise<void> {
+export async function runAshMemoryReview(askBeing: (prompt: string) => Promise<string>): Promise<any> {
   if (!ready) throw new Error("Vector Memory is not ready");
   if (manualReviewRunning) return;
   manualReviewRunning = true;
   try {
-    await (await import("./vector-memory-runtime.mjs")).runBeingReview("ash", askBeing, 10);
+    return await (await import("./vector-memory-runtime.mjs")).runBeingReview("ash", askBeing, 10);
   } finally {
     manualReviewRunning = false;
   }

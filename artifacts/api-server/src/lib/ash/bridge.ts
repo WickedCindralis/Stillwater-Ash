@@ -206,6 +206,7 @@ export class AshBridge {
         return { runId: run.id, status: "paused", output };
       }
       await storage.completeStoryRun(bookId, lease, leaseGeneration, run.id, draftChapter.id, output);
+      await storage.logActivity("door_books", `Chapter written: ${started.book.title}`).catch(() => {});
       try {
         const summaryResponse = await this.openai.chat.completions.create({
           model, messages: [{ role: "developer", content: "Summarize the supplied fictional manuscript context in a bounded continuity summary. Return only the summary, no commentary." }, { role: "user", content: `[EXISTING SUMMARY]\n${started.book.rollingSummary}\n\n[NEW CHAPTER]\n${output}` }],
@@ -771,6 +772,7 @@ RULES FOR YOUR REPLY:
         try {
           await enqueueSong(songCommand.prompt, source, songOriginId || providerResponseId, songCommand.title, songCommand.lyrics);
           songQueued = true;
+          await storage.logActivity("song_queued", `SONG queued (${source})`).catch(() => {});
         } catch (error) {
           this.error(`Could not queue song [source=${source}, providerResponseId=${providerResponseId}]:`, error);
           await storage.logActivity("song_failed", "Song request could not be queued").catch(() => {});
@@ -849,12 +851,14 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
       const mapped = STATUS_ALIASES[raw] ?? STATUS_ALIASES[raw.replace(/_/g, " ")];
       if (mapped) {
         try {
+          const oldStatus = (await storage.getState()).status || "unknown";
           await storage.updateState({ status: mapped });
           this.statusEnteredAt = Date.now();
           this.log(`Status changed by Ash → ${mapped}`);
-          await storage.logActivity("status", `Self-updated status to ${mapped} (via chat)`).catch(() => {});
+          await storage.logActivity("status_change", `${oldStatus} -> ${mapped}`).catch(() => {});
         } catch (e) {
           this.error("Failed to persist status change:", e);
+          await storage.logActivity("door_failure", `STATUS change failed; error=${e instanceof Error ? e.message : String(e)}`).catch(() => {});
         }
       }
       cleaned = cleaned.replace(match[0], "");
@@ -910,9 +914,10 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
       try {
         await storage.createDiaryEntry({ content: entry });
         this.log(`Diary entry saved (${entry.length} chars)`);
-        await storage.logActivity("diary_entry", "Ash wrote in his diary").catch(() => {});
+        await storage.logActivity("door_diary", "DIARY saved").catch(() => {});
       } catch (e) {
         this.error("Failed to save diary entry:", e);
+        await storage.logActivity("door_failure", `DIARY save failed; error=${e instanceof Error ? e.message : String(e)}`).catch(() => {});
       }
     }
     cleaned = kept.join("\n");
@@ -999,7 +1004,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
         const result = await storage.appendAshNote(entry, ASH_NOTES_MAX_WORDS);
         if (result.saved) {
           this.log(`Ash appended a Note (${result.wordCount}/${ASH_NOTES_MAX_WORDS} words used)`);
-          await storage.logActivity("persona", "Ash added a dated entry to his Notes").catch(() => {});
+          await storage.logActivity("door_notes", "NOTES added").catch(() => {});
         } else {
           this.log(`Ash's Notes are full (${result.wordCount}/${ASH_NOTES_MAX_WORDS} words); entry not saved`);
           await storage.logActivity("persona", "Ash's Notes are full; his new entry was not saved").catch(() => {});
@@ -1007,6 +1012,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
       }
     } catch (e) {
       this.error("Failed to save Ash's Notes:", e);
+      await storage.logActivity("door_failure", `NOTES save failed; error=${e instanceof Error ? e.message : String(e)}`).catch(() => {});
     }
     return (reply.substring(0, m.index!) + reply.substring(m.index! + m[0].length))
       .replace(/\n{3,}/g, "\n\n").trim();
@@ -1095,13 +1101,18 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     }
   }
 
-  private async runDoor(door: AshDoor): Promise<void> {
+  private async runDoor(door: AshDoor, trigger: "message" | "proactive" = "message"): Promise<void> {
     let heraldIds: number[] = [];
     let providerCompleted = false;
     try {
+      if (trigger === "message") {
+        await storage.logActivity("door_opened", `${door} opened from a message`).catch(() => {});
+      }
       let page = "";
       if (door === "REVIEWS") {
-        await runAshMemoryReview((reviewPrompt) => this.callDoorModel(door, reviewPrompt));
+        const result = await runAshMemoryReview((reviewPrompt) => this.callDoorModel(door, reviewPrompt));
+        if (!result) return;
+        await storage.logActivity("memory_review", `Shown=${result.shown}; changed=${result.scored}; accepted as-is=${result.silenceAccepted}; pin requests=${result.pinRequests}; wording changes=${result.wordingProposals}; triggered by ${trigger}`).catch(() => {});
         return;
       }
       if (door === "STATUS") {
@@ -1147,8 +1158,10 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         const command = stripSongCommand(output);
         if (command.prompt && !command.error) {
           await enqueueSong(command.prompt, "door:SONG", randomUUID(), command.title, command.lyrics);
+          await storage.logActivity("song_queued", "SONG queued").catch(() => {});
         } else if (command.error) {
           this.error(`Song door command rejected: ${command.error}`);
+          await storage.logActivity("door_failure", `SONG request rejected; error=${command.error}`).catch(() => {});
         }
       } else if (door === "DIARY") {
         await this.parseDiaryEntries(output);
@@ -1162,16 +1175,21 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
           const books = await storage.listBooks();
           const book = books.find((item) => normalizeBookTitle(item.title) === normalizeBookTitle(command.title));
           if (command.kind === "write" || book) {
-            if (book) await this.startStoryWrite(book.id);
+            if (book) {
+              await storage.logActivity("door_books", `BOOKS: ${book.title}; writing started`).catch(() => {});
+              await this.startStoryWrite(book.id);
+            }
             else this.log(`Ignored BOOKS write for unavailable title "${command.title}"`);
           } else {
             const created = await storage.createBook(command.title, command.premise);
+            await storage.logActivity("door_books", `NEW book started: ${created.title}`).catch(() => {});
             await this.startStoryWrite(created.id, command.premise ? "Write the opening chapter using the premise in this book's Story Packet." : "Write the opening chapter of this book.");
           }
         }
       }
     } catch (error) {
       this.error(`Ash door failed [door=${door}]:`, error);
+      await storage.logActivity("door_failure", `${door} failed; error=${error instanceof Error ? error.message : String(error)}`).catch(() => {});
       if (!providerCompleted && heraldIds.length > 0) {
         const { releaseHeraldClaim } = await import("./herald").catch(() => ({ releaseHeraldClaim: async () => {} }));
         await releaseHeraldClaim(heraldIds).catch((releaseError) => this.error("Could not release failed Herald door claim:", releaseError));
@@ -1179,11 +1197,14 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     }
   }
 
-  private launchDoors(doors: readonly AshDoor[]): void {
+  private launchDoors(doors: readonly AshDoor[], trigger: "message" | "proactive" = "message"): void {
     launchDoorFollowUps(
       doors,
-      (door) => this.runDoor(door),
-      (door, error) => this.error(`Unhandled door failure [door=${door}]:`, error),
+      (door) => this.runDoor(door, trigger),
+      async (door, error) => {
+        this.error(`Unhandled door failure [door=${door}]:`, error);
+        await storage.logActivity("door_failure", `${door} failed; error=${error instanceof Error ? error.message : String(error)}`).catch(() => {});
+      },
     );
   }
 
@@ -1380,6 +1401,9 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
 
       if (this.processingLock) continue;
       this.processingLock = true;
+      const proactiveStartedAt = Date.now();
+      const processName = process.env["REPLIT_DEPLOYMENT"] === "1" || process.env["NODE_ENV"] === "production" ? "production" : "dev";
+      const proactiveActivityContext = () => `process=${processName}; pid=${process.pid}; startedAt=${new Date(proactiveStartedAt).toISOString()}; durationMs=${Date.now() - proactiveStartedAt}`;
       try {
         let prompt = `${this.buildStaticSelfPrompt()}\n\n${await this.buildDoorMenu()}`;
         const state = await storage.getState().catch(() => null);
@@ -1406,9 +1430,16 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
           freshCapture,
         );
         this.log(`Proactive window: OpenAI response received [chars=${response.length}]`);
-        if (!response) continue;
+        if (!response) {
+          await storage.logActivity(
+            "proactive_window",
+            `${new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })} - NONE; ${proactiveActivityContext()}`,
+          ).catch(() => {});
+          continue;
+        }
         const { doors, text } = extractOpenDoors(response);
-        this.launchDoors(doors);
+        await storage.logActivity("proactive_window", `${new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })} - ${doors.length ? doors.join(", ") : "NONE"}; process=${processName}; pid=${process.pid}; startedAt=${new Date(proactiveStartedAt).toISOString()}; durationMs=${Date.now() - proactiveStartedAt}`).catch(() => {});
+        this.launchDoors(doors, "proactive");
         const trimmed = text.trim();
         if (trimmed.toUpperCase() === "NONE" || trimmed.length === 0) {
           this.log("Self-prompt: nothing to record this window");
@@ -1417,6 +1448,7 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
         }
       } catch (e) {
         this.error("Self-prompt loop error:", e);
+        await storage.logActivity("proactive_failure", `Proactive window failed; error=${e instanceof Error ? e.message : String(e)}; process=${processName}; pid=${process.pid}; startedAt=${new Date(proactiveStartedAt).toISOString()}; durationMs=${Date.now() - proactiveStartedAt}`).catch(() => {});
       } finally {
         this.processingLock = false;
       }

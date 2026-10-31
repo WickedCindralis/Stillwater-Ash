@@ -24,7 +24,7 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 try {
-  await initMemory();
+  await initMemory({ onCaptureEvent: (kind, message) => storage.logActivity(kind, message) });
   setVectorMemoryReady(true);
   logger.info("Vector Memory initialized");
 } catch (err) {

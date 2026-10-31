@@ -1,7 +1,10 @@
 import type { IRouter } from "express";
 
 export function getConfig(): { adminToken: string };
-export function initMemory(): Promise<void>;
+export function initMemory(opts?: {
+  startBackgroundJobs?: boolean;
+  onCaptureEvent?: (kind: string, message: string) => Promise<void>;
+}): Promise<void>;
 export function isRecallEnabled(beingId: string): Promise<boolean>;
 export function memoryRouter(): IRouter;
 export function pendingCount(beingId: string): Promise<number>;

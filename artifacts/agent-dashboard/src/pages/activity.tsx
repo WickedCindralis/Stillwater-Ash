@@ -13,7 +13,30 @@ const KIND_LABELS: Record<string, string> = {
   screen_capture: "Screenshot",
   song_generated: "Song",
   song_failed: "Song failed",
+  proactive_window: "Proactive",
+  proactive_failure: "Proactive failed",
+  door_opened: "Door opened",
+  door_diary: "Diary saved",
+  memory_review: "Reviews",
+  memory_capture: "Memory capture",
+  memory_capture_failure: "Capture failed",
+  door_failure: "Door failed",
+  door_song: "Song queued",
+  song_queued: "Song queued",
+  door_notes: "Notes added",
+  door_books: "Books",
+  status_change: "Status changed",
 };
+const FILTERS = ["All", "Proactive", "Doors", "Reviews", "Memory capture"] as const;
+type ActivityFilter = (typeof FILTERS)[number];
+
+function matchesFilter(event: AshActivity, filter: ActivityFilter): boolean {
+  if (filter === "All") return true;
+  if (filter === "Proactive") return event.kind === "proactive_window" || event.kind === "proactive_failure";
+  if (filter === "Reviews") return event.kind === "memory_review";
+  if (filter === "Memory capture") return event.kind.startsWith("memory_capture");
+  return event.kind.startsWith("door_") || ["diary_entry", "status_change", "song_queued"].includes(event.kind);
+}
 
 function SongActivityMessage({ message }: { message: string }) {
   const [title, link] = message.split("\n", 2);
@@ -49,10 +72,25 @@ function formatEst(iso: string): string {
 
 export default function ActivityPage() {
   const [selectedScreenshot, setSelectedScreenshot] = useState<number | null>(null);
+  const [filter, setFilter] = useState<ActivityFilter>("All");
   const { data: events = [], isLoading } = useQuery<AshActivity[]>({
     queryKey: ["/api/activity"],
     refetchInterval: 30_000,
   });
+  const filteredEvents = events.filter((event) => matchesFilter(event, filter));
+  const productionRuns: { pid: string; start: number; end: number }[] = [];
+  for (const event of events) {
+    const match = event.message.match(/process=production;\s*pid=(\d+);\s*startedAt=([^;]+);\s*durationMs=(\d+)/);
+    if (!match) continue;
+    const start = Date.parse(match[2]);
+    const end = start + Number(match[3]);
+    if (Number.isFinite(start) && Number.isFinite(end)) productionRuns.push({ pid: match[1], start, end });
+  }
+  const multipleInstances = productionRuns.some((run, index) =>
+    productionRuns.slice(index + 1).some((other) =>
+      run.pid !== other.pid && run.start <= other.end && other.start <= run.end,
+    ),
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-gradient-to-b from-black via-[#0d0a06] to-black">
@@ -68,17 +106,31 @@ export default function ActivityPage() {
           </Link>
           <h1 className="font-serif text-2xl text-white font-bold" data-testid="text-activity-title">All Activity</h1>
         </div>
+        <div className="mb-5 ml-12 flex flex-wrap gap-2" role="group" aria-label="Filter activity">
+          {FILTERS.map((item) => (
+            <button key={item} type="button" onClick={() => setFilter(item)}
+              aria-pressed={filter === item}
+              className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${filter === item ? "border-gold/50 bg-gold/10 text-gold" : "border-white/10 text-white/45 hover:text-white/75"}`}>
+              {item}
+            </button>
+          ))}
+        </div>
+        {multipleInstances && (
+          <p role="alert" className="mb-4 ml-12 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            Multiple instances running
+          </p>
+        )}
         <p className="text-white/40 text-sm mb-6 ml-12" data-testid="text-activity-count">
-          {events.length} events across the kingdom
+          {filteredEvents.length} events across the kingdom
         </p>
 
         {isLoading && <p className="text-white/30 text-sm ml-12">Loading...</p>}
-        {!isLoading && events.length === 0 && (
+        {!isLoading && filteredEvents.length === 0 && (
           <p className="text-white/30 text-sm italic font-serif ml-12">Nothing yet. The kingdom is quiet.</p>
         )}
 
         <div className="divide-y divide-white/10">
-          {events.map((e) => (
+          {filteredEvents.map((e) => (
             <div key={e.id} className="py-4 flex items-start gap-3" data-testid={`activity-${e.id}`}>
               <div className="w-10 h-10 rounded-full bg-ember/80 text-black font-bold text-sm flex items-center justify-center shrink-0">
                 AC

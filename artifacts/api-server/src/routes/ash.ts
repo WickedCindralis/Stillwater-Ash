@@ -467,7 +467,7 @@ router.post("/hangout/companion/send", async (req, res): Promise<void> => {
     logHangoutHttp(req, "success", correlationId, startedAt, { messageId: result.wickedMessage.id, ashMessageId: result.ashMessage.id });
     res.json({
       wickedMessage: lightweightMessage({ ...result.wickedMessage, imageUrl: "" }),
-      ashMessage: lightweightMessage({ ...result.ashMessage, imageUrl: "", screenshotActivityId: result.screenshotActivityId }),
+      ashMessage: lightweightMessage({ ...result.ashMessage, screenshotActivityId: result.screenshotActivityId }),
     });
   } catch (error) {
     logHangoutHttp(req, "failure", correlationId, startedAt, { statusCode: hangoutErrorStatus(error) });

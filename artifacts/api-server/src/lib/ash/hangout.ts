@@ -92,14 +92,13 @@ async function captureAndReply(sessionId: string, generation: number, lease: str
   if (!isFreshScreenCaptureCurrent(capture) || !(await storage.fenceHangout(sessionId, generation, lease))) {
     throw new Error("Hangout was invalidated before the screenshot could be delivered");
   }
-  await storage.createMessage({ role: "wicked", content: "", imageUrl: capture.imageDataUrl, source: "private_message" });
   const processed = await ashBridge.processHangoutReply(answer);
   if (!isFreshScreenCaptureCurrent(capture) || !(await storage.fenceHangout(sessionId, generation, lease))) {
     throw new Error("Hangout was invalidated before the screenshot could be delivered");
   }
   if (!processed.trim()) throw new Error("Ash did not return a reply for the screenshot-backed exchange");
   const { message: ashMessage } = await storage.createFencedHangoutReply(
-    sessionId, generation, lease, capture.activityId, correlationId, processed.trim(),
+    sessionId, generation, lease, capture.activityId, correlationId, processed.trim(), capture.imageDataUrl,
   );
   await recordAshMemoryMessage("being", processed.trim(), "chat");
   await storage.touchHangoutActivity(sessionId, generation, new Date());

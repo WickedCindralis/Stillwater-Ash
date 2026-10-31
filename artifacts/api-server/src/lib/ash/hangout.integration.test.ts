@@ -172,6 +172,8 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
     await t.test("web and companion messages share canonical history and screenshot mappings", async () => {
       const pairing = await prepareActiveSession();
       installNoProvider('{"decision":"decline","reply":"Unused."}', "A screenshot-backed reply.");
+      const previousMessages = await storage.getAllMessages();
+      const previousIds = new Set(previousMessages.map((message) => message.id));
       const api = await startRouterServer(true);
       try {
         const webResponsePromise = fetch(`${api.base}/messages`, {
@@ -208,6 +210,17 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
         assert.ok(ids.has(companionMessage.ashMessage.id));
         assert.ok(synced.messages.find((message) => message.id === webMessage.ashMessage.id)?.screenshotActivityId);
         assert.ok(synced.messages.find((message) => message.id === companionMessage.ashMessage.id)?.screenshotActivityId);
+        const webReply = await storage.getMessageById(webMessage.ashMessage.id);
+        const companionReply = await storage.getMessageById(companionMessage.ashMessage.id);
+        assert.ok(webReply?.imageUrl.startsWith("/objects/"), "the screenshot is stored on Ash's web reply");
+        assert.ok(companionReply?.imageUrl.startsWith("/objects/"), "the screenshot is stored on Ash's companion reply");
+        const newImageOnlyMessages = (await storage.getAllMessages()).filter((message) =>
+          !previousIds.has(message.id) && message.role === "wicked" && !message.content && message.imageUrl,
+        );
+        assert.deepEqual(newImageOnlyMessages, [], "Hangout screenshots must not create separate image-only messages");
+        const savedScreenshotEvents = (await storage.getActivity(100))
+          .filter((event) => event.kind === "screenshot" && event.id > firstTestActivityId);
+        assert.ok(savedScreenshotEvents.length >= 2, "each screenshot saved with a reply must create an Activity entry");
         const firstActivityId = synced.messages.find((message) => message.id === webMessage.ashMessage.id)?.screenshotActivityId;
         assert.ok(firstActivityId);
         const screenshotUrl = (id: number) => `${api.base}/hangout/companion/screenshot/${id}`;
@@ -228,6 +241,29 @@ test("Hangout DB integration: session lifecycle, shared messages, fencing, and a
         await api.close();
         await stopHangout();
       }
+    });
+
+    await t.test("a failed Hangout provider call saves no screenshot to message history", async () => {
+      const pairing = await prepareActiveSession();
+      const beforeMessages = await storage.getAllMessages();
+      const firstMessageId = beforeMessages.reduce((max, message) => Math.max(max, message.id), 0);
+      const beforeScreenshotEvents = (await storage.getActivity(100))
+        .filter((event) => event.kind === "screenshot").length;
+      installNoProvider('{"decision":"decline","reply":"Unused."}', "Unused.");
+      (ashBridge as any).replyToHangout = async () => {
+        throw new Error("simulated provider failure");
+      };
+      const failedSend = sendHangoutMessage("provider failure history marker").then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await fulfillNextCapture(pairing.screenToken);
+      assert.ok(await failedSend instanceof Error);
+      const afterMessages = (await storage.getAllMessages()).filter((message) => message.id > firstMessageId);
+      assert.ok(afterMessages.some((message) => message.role === "wicked" && message.content === "provider failure history marker"));
+      assert.equal(afterMessages.some((message) => message.imageUrl), false, "unanswered screenshots must not enter message history");
+      assert.equal((await storage.getActivity(100)).filter((event) => event.kind === "screenshot").length, beforeScreenshotEvents);
+      await stopHangout();
     });
 
     await t.test("initial companion sync loads recent context instead of the full archive", async () => {

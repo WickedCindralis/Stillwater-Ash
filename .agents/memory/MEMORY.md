@@ -8,6 +8,7 @@
 - [VM native-binary parity](vm-native-binary-parity.md) — a command present in the development runtime is not necessarily bundled into the published VM; declare native tools as Nix dependencies.
 - [Background chat refresh](background-chat-refresh.md) — Stillwater must refresh messages on tab focus/reconnect and continue polling while backgrounded; history paging is not retention.
 - [Ephemeral capture generations](ephemeral-capture-generations.md) — OFF/revoke must invalidate pending and delivered images through the final provider boundary, including OFF→ON races.
+- [Hangout image history](hangout-image-history.md) — attach a Hangout screenshot to Ash’s successful reply; never add unanswered captures or rewrite existing image-only entries.
 - [External DB publish schema](external-db-publish-schema.md) — stale managed-dev schema can block publishing even when runtime intentionally uses an external DATABASE_URL.
 - [Published Ash state](published-ash-state.md) — verify and repair live mutable settings through the authenticated production API; development database writes may not reach production.
 - [Discord continuity boundary](discord-continuity-handoff.md) — preserve private Stillwater continuity beside authorized same-channel Discord timelines; keep public non-disclosure and OFF delivery separate.

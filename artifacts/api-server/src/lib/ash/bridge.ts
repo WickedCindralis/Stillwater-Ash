@@ -1262,7 +1262,10 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
           rawReply = initialScreenCommand.text;
         } finally {
           if (isFreshScreenCaptureCurrent(freshCapture)) {
-            await storage.createMessage({ role: "wicked", content: "", imageUrl: freshCapture.imageDataUrl, source: "private_message" });
+            await storage.createMessage(
+              { role: "wicked", content: "", imageUrl: freshCapture.imageDataUrl, source: "private_message" },
+              "screenshot",
+            );
           }
         }
       } else {
@@ -1453,7 +1456,10 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
           );
         } finally {
           if (screenshotDataUrl) {
-            await storage.createMessage({ role: "wicked", content: "", imageUrl: screenshotDataUrl, source: "private_message" });
+            await storage.createMessage(
+              { role: "wicked", content: "", imageUrl: screenshotDataUrl, source: "private_message" },
+              "screenshot",
+            );
           }
         }
         this.log(`Proactive window: OpenAI response received [chars=${response.length}]`);

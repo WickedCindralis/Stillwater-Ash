@@ -350,7 +350,8 @@ export class DbStorage implements IStorage {
   }
 
   async createFencedHangoutReply(
-    sessionId: string, generation: number, leaseToken: string, activityId: number, correlationId: string, content: string,
+    sessionId: string, generation: number, leaseToken: string, activityId: number, correlationId: string,
+    content: string, imageDataUrl: string,
   ): Promise<{ message: AshMessage; companionTokenHash: string }> {
     return db.transaction(async (tx) => {
       await tx.execute(sql`SELECT id FROM ash_hangout_session WHERE id = 'ash' FOR UPDATE`);
@@ -365,12 +366,14 @@ export class DbStorage implements IStorage {
       if (!session || !state || state.apiKillSwitch === 1 || state.screenCaptureEnabled !== 1 || !state.screenCaptureTokenHash) {
         throw new Error("Hangout was invalidated before screenshot persistence");
       }
+      const imageUrl = await saveImageDataUrl(imageDataUrl);
       const [message] = await tx.insert(ashMessages).values({
-        role: "ash", content, imageUrl: "", source: "private_message",
+        role: "ash", content, imageUrl, source: "private_message",
       }).returning();
       await tx.insert(ashHangoutScreenshots).values({
         activityId, messageId: message!.id, sessionId, companionTokenHash: session.companionTokenHash, correlationId,
       });
+      await tx.insert(ashActivity).values({ kind: "screenshot", message: "Screenshot saved with Ash's reply" });
       return { message: message!, companionTokenHash: session.companionTokenHash };
     });
   }
@@ -859,12 +862,30 @@ export class DbStorage implements IStorage {
     return rows[0] ?? null;
   }
 
-  async createMessage(msg: InsertMessage): Promise<AshMessage> {
+  async createMessage(
+    msg: InsertMessage,
+    imageKind?: "upload" | "generated" | "screenshot",
+  ): Promise<AshMessage> {
+    const hasImage = Boolean(msg.imageUrl);
     const imageUrl = msg.imageUrl?.startsWith("data:")
       ? await saveImageDataUrl(msg.imageUrl)
       : msg.imageUrl;
-    const rows = await db.insert(ashMessages).values({ ...msg, imageUrl }).returning();
-    return rows[0]!;
+    const savedImageKind = hasImage ? imageKind ?? (msg.role === "ash" ? "generated" : "upload") : null;
+    return db.transaction(async (tx) => {
+      const [message] = await tx.insert(ashMessages).values({ ...msg, imageUrl }).returning();
+      if (savedImageKind) {
+        const descriptions = {
+          upload: "Image uploaded to chat history",
+          generated: "Generated image saved to chat history",
+          screenshot: "Screenshot saved to chat history",
+        };
+        await tx.insert(ashActivity).values({
+          kind: savedImageKind,
+          message: descriptions[savedImageKind],
+        });
+      }
+      return message!;
+    });
   }
 
   async updateMessageImage(id: number, imageDataUrl: string): Promise<void> {

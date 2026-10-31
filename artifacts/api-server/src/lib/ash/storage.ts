@@ -36,6 +36,7 @@ import {
   type AshDiscordChannel,
   type AshDiscordMessage,
 } from "@workspace/db";
+import { saveImageDataUrl } from "../image-storage";
 import { randomUUID } from "node:crypto";
 import { normalizeBookTitle } from "./book-command";
 import { eq, ne, desc, asc, inArray, and, like, lt, gt, gte, lte, isNull, notInArray, or, sql, count } from "drizzle-orm";
@@ -64,7 +65,6 @@ export interface IStorage {
   getAllMessages(): Promise<AshMessage[]>;
   purgeMessagesKeepLast(keep: number): Promise<number>;
   getMessageById(id: number): Promise<AshMessage | null>;
-  clearWickedPhotos(): Promise<number>;
   createMessage(msg: InsertMessage): Promise<AshMessage>;
   getRecentHistory(limit: number): Promise<AshMessage[]>;
   getRecentStillwaterHistory(perRole: number): Promise<AshMessage[]>;
@@ -860,8 +860,16 @@ export class DbStorage implements IStorage {
   }
 
   async createMessage(msg: InsertMessage): Promise<AshMessage> {
-    const rows = await db.insert(ashMessages).values(msg).returning();
+    const imageUrl = msg.imageUrl?.startsWith("data:")
+      ? await saveImageDataUrl(msg.imageUrl)
+      : msg.imageUrl;
+    const rows = await db.insert(ashMessages).values({ ...msg, imageUrl }).returning();
     return rows[0]!;
+  }
+
+  async updateMessageImage(id: number, imageDataUrl: string): Promise<void> {
+    const imageUrl = await saveImageDataUrl(imageDataUrl);
+    await db.update(ashMessages).set({ imageUrl }).where(eq(ashMessages.id, id));
   }
 
   async getRecentHistory(limit: number): Promise<AshMessage[]> {
@@ -1046,23 +1054,6 @@ export class DbStorage implements IStorage {
       ))
       .limit(1);
     return row?.imageDataUrl ?? null;
-  }
-
-  // One-time, idempotent: move any legacy proactive "reflection" chat rows into the
-  // diary (preserving their original timestamps) without deleting the originals. The
-  // source is retagged so they no longer surface in the live chat and are never
-  // re-copied on a later boot. Runs on startup, so each deployment self-heals.
-  async clearWickedPhotos(): Promise<number> {
-    // Summer Palace rule: Ash sees Wicked's photos once, then they are gone.
-    // One-time cleanup for photos stored before this rule existed.
-    const rows = await db
-      .update(ashMessages)
-      .set({ imageUrl: "" })
-      .where(
-        and(eq(ashMessages.role, "wicked"), like(ashMessages.imageUrl, "data:%")),
-      )
-      .returning({ id: ashMessages.id });
-    return rows.length;
   }
 
   async migrateReflectionsToDiary(): Promise<number> {

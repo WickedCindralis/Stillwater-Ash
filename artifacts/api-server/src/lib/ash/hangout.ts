@@ -92,6 +92,7 @@ async function captureAndReply(sessionId: string, generation: number, lease: str
   if (!isFreshScreenCaptureCurrent(capture) || !(await storage.fenceHangout(sessionId, generation, lease))) {
     throw new Error("Hangout was invalidated before the screenshot could be delivered");
   }
+  await storage.createMessage({ role: "wicked", content: "", imageUrl: capture.imageDataUrl, source: "private_message" });
   const processed = await ashBridge.processHangoutReply(answer);
   if (!isFreshScreenCaptureCurrent(capture) || !(await storage.fenceHangout(sessionId, generation, lease))) {
     throw new Error("Hangout was invalidated before the screenshot could be delivered");
@@ -235,7 +236,7 @@ export async function sendPrivateMessage(content: string, imageDataUrl?: string,
     if (imageDataUrl || requestImage) throw new Error("Hangout messages use the paired desktop screenshot automatically; image attachments and image requests are unavailable.");
     return sendHangoutMessage(content);
   }
-  const wickedMessage = await storage.createMessage({ role: "wicked", content: content.trim(), imageUrl: "", source: "private_message" });
+  const wickedMessage = await storage.createMessage({ role: "wicked", content: content.trim(), imageUrl: imageDataUrl || "", source: "private_message" });
   const { text, imageUrl } = await ashBridge.handleWickedMessage(content.trim() || "(Wicked sent you a picture — look at it and respond.)", imageDataUrl, requestImage);
   const ashMessage = text.trim() || imageUrl
     ? await storage.createMessage({ role: "ash", content: text.trim(), imageUrl, source: "private_message" })

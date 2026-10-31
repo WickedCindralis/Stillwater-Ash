@@ -10,6 +10,7 @@ import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
 import { normalizeTiktokHandle } from "../lib/ash/tiktok-handle";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
+import { readImageBytes } from "../lib/image-storage";
 import {
   authorizeHangoutCompanion,
   getHangoutScreenshot,
@@ -583,7 +584,7 @@ router.post("/screen-capture/request/:id", async (req, res): Promise<void> => {
 // message list made the chat payload tens of MB and the chat could fail to
 // load entirely. Replace them with a lightweight per-message image URL.
 function lightweightMessage<T extends { id: number; imageUrl: string }>(m: T): T {
-  if (m.imageUrl && m.imageUrl.startsWith("data:")) {
+  if (m.imageUrl) {
     return { ...m, imageUrl: `/api/messages/${m.id}/image` };
   }
   return m;
@@ -602,14 +603,27 @@ router.get("/messages", requireAuth, async (req, res): Promise<void> => {
 router.get("/messages/:id/image", requireAuth, async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   const msg = Number.isInteger(id) ? await storage.getMessageById(id) : null;
-  const match = msg?.imageUrl?.match(/^data:(image\/[\w.+-]+);base64,(.*)$/s);
-  if (!match) {
+  if (!msg?.imageUrl) {
     res.status(404).json({ error: "No image on this message" });
     return;
   }
-  const buf = Buffer.from(match[2]!, "base64");
-  res.setHeader("Content-Type", match[1]!);
+  const match = msg.imageUrl.match(/^data:(image\/[\w.+-]+);base64,(.*)$/s);
+  let buf: Buffer;
+  let contentType: string;
+  if (match) {
+    buf = Buffer.from(match[2]!, "base64");
+    contentType = match[1]!;
+  } else {
+    try {
+      ({ bytes: buf, contentType } = await readImageBytes(msg.imageUrl));
+    } catch {
+      res.status(404).json({ error: "Image file not found" });
+      return;
+    }
+  }
+  res.setHeader("Content-Type", contentType);
   res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+  res.setHeader("Content-Disposition", `inline; filename="message-${id}.${contentType.split("/")[1] || "png"}"`);
   res.send(buf);
 });
 

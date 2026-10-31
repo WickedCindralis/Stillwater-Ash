@@ -30,6 +30,7 @@ import {
 } from "./screen-capture";
 import { stripScreenCaptureCommand } from "./screen-capture-command";
 import { formatPrivateHistory } from "./history-format";
+import { readImageDataUrl } from "../image-storage";
 import { stripSongCommand } from "./song-command";
 import { enqueueSong } from "./song-service";
 import { stripKingsFingersCommand } from "./kings-fingers-command";
@@ -415,7 +416,7 @@ NOTES - add a note that stays in your packet`;
       content: volatile,
     });
 
-    // Recent private conversation with Wicked (text only — images are one-and-done).
+    // Recent private conversation, including every persisted image in the bounded history.
     // For proactive self-prompt windows, history inclusion is controlled by a UI toggle.
     let includeHistory = options.includeHistory ?? !isDiscord;
     if (source === "self_prompt" && packetState) {
@@ -428,15 +429,30 @@ NOTES - add a note that stays in your packet`;
           storage.getRecentDiscordCommentHistory(DISCORD_COMMENT_HISTORY_LIMIT),
           storage.getRecentOwnerDiscordHistory(DISCORD_WICKED_WINDOW),
         ]);
-        const relevant = history.filter((m: AshMessage) => m.content && m.content.trim().length > 0);
-        if (relevant.length > 0) {
-          // Group the bounded history by Eastern calendar date and keep a
-          // rolling sent-time window for Wicked's four newest messages.
-          const lines = formatPrivateHistory(relevant, name);
+        const packetHistory = source === "private_message" && history.at(-1)?.role === "wicked"
+          ? history.slice(0, -1)
+          : history;
+        if (packetHistory.length > 0) {
+          const historyParts: Array<Record<string, unknown>> = [];
+          for (const message of packetHistory) {
+            if (message.content.trim()) {
+              historyParts.push({
+                type: "text",
+                text: `${message.role === "wicked" ? "Wicked" : name} (${new Date(message.createdAt).toISOString()}): ${message.content}`,
+              });
+            }
+            if (message.imageUrl) {
+              try {
+                historyParts.push({ type: "image_url", image_url: { url: message.imageUrl.startsWith("data:") ? message.imageUrl : await readImageDataUrl(message.imageUrl), detail: "high" } });
+              } catch (error) {
+                this.error(`Failed to load image for history message ${message.id}:`, error);
+              }
+            }
+          }
           messages.push({
-            role: "assistant",
+            role: "user",
             name,
-            content: `[PRIVATE MESSAGES — WICKED]\nYour recent private conversation with Wicked (oldest first). Messages are grouped by Eastern date; the four newest Wicked messages include their sent time:\n${lines}`,
+            content: historyParts.length ? historyParts as any : "[PRIVATE MESSAGES — WICKED]\n(no message content)",
           });
         }
         const discordLines = formatDiscordCommentHistory(discordHistory);
@@ -700,7 +716,7 @@ RULES FOR YOUR REPLY:
 
     const startedAt = Date.now();
     try {
-      let response;
+        let response;
       this.log(`Provider boundary start [source=${source}, model=${model}, vision=${Boolean(imageDataUrl)}, correlationId=${hangout?.correlationId || "none"}, imageBytes=${imageDataUrl ? Math.floor(imageDataUrl.length * 3 / 4) : 0}]`);
       // Retry transient failures (429 rate limits, 5xx) with a growing pause.
       for (let attempt = 1; ; attempt++) {
@@ -1244,6 +1260,10 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
         } catch (error) {
           this.error("Live screenshot follow-up failed:", error);
           rawReply = initialScreenCommand.text;
+        } finally {
+          if (isFreshScreenCaptureCurrent(freshCapture)) {
+            await storage.createMessage({ role: "wicked", content: "", imageUrl: freshCapture.imageDataUrl, source: "private_message" });
+          }
         }
       } else {
         rawReply = initialScreenCommand.text ||
@@ -1423,12 +1443,19 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
           screenshotDataUrl = null;
         }
         this.log(`Proactive window: sending OpenAI API call [vision=${Boolean(screenshotDataUrl)}]`);
-        const response = await this.callOpenAI(
-          prompt,
-          "self_prompt",
-          screenshotDataUrl || undefined,
-          freshCapture,
-        );
+        let response = "";
+        try {
+          response = await this.callOpenAI(
+            prompt,
+            "self_prompt",
+            screenshotDataUrl || undefined,
+            freshCapture,
+          );
+        } finally {
+          if (screenshotDataUrl) {
+            await storage.createMessage({ role: "wicked", content: "", imageUrl: screenshotDataUrl, source: "private_message" });
+          }
+        }
         this.log(`Proactive window: OpenAI response received [chars=${response.length}]`);
         if (!response) {
           await storage.logActivity(

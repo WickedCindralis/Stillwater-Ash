@@ -119,6 +119,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export default function ChatPage() {
   const [message, setMessage] = useState("");
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{ url: string; id: number } | null>(null);
   const [imageMode, setImageMode] = useState(false);
   const [panel, setPanel] = useState<"none" | "diary" | "settings" | "chess" | "connect4">("none");
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
@@ -128,6 +129,14 @@ export default function ChatPage() {
   const [voiceIdDraft, setVoiceIdDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedImage) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedImage(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedImage]);
 
   const { data: state } = useQuery<AshState>({
     queryKey: ["/api/state"],
@@ -376,6 +385,7 @@ export default function ChatPage() {
     && !!hangout?.companionPaired && !!hangout?.connected && !killSwitchOn;
 
   return (
+    <>
     <div className="h-full flex flex-col bg-gradient-to-b from-black via-[#0d0a06] to-black">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gold/20 bg-black/60">
@@ -632,12 +642,14 @@ export default function ChatPage() {
                     <div className="text-[10px] uppercase tracking-wider text-ember/80 mb-1">Reflection</div>
                   )}
                   {m.imageUrl && (
-                    <img
-                      src={m.imageUrl}
-                      alt="shared"
-                      className="rounded-lg mb-2 max-h-80"
-                      data-testid={`img-message-${m.id}`}
-                    />
+                    <button type="button" onClick={() => setSelectedImage({ url: m.imageUrl, id: m.id })} className="block cursor-zoom-in">
+                      <img
+                        src={m.imageUrl}
+                        alt="shared image"
+                        className="rounded-lg mb-2 max-h-80"
+                        data-testid={`img-message-${m.id}`}
+                      />
+                    </button>
                   )}
                   {m.content && <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.content}</p>}
                 </div>
@@ -1245,5 +1257,27 @@ export default function ChatPage() {
         )}
       </div>
     </div>
+    {selectedImage && (
+      <div
+        className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Image preview"
+        onClick={() => setSelectedImage(null)}
+      >
+        <div className="relative max-w-full max-h-full flex flex-col items-center gap-3" onClick={(event) => event.stopPropagation()}>
+          <img src={selectedImage.url} alt="Full-size message image" className="max-w-[95vw] max-h-[82vh] object-contain" />
+          <a
+            href={selectedImage.url}
+            download={`message-${selectedImage.id}`}
+            className="inline-flex items-center gap-2 rounded-lg bg-white text-black px-4 py-2 text-sm font-semibold"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Download className="w-4 h-4" /> Download original
+          </a>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

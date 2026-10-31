@@ -60,18 +60,6 @@ app.listen(port, async (err) => {
     logger.error({ err }, "[migration] Failed to move reflections to diary");
   }
 
-  try {
-    const cleared = await storage.clearWickedPhotos();
-    if (cleared > 0) {
-      logger.info(
-        { cleared },
-        "[migration] Cleared stored Wicked photos from chat history (one-and-done rule)",
-      );
-    }
-  } catch (err) {
-    logger.error({ err }, "[migration] Failed to clear stored Wicked photos");
-  }
-
   ashBridge.start().catch((err) => {
     logger.error({ err }, "Ash bridge failed to start");
   });

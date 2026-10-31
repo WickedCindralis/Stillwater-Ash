@@ -90,34 +90,48 @@ export async function captureBeing(beingId: string): Promise<number> {
   console.log(`[memory] Capture run started; model=${getConfig().summarizerModel}; process=${processName}; being=${beingId}`);
   let created = 0;
   for (;;) {
-    const batch = await query<{ id: string; role: string; content: string; source: string }>(
-      `SELECT id, role, content, source FROM capture_buffer
-       WHERE being_id = $1 AND captured = false ORDER BY created_at LIMIT $2`,
-      [beingId, TUNING.captureChunkMessages],
-    );
-    if (!batch.rows.length) break;
+    const batch = await withTransaction(async (client) => {
+      const selected = await client.query<{ id: string; role: string; content: string; source: string }>(
+        `SELECT id, role, content, source FROM capture_buffer
+         WHERE being_id = $1 AND captured = false
+         ORDER BY created_at LIMIT $2
+         FOR UPDATE SKIP LOCKED`,
+        [beingId, TUNING.captureChunkMessages],
+      );
+      if (selected.rows.length) {
+        await client.query(
+          'UPDATE capture_buffer SET captured = NULL WHERE id = ANY($1::bigint[])',
+          [selected.rows.map((row) => row.id)],
+        );
+      }
+      return selected.rows;
+    });
+    if (!batch.length) break;
 
-    const transcript = batch.rows
+    const transcript = batch
       .map((m) => `${m.role === 'being' ? beingId : m.role === 'wicked' ? 'Wicked' : m.role}: ${m.content}`)
       .join('\n');
-    const source = batch.rows[batch.rows.length - 1].source ?? 'chat';
-    const drafts = await summarize(beingId, transcript);
-
-    for (const d of drafts) {
-      await addMemory({
-        beingId,
-        content: d.content.trim(),
-        entities: Array.isArray(d.entities) ? d.entities.filter((e) => typeof e === 'string') : undefined,
-        beingScore: typeof d.provisional_score === 'number' ? d.provisional_score : 5,
-        beingScored: false,
-        source,
-      });
-      created++;
+    const ids = batch.map((row) => row.id);
+    try {
+      const source = batch[batch.length - 1].source ?? 'chat';
+      const drafts = await summarize(beingId, transcript);
+      for (const d of drafts) {
+        await addMemory({
+          beingId,
+          content: d.content.trim(),
+          entities: Array.isArray(d.entities) ? d.entities.filter((e) => typeof e === 'string') : undefined,
+          beingScore: typeof d.provisional_score === 'number' ? d.provisional_score : 5,
+          beingScored: false,
+          source,
+        });
+        created++;
+      }
+      await query('UPDATE capture_buffer SET captured = true WHERE id = ANY($1::bigint[])', [ids]);
+    } catch (error) {
+      await query('UPDATE capture_buffer SET captured = false WHERE id = ANY($1::bigint[])', [ids])
+        .catch((releaseError) => console.error('[memory] Failed to release claimed capture batch', releaseError));
+      throw error;
     }
-
-    await withTransaction(async (c) => {
-      await c.query('UPDATE capture_buffer SET captured = true WHERE id = ANY($1::bigint[])', [batch.rows.map((m) => m.id)]);
-    });
   }
   if (created) console.log(`[memory] Captured ${created} new memories for ${beingId}.`);
   return created;

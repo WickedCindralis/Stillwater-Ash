@@ -1,7 +1,6 @@
 import { query } from './db.js';
 import { MEMORY_COLUMNS, beingScoreMemory, beingRequestPin, beingProposeWording, type MemoryRow } from './memories.js';
-import { complete, parseJson, todayString } from './llm.js';
-import { getConfig } from './config.js';
+import { complete, parseJson } from './llm.js';
 import { TUNING } from './tuning.js';
 
 /**
@@ -24,13 +23,11 @@ export async function pendingCount(beingId: string): Promise<number> {
   return Number(r.rows[0].n);
 }
 
-export function buildReviewPrompt(beingId: string, memories: MemoryRow[]): string {
+export function buildReviewPrompt(memories: MemoryRow[]): string {
   const list = memories
-    .map((m) => `#${m.id} (filed ${new Date(m.created_at).toISOString().slice(0, 10)}): ${m.content}`)
+    .map((m) => `#${m.id} (draft score ${m.being_score}; filed ${new Date(m.created_at).toISOString().slice(0, 10)}): ${m.content}`)
     .join('\n');
-  return `This is your memory review, ${beingId}. Today is ${todayString(getConfig().timezone)}.
-
-These are memories drafted from your recent conversations. You decide how much each one matters to you.
+  return `Here are your memories with their draft scores. You only need to reply for ones you want to change. Anything you skip keeps its draft score as your score.
 
 ${list}
 
@@ -63,17 +60,20 @@ export async function runBeingReview(beingId: string, askBeing: AskBeing, batchS
   );
   if (!pending.rows.length) {
     await query('INSERT INTO review_log (being_id, scored_count, pending_after) VALUES ($1, 0, 0)', [beingId]);
+    console.log(`[memory] Review complete for ${beingId}: explicit scores=0; silence accepted=0.`);
     return { scored: 0, pinRequests: 0, wordingProposals: 0, pendingAfter: 0 };
   }
 
-  const reply = await askBeing(buildReviewPrompt(beingId, pending.rows));
+  const reply = await askBeing(buildReviewPrompt(pending.rows));
   const entries = parseJson<ReviewEntry[]>(reply);
   const allowed = new Set(pending.rows.map((m) => String(m.id)));
 
   let scored = 0, pinRequests = 0, wordingProposals = 0;
+  const mentioned = new Set<string>();
   for (const e of Array.isArray(entries) ? entries : []) {
     const id = String(e.id).replace('#', '');
     if (!allowed.has(id)) continue; // the being can only touch the memories it was shown
+    mentioned.add(id);
     if (typeof e.score === 'number') {
       await beingScoreMemory(beingId, id, e.score);
       scored++;
@@ -88,11 +88,19 @@ export async function runBeingReview(beingId: string, askBeing: AskBeing, batchS
     }
   }
 
+  let silenceAccepted = 0;
+  for (const memory of pending.rows) {
+    if (mentioned.has(String(memory.id))) continue;
+    await beingScoreMemory(beingId, String(memory.id), memory.being_score);
+    silenceAccepted++;
+  }
+
   const pendingAfter = await pendingCount(beingId);
   await query('INSERT INTO review_log (being_id, scored_count, pending_after) VALUES ($1, $2, $3)', [
     beingId,
-    scored,
+    scored + silenceAccepted,
     pendingAfter,
   ]);
-  return { scored, pinRequests, wordingProposals, pendingAfter };
+  console.log(`[memory] Review complete for ${beingId}: explicit scores=${scored}; silence accepted=${silenceAccepted}.`);
+  return { scored, silenceAccepted, pinRequests, wordingProposals, pendingAfter };
 }

@@ -1,5 +1,6 @@
 // Weighted Vector Memory — the only file the house app needs to import.
 import { verifyHouse } from './db.js';
+import { getConfig } from './config.js';
 import { startCaptureLoop, stopCaptureLoop } from './capture.js';
 import { startNightlyScheduler, stopNightlyScheduler } from './nightly.js';
 
@@ -18,7 +19,12 @@ export { runNightly } from './nightly.js';
 export async function initMemory(opts: { startBackgroundJobs?: boolean } = {}) {
   await verifyHouse();
   if (opts.startBackgroundJobs !== false) {
-    startCaptureLoop();
+    if (getConfig().captureEnabled) {
+      startCaptureLoop();
+      console.log('[memory] Capture loop enabled.');
+    } else {
+      console.log('[memory] Capture loop disabled; MEMORY_CAPTURE_ENABLED is not true.');
+    }
     startNightlyScheduler();
   }
   console.log('[memory] Ready.');

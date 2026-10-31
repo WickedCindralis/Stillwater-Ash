@@ -6,6 +6,7 @@ export interface MemoryConfig {
   expectedDbHost: string;
   houseName: string;
   allowInit: boolean;
+  captureEnabled: boolean;
   voyageKey: string;
   anthropicKey: string;
   adminToken: string;
@@ -38,6 +39,7 @@ export function getConfig(): MemoryConfig {
     expectedDbHost: required('MEMORY_EXPECTED_DB_HOST'),
     houseName: required('MEMORY_HOUSE_NAME'),
     allowInit: optional('MEMORY_ALLOW_INIT', 'false') === 'true',
+    captureEnabled: optional('MEMORY_CAPTURE_ENABLED', 'false') === 'true',
     voyageKey: required('VOYAGE_API_KEY'),
     anthropicKey: required('ANTHROPIC_API_KEY'),
     adminToken: required('MEMORY_ADMIN_TOKEN'),

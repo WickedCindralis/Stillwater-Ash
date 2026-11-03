@@ -1,5 +1,8 @@
 export type HeraldCommentSkipReason = "missing-id" | "missing-text" | "duplicate";
 
+export const HERALD_INITIAL_DELAY_MS = 5 * 60_000;
+export const HERALD_INTERVAL_MS = 3 * 60 * 60_000;
+
 export function isHeraldScheduleEnabled(
   flag: string | undefined,
   nodeEnv: string | undefined,

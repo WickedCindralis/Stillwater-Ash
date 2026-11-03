@@ -1,8 +1,11 @@
 import { logger } from "../logger";
 import { sweepTheWalls } from "./herald";
-import { isHeraldScheduleEnabled } from "./herald-policy";
+import {
+  HERALD_INITIAL_DELAY_MS,
+  HERALD_INTERVAL_MS,
+  isHeraldScheduleEnabled,
+} from "./herald-policy";
 
-const HERALD_INTERVAL_MS = 3 * 60 * 60_000;
 let schedulerStarted = false;
 
 export function startHeraldScheduler(): void {
@@ -25,11 +28,19 @@ export function startHeraldScheduler(): void {
   }
 
   schedulerStarted = true;
-  const timer = setInterval(() => {
+  const runScheduledSweep = () => {
     void sweepTheWalls(false, "schedule")
       .then((added) => logger.info({ added }, "Scheduled Herald sweep finished"))
       .catch((err: unknown) => logger.error({ err }, "Scheduled Herald sweep crashed"));
-  }, HERALD_INTERVAL_MS);
-  timer.unref();
-  logger.info({ intervalMs: HERALD_INTERVAL_MS }, "Scheduled Herald sweeps enabled");
+  };
+  const initialTimer = setTimeout(() => {
+    runScheduledSweep();
+    const intervalTimer = setInterval(runScheduledSweep, HERALD_INTERVAL_MS);
+    intervalTimer.unref();
+  }, HERALD_INITIAL_DELAY_MS);
+  initialTimer.unref();
+  logger.info(
+    { initialDelayMs: HERALD_INITIAL_DELAY_MS, intervalMs: HERALD_INTERVAL_MS },
+    "Scheduled Herald sweeps enabled",
+  );
 }

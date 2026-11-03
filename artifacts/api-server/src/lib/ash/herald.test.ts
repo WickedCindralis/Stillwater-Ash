@@ -5,6 +5,8 @@ import {
   deriveHeraldAlertMessages,
   getCommentPageStopReason,
   getHeraldCommentSkipReason,
+  HERALD_INITIAL_DELAY_MS,
+  HERALD_INTERVAL_MS,
   isHeraldScheduleEnabled,
 } from "./herald-policy";
 
@@ -26,6 +28,8 @@ test("scheduler requires an enabled flag and production runtime", () => {
   assert.equal(isHeraldScheduleEnabled("true", "development", undefined), false);
   assert.equal(isHeraldScheduleEnabled("false", "production", undefined), false);
   assert.equal(isHeraldScheduleEnabled("true", "development", "1"), true);
+  assert.equal(HERALD_INITIAL_DELAY_MS, 5 * 60_000);
+  assert.equal(HERALD_INTERVAL_MS, 3 * 60 * 60_000);
 });
 
 test("comment skips distinguish missing IDs, missing text, and duplicates", () => {

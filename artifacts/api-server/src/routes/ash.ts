@@ -6,7 +6,7 @@ import {
   type NextFunction,
 } from "express";
 import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema, createAshBookSchema, updateAshBookSchema, writeStorySchema, updateStoryChapterSchema, type AshState } from "@workspace/db";
-import { sweepTheWalls, manualSweepWaitMs, getHeraldActivityAlerts } from "../lib/ash/herald";
+import { sweepTheWalls, manualSweepWaitMs, getHeraldActivityAlerts, getHeraldTargetHandle } from "../lib/ash/herald";
 import { normalizeTiktokHandle } from "../lib/ash/tiktok-handle";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
@@ -850,8 +850,8 @@ router.post("/herald/refresh", requireAuth, async (_req, res): Promise<void> => 
     res.status(503).json({ error: "Scraper API key not configured" });
     return;
   }
-  const state = await storage.getState();
-  if (!state.tiktokUsername.trim()) {
+  const handle = await getHeraldTargetHandle();
+  if (!handle) {
     res.status(400).json({ error: "No TikTok username set — give the Herald a name to watch" });
     return;
   }
@@ -860,7 +860,7 @@ router.post("/herald/refresh", requireAuth, async (_req, res): Promise<void> => 
     res.status(429).json({ error: `The Herald just swept — try again in ${Math.ceil(waitMs / 1000)}s` });
     return;
   }
-  const added = await sweepTheWalls(true, "manual");
+  const added = await sweepTheWalls(true, "manual", handle);
   res.json({ added });
 });
 

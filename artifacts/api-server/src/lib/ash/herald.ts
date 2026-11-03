@@ -2,7 +2,7 @@ import { db, ashActivity, ashTiktokComments, type InsertTiktokComment } from "@w
 import { inArray, eq, and, desc } from "drizzle-orm";
 import { logger } from "../logger";
 import { storage } from "./storage";
-import { normalizeTiktokHandle } from "./tiktok-handle";
+import { normalizeTiktokHandle, resolveTiktokHandle } from "./tiktok-handle";
 import { getCommentPageStopReason, getHeraldCommentSkipReason, deriveHeraldAlertMessages } from "./herald-policy";
 
 // Court Herald — read-only watcher of Ash's TikTok account via ScrapeCreators.
@@ -22,6 +22,12 @@ let fetchInFlight: Promise<number> | null = null;
 /** Milliseconds until a manual sweep is allowed again (0 = allowed now). */
 export function manualSweepWaitMs(): number {
   return Math.max(0, FORCE_COOLDOWN_MS - (Date.now() - lastFetchAt));
+}
+
+/** Resolve the configured handle using the same saved-state source for every trigger. */
+export async function getHeraldTargetHandle(handleOverride?: string): Promise<string> {
+  const state = await storage.getState();
+  return resolveTiktokHandle(handleOverride, state.tiktokUsername);
 }
 
 function apiKey(): string | undefined {
@@ -218,13 +224,12 @@ export async function sweepTheWalls(
 ): Promise<number> {
   const startedAt = new Date();
   const videosChecked: VideoSweepResult[] = [];
-  let targetHandle = normalizeTiktokHandle(handleOverride ?? "");
+  let targetHandle = "";
   if (!apiKey()) {
     await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "ScrapeCreators API key not configured"));
     return 0;
   }
-  const state = await storage.getState();
-  targetHandle ??= normalizeTiktokHandle(state.tiktokUsername);
+  targetHandle = await getHeraldTargetHandle(handleOverride);
   const handle = targetHandle;
   if (!handle) {
     await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "No valid TikTok handle configured"));

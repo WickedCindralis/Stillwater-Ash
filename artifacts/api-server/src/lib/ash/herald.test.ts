@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeTiktokHandle } from "./tiktok-handle";
+import { normalizeTiktokHandle, resolveTiktokHandle } from "./tiktok-handle";
 import {
   deriveHeraldAlertMessages,
   getCommentPageStopReason,
@@ -21,6 +21,15 @@ test("rejects non-TikTok URLs and invalid handles", () => {
   assert.equal(normalizeTiktokHandle("https://example.com/@wickedsread"), "");
   assert.equal(normalizeTiktokHandle("https://www.tiktok.com/video/123"), "");
   assert.equal(normalizeTiktokHandle(""), "");
+});
+
+test("scheduled sweep resolves the saved URL handle without an override", () => {
+  const scheduledHandle = resolveTiktokHandle(
+    undefined,
+    "https://www.tiktok.com/@wickedsread?lang=en",
+  );
+  assert.equal(scheduledHandle, "wickedsread");
+  assert.equal(`@${scheduledHandle}`, "@wickedsread");
 });
 
 test("scheduler requires an enabled flag and production runtime", () => {

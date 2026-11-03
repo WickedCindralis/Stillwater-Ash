@@ -20,3 +20,7 @@ export function normalizeTiktokHandle(value: string): string {
 
   return /^[a-zA-Z0-9._]+$/.test(candidate) ? candidate : "";
 }
+
+export function resolveTiktokHandle(override: string | undefined, savedHandle: string): string {
+  return normalizeTiktokHandle(override?.trim() || savedHandle);
+}

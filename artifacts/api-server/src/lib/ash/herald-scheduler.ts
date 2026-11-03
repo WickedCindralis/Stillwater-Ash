@@ -30,7 +30,7 @@ export function startHeraldScheduler(): void {
   schedulerStarted = true;
   const runScheduledSweep = () => {
     void sweepTheWalls(false, "schedule")
-      .then((added) => logger.info({ added }, "Scheduled Herald sweep finished"))
+      .then((result) => logger.info(result, "Scheduled Herald sweep finished"))
       .catch((err: unknown) => logger.error({ err }, "Scheduled Herald sweep crashed"));
   };
   const initialTimer = setTimeout(() => {

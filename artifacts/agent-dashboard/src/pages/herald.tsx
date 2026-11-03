@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { ApiRequestError, apiRequest, queryClient } from "@/lib/queryClient";
 import type { HeraldComment } from "@/lib/types";
 import {
   ArrowLeft, Megaphone, RefreshCw, Loader2, Copy, Check, Save,
@@ -67,13 +67,23 @@ export default function HeraldPage() {
   const sweep = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/herald/refresh");
-      return (await res.json()) as { added: number };
+      return (await res.json()) as { status: "complete" | "skipped" | "failed"; added: number; reason?: string };
     },
-    onSuccess: ({ added }) => {
-      setSweepMessage(added > 0 ? `${added} new comment${added === 1 ? "" : "s"} brought in` : "The walls are quiet — nothing new");
+    onSuccess: ({ status, added, reason }) => {
+      if (status === "skipped") {
+        setSweepMessage(`Sweep skipped: ${reason ?? "no reason provided"}`);
+      } else if (status === "failed") {
+        setSweepMessage(`Sweep failed: ${reason ?? "unknown error"}${added > 0 ? ` (${added} new comments saved)` : ""}`);
+      } else {
+        setSweepMessage(added > 0 ? `${added} new comment${added === 1 ? "" : "s"} brought in` : "The walls are quiet — nothing new");
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/herald/comments"] });
     },
-    onError: (e) => setSweepMessage(e instanceof Error ? e.message : "The sweep failed"),
+    onError: (e) => {
+      const message = e instanceof Error ? e.message : "unknown error";
+      const skipped = e instanceof ApiRequestError && [400, 429, 503].includes(e.status ?? 0);
+      setSweepMessage(`${skipped ? "Sweep skipped" : "Sweep failed"}: ${message}`);
+    },
   });
 
   const patchComment = useMutation({
@@ -107,7 +117,7 @@ export default function HeraldPage() {
           <Megaphone className="w-5 h-5 text-gold" />
           <div>
             <h1 className="font-serif text-xl text-gold leading-tight" data-testid="text-herald-title">The Court Herald</h1>
-            <span className="text-sm text-white/40">Checks when you message Ash, no more than every 3 hours — read-only, no posting</span>
+            <span className="text-sm text-white/40">Sweeps every 3 hours — read-only, no posting</span>
           </div>
         </div>
         <button
@@ -135,7 +145,7 @@ export default function HeraldPage() {
           />
           {usernameDraft !== null && usernameDraft !== data?.tiktokUsername && (
             <button
-              onClick={() => saveUsername.mutate(usernameDraft.trim().replace(/^@/, ""))}
+              onClick={() => saveUsername.mutate(usernameDraft.trim())}
               disabled={saveUsername.isPending}
               className="px-2.5 py-1.5 rounded-lg text-sm text-black bg-gold hover:bg-gold/90 disabled:opacity-50"
               data-testid="button-herald-save-username"
@@ -161,7 +171,7 @@ export default function HeraldPage() {
       </div>
 
       {sweepMessage && (
-        <div className="px-4 py-2 text-sm text-gold/70 border-b border-white/5" data-testid="text-herald-sweep-message">{sweepMessage}</div>
+        <div className="px-4 py-2 text-sm text-gold/70 border-b border-white/5" role="status" data-testid="text-herald-sweep-message">{sweepMessage}</div>
       )}
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">

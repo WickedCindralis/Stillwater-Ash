@@ -268,6 +268,16 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
       .json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
     return;
   }
+  const patch = { ...parsed.data };
+  if (typeof patch.tiktokUsername === "string") {
+    const rawHandle = patch.tiktokUsername.trim();
+    const normalizedHandle = normalizeTiktokHandle(rawHandle);
+    if (rawHandle && !normalizedHandle) {
+      res.status(400).json({ error: "Enter a TikTok username or profile URL" });
+      return;
+    }
+    patch.tiktokUsername = normalizedHandle;
+  }
   if (parsed.data.screenCaptureEnabled === 1) {
     const current = await storage.getState();
     if (!current.screenCaptureTokenHash) {
@@ -282,7 +292,7 @@ router.patch("/state", requireAuth, async (req, res): Promise<void> => {
   // An old timeout describes a previous attempt, not the newly enabled
   // companion. The next failed attempt will set a fresh error.
   const state = await storage.updateState({
-    ...parsed.data,
+    ...patch,
     ...(parsed.data.screenCaptureEnabled === 1 ? { screenCaptureLastError: "" } : {}),
   });
   if (parsed.data.screenCaptureEnabled === 1) {
@@ -860,8 +870,8 @@ router.post("/herald/refresh", requireAuth, async (_req, res): Promise<void> => 
     res.status(429).json({ error: `The Herald just swept — try again in ${Math.ceil(waitMs / 1000)}s` });
     return;
   }
-  const added = await sweepTheWalls(true, "manual", handle);
-  res.json({ added });
+  const result = await sweepTheWalls(true, "manual", handle);
+  res.json(result);
 });
 
 // ── Discord Court Herald ──

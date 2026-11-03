@@ -17,7 +17,13 @@ const PACKET_MAX_CHARS = 6000; // total cap on the herald packet fed to the mode
 const tag = "[herald]";
 
 let lastFetchAt = 0;
-let fetchInFlight: Promise<number> | null = null;
+export type HeraldSweepResult = {
+  status: "complete" | "skipped" | "failed";
+  added: number;
+  reason?: string;
+};
+
+let fetchInFlight: Promise<HeraldSweepResult> | null = null;
 
 /** Milliseconds until a manual sweep is allowed again (0 = allowed now). */
 export function manualSweepWaitMs(): number {
@@ -215,31 +221,34 @@ async function logSweep(message: string): Promise<void> {
 /**
  * Sweep the walls: fetch recent videos + their comments, insert anything new.
  * Cooldown-limited; concurrent calls share one in-flight sweep.
- * Returns the number of NEW comments stored (0 when skipped/cooldown).
+ * Returns an explicit status so callers can distinguish an empty sweep from a skip.
  */
 export async function sweepTheWalls(
   force = false,
   trigger: HeraldSweepTrigger = force ? "manual" : "message",
   handleOverride?: string,
-): Promise<number> {
+): Promise<HeraldSweepResult> {
   const startedAt = new Date();
   const videosChecked: VideoSweepResult[] = [];
   let targetHandle = "";
   if (!apiKey()) {
-    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "ScrapeCreators API key not configured"));
-    return 0;
+    const reason = "ScrapeCreators API key not configured";
+    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, reason));
+    return { status: "skipped", added: 0, reason };
   }
   targetHandle = await getHeraldTargetHandle(handleOverride);
   const handle = targetHandle;
   if (!handle) {
-    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "No valid TikTok handle configured"));
-    return 0;
+    const reason = "No valid TikTok handle configured";
+    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, reason));
+    return { status: "skipped", added: 0, reason };
   }
   if (fetchInFlight) return fetchInFlight;
   const cooldown = force ? FORCE_COOLDOWN_MS : FETCH_COOLDOWN_MS;
   if (trigger !== "schedule" && Date.now() - lastFetchAt < cooldown) {
-    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "Sweep cooldown is active"));
-    return 0;
+    const reason = "Sweep cooldown is active";
+    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, reason));
+    return { status: "skipped", added: 0, reason };
   }
   fetchInFlight = (async () => {
     let status: "complete" | "failed" = "complete";
@@ -283,7 +292,13 @@ export async function sweepTheWalls(
         sweepError = `${failedVideoCount} video comment request${failedVideoCount === 1 ? "" : "s"} failed`;
       }
       const all = returned.flatMap((item) => item.comments);
-      if (all.length === 0) return 0;
+      if (all.length === 0) {
+        return {
+          status,
+          added: 0,
+          ...(sweepError ? { reason: sweepError } : {}),
+        };
+      }
       // Dedupe against what we've already seen.
       const ids = all.map((c) => c.commentId);
       const existing = await db
@@ -314,12 +329,16 @@ export async function sweepTheWalls(
         await storage.logActivity("herald", `The Herald spotted ${fresh.length} new comment${fresh.length === 1 ? "" : "s"} on the walls`);
         logger.info(`${tag} stored ${fresh.length} new comments (scanned ${videos.length} videos)`);
       }
-      return fresh.length;
+      return {
+        status,
+        added: fresh.length,
+        ...(sweepError ? { reason: sweepError } : {}),
+      };
     } catch (e) {
       status = "failed";
       sweepError = e instanceof Error ? e.message : String(e);
       logger.error(`${tag} sweep failed: ${sweepError}`);
-      return 0;
+      return { status, added: 0, reason: sweepError };
     } finally {
       await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, status, videosChecked, sweepError));
       fetchInFlight = null;

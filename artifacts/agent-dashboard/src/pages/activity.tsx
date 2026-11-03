@@ -30,7 +30,7 @@ const KIND_LABELS: Record<string, string> = {
   door_books: "Books",
   status_change: "Status changed",
 };
-const FILTERS = ["All", "Proactive", "Doors", "Reviews", "Memory capture"] as const;
+const FILTERS = ["All", "Proactive", "Doors", "Reviews", "Memory capture", "Herald"] as const;
 type ActivityFilter = (typeof FILTERS)[number];
 
 function matchesFilter(event: AshActivity, filter: ActivityFilter): boolean {
@@ -38,6 +38,7 @@ function matchesFilter(event: AshActivity, filter: ActivityFilter): boolean {
   if (filter === "Proactive") return event.kind === "proactive_window" || event.kind === "proactive_failure";
   if (filter === "Reviews") return event.kind === "memory_review";
   if (filter === "Memory capture") return event.kind.startsWith("memory_capture");
+  if (filter === "Herald") return event.kind === "herald" || event.kind === "herald_sweep";
   return event.kind.startsWith("door_") || ["diary_entry", "status_change", "song_queued"].includes(event.kind);
 }
 
@@ -150,7 +151,9 @@ export default function ActivityPage() {
                     {KIND_LABELS[e.kind] || e.kind}
                   </span>
                 </div>
-                {e.kind === "song_generated"
+                {e.kind === "herald_sweep"
+                  ? <pre className="text-white/70 text-xs mt-1 whitespace-pre-wrap break-words font-mono">{e.message}</pre>
+                  : e.kind === "song_generated"
                   ? <SongActivityMessage message={e.message} />
                   : <p className="text-white/70 text-[15px] mt-1">{e.message}</p>}
                 {e.kind === "screen_capture" && e.hasScreenshot && (

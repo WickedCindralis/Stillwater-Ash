@@ -1151,7 +1151,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         page = `[AVAILABLE BOOKS]\n${lines.join("\n") || "(No books yet.)"}\n\nTo write, reply WRITE: <title>. To start a new book, reply NEW: <title>.`;
       } else if (door === "HERALD") {
         const { sweepTheWalls, claimHeraldPacket } = await import("./herald");
-        await sweepTheWalls();
+        await sweepTheWalls(false, trigger === "message" ? "message" : "schedule");
         const claimed = await claimHeraldPacket();
         heraldIds = claimed.ids;
         if (!claimed.packet) return;

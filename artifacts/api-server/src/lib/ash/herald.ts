@@ -39,25 +39,41 @@ async function scrape(path: string, params: Record<string, string>): Promise<Rec
   return (await res.json()) as Record<string, unknown>;
 }
 
-type ScrapedVideo = { id: string; desc: string; url: string };
+type ScrapedVideo = { id: string; desc: string; url: string; postDate: string | null };
+type HeraldSweepTrigger = "message" | "manual" | "schedule";
+type VideoSweepResult = {
+  video: ScrapedVideo;
+  commentsReturned: number;
+  error: string | null;
+  alreadyStored: number;
+  newComments: number;
+};
 
 async function fetchRecentVideos(handle: string): Promise<ScrapedVideo[]> {
   const data = await scrape("/v3/tiktok/profile/videos", { handle, sort_by: "latest" });
   const list = (data["aweme_list"] || data["videos"] || []) as Array<Record<string, unknown>>;
   return list.slice(0, VIDEOS_TO_WATCH).map((v) => {
     const id = String(v["aweme_id"] ?? v["id"] ?? "");
+    const utcDate = typeof v["create_time_utc"] === "string" ? v["create_time_utc"] : "";
+    const epoch = Number(v["create_time"] ?? v["createTime"] ?? 0);
+    const postDate = Number.isFinite(Date.parse(utcDate))
+      ? new Date(utcDate).toISOString()
+      : epoch > 0
+        ? new Date(epoch < 1_000_000_000_000 ? epoch * 1000 : epoch).toISOString()
+        : null;
     return {
       id,
       desc: String(v["desc"] ?? v["title"] ?? ""),
       url: `https://www.tiktok.com/@${handle}/video/${id}`,
+      postDate,
     };
   }).filter((v) => v.id);
 }
 
-async function fetchComments(video: ScrapedVideo): Promise<InsertTiktokComment[]> {
+async function fetchComments(video: ScrapedVideo): Promise<{ comments: InsertTiktokComment[]; returnedCount: number }> {
   const data = await scrape("/v1/tiktok/video/comments", { url: video.url });
   const list = (data["comments"] || []) as Array<Record<string, unknown>>;
-  return list.map((c) => {
+  const comments = list.map((c) => {
     const user = (c["user"] || {}) as Record<string, unknown>;
     const created = Number(c["create_time"] ?? 0);
     return {
@@ -70,6 +86,43 @@ async function fetchComments(video: ScrapedVideo): Promise<InsertTiktokComment[]
       commentCreatedAt: created > 0 ? new Date(created * 1000) : null,
     };
   }).filter((c) => c.commentId && c.text);
+  return { comments, returnedCount: list.length };
+}
+
+function sweepLogMessage(
+  startedAt: Date,
+  trigger: HeraldSweepTrigger,
+  targetHandle: string | null,
+  status: "complete" | "skipped" | "failed",
+  videos: VideoSweepResult[],
+  error: string | null,
+): string {
+  const totalReturned = videos.reduce((sum, item) => sum + item.commentsReturned, 0);
+  const totalAlreadyStored = videos.reduce((sum, item) => sum + item.alreadyStored, 0);
+  const totalNew = videos.reduce((sum, item) => sum + item.newComments, 0);
+  const lines = [
+    `Herald sweep ${status}`,
+    `Started: ${startedAt.toISOString()}`,
+    `Trigger: ${trigger}`,
+    `TikTok account: ${targetHandle ? `@${targetHandle}` : "not configured"}`,
+    `Videos checked: ${videos.filter((item) => !item.error).length}/${videos.length}`,
+    `Comments returned: ${totalReturned}; already stored: ${totalAlreadyStored}; new: ${totalNew}`,
+  ];
+  for (const item of videos) {
+    lines.push(
+      `Video ${item.video.id} | posted: ${item.video.postDate ?? "unknown"} | comments returned: ${item.commentsReturned}; already stored: ${item.alreadyStored}; new: ${item.newComments}${item.error ? ` | error: ${item.error}` : ""}`,
+    );
+  }
+  if (error) lines.push(`Error: ${error}`);
+  return lines.join("\n");
+}
+
+async function logSweep(message: string): Promise<void> {
+  try {
+    await storage.logActivity("herald_sweep", message);
+  } catch (error) {
+    logger.error(`${tag} could not save sweep activity: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 /**
@@ -77,26 +130,62 @@ async function fetchComments(video: ScrapedVideo): Promise<InsertTiktokComment[]
  * Cooldown-limited; concurrent calls share one in-flight sweep.
  * Returns the number of NEW comments stored (0 when skipped/cooldown).
  */
-export async function sweepTheWalls(force = false): Promise<number> {
-  if (!apiKey()) return 0;
+export async function sweepTheWalls(
+  force = false,
+  trigger: HeraldSweepTrigger = force ? "manual" : "message",
+  handleOverride?: string,
+): Promise<number> {
+  const startedAt = new Date();
+  const videosChecked: VideoSweepResult[] = [];
+  let targetHandle = normalizeTiktokHandle(handleOverride ?? "");
+  if (!apiKey()) {
+    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "ScrapeCreators API key not configured"));
+    return 0;
+  }
   const state = await storage.getState();
-  const handle = normalizeTiktokHandle(state.tiktokUsername);
-  if (!handle) return 0;
+  targetHandle ??= normalizeTiktokHandle(state.tiktokUsername);
+  const handle = targetHandle;
+  if (!handle) {
+    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "No valid TikTok handle configured"));
+    return 0;
+  }
   if (fetchInFlight) return fetchInFlight;
   const cooldown = force ? FORCE_COOLDOWN_MS : FETCH_COOLDOWN_MS;
-  if (Date.now() - lastFetchAt < cooldown) return 0;
+  if (Date.now() - lastFetchAt < cooldown) {
+    await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "Sweep cooldown is active"));
+    return 0;
+  }
   fetchInFlight = (async () => {
+    let status: "complete" | "failed" = "complete";
+    let sweepError: string | null = null;
     try {
       lastFetchAt = Date.now();
       const videos = await fetchRecentVideos(handle);
-      const all: InsertTiktokComment[] = [];
+      const returned: { video: ScrapedVideo; comments: InsertTiktokComment[] }[] = [];
       for (const video of videos) {
         try {
-          all.push(...(await fetchComments(video)));
+          const result = await fetchComments(video);
+          returned.push({ video, comments: result.comments });
+          videosChecked.push({
+            video,
+            commentsReturned: result.returnedCount,
+            error: null,
+            alreadyStored: 0,
+            newComments: 0,
+          });
         } catch (e) {
-          logger.error(`${tag} comments fetch failed for video ${video.id}: ${e instanceof Error ? e.message : e}`);
+          const error = e instanceof Error ? e.message : String(e);
+          videosChecked.push({
+            video,
+            commentsReturned: 0,
+            error,
+            alreadyStored: 0,
+            newComments: 0,
+          });
+          logger.error(`${tag} comments fetch failed for video ${video.id}: ${error}`);
         }
       }
+      const all = returned.flatMap((item) => item.comments);
       if (all.length === 0) return 0;
       // Dedupe against what we've already seen.
       const ids = all.map((c) => c.commentId);
@@ -105,7 +194,25 @@ export async function sweepTheWalls(force = false): Promise<number> {
         .from(ashTiktokComments)
         .where(inArray(ashTiktokComments.commentId, ids));
       const known = new Set(existing.map((r) => r.commentId));
-      const fresh = all.filter((c) => !known.has(c.commentId));
+      const freshOwner = new Map<string, string>();
+      for (const item of returned) {
+        for (const comment of item.comments) {
+          if (!known.has(comment.commentId) && !freshOwner.has(comment.commentId)) {
+            freshOwner.set(comment.commentId, item.video.id);
+          }
+        }
+      }
+      const fresh = returned.flatMap((item) =>
+        item.comments.filter((comment) =>
+          !known.has(comment.commentId) && freshOwner.get(comment.commentId) === item.video.id,
+        ),
+      );
+      for (const item of videosChecked) {
+        if (item.error) continue;
+        const videoComments = returned.find((result) => result.video.id === item.video.id)?.comments ?? [];
+        item.alreadyStored = new Set(videoComments.filter((comment) => known.has(comment.commentId)).map((comment) => comment.commentId)).size;
+        item.newComments = new Set(videoComments.filter((comment) => freshOwner.get(comment.commentId) === item.video.id).map((comment) => comment.commentId)).size;
+      }
       if (fresh.length > 0) {
         await db.insert(ashTiktokComments).values(fresh).onConflictDoNothing();
         await storage.logActivity("herald", `The Herald spotted ${fresh.length} new comment${fresh.length === 1 ? "" : "s"} on the walls`);
@@ -113,9 +220,12 @@ export async function sweepTheWalls(force = false): Promise<number> {
       }
       return fresh.length;
     } catch (e) {
-      logger.error(`${tag} sweep failed: ${e instanceof Error ? e.message : e}`);
+      status = "failed";
+      sweepError = e instanceof Error ? e.message : String(e);
+      logger.error(`${tag} sweep failed: ${sweepError}`);
       return 0;
     } finally {
+      await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, status, videosChecked, sweepError));
       fetchInFlight = null;
     }
   })();

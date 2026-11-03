@@ -860,7 +860,7 @@ router.post("/herald/refresh", requireAuth, async (_req, res): Promise<void> => 
     res.status(429).json({ error: `The Herald just swept — try again in ${Math.ceil(waitMs / 1000)}s` });
     return;
   }
-  const added = await sweepTheWalls(true);
+  const added = await sweepTheWalls(true, "manual");
   res.json({ added });
 });
 

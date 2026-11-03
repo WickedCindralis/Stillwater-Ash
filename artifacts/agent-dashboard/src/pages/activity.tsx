@@ -23,6 +23,9 @@ const KIND_LABELS: Record<string, string> = {
   memory_review: "Reviews",
   memory_capture: "Memory capture",
   memory_capture_failure: "Capture failed",
+  herald: "Herald comment",
+  herald_sweep: "Herald sweep",
+  herald_alert: "Herald alert",
   door_failure: "Door failed",
   door_song: "Song queued",
   song_queued: "Song queued",
@@ -38,7 +41,7 @@ function matchesFilter(event: AshActivity, filter: ActivityFilter): boolean {
   if (filter === "Proactive") return event.kind === "proactive_window" || event.kind === "proactive_failure";
   if (filter === "Reviews") return event.kind === "memory_review";
   if (filter === "Memory capture") return event.kind.startsWith("memory_capture");
-  if (filter === "Herald") return event.kind === "herald" || event.kind === "herald_sweep";
+  if (filter === "Herald") return event.kind === "herald" || event.kind === "herald_sweep" || event.kind === "herald_alert";
   return event.kind.startsWith("door_") || ["diary_entry", "status_change", "song_queued"].includes(event.kind);
 }
 
@@ -151,7 +154,9 @@ export default function ActivityPage() {
                     {KIND_LABELS[e.kind] || e.kind}
                   </span>
                 </div>
-                {e.kind === "herald_sweep"
+                {e.kind === "herald_alert"
+                  ? <p role="alert" className="mt-1 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm font-semibold text-amber-200">{e.message}</p>
+                  : e.kind === "herald_sweep"
                   ? <pre className="text-white/70 text-xs mt-1 whitespace-pre-wrap break-words font-mono">{e.message}</pre>
                   : e.kind === "song_generated"
                   ? <SongActivityMessage message={e.message} />

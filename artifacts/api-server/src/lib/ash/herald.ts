@@ -1,8 +1,9 @@
-import { db, ashTiktokComments, type InsertTiktokComment } from "@workspace/db";
-import { inArray, eq, and } from "drizzle-orm";
+import { db, ashActivity, ashTiktokComments, type InsertTiktokComment } from "@workspace/db";
+import { inArray, eq, and, desc } from "drizzle-orm";
 import { logger } from "../logger";
 import { storage } from "./storage";
 import { normalizeTiktokHandle } from "./tiktok-handle";
+import { getCommentPageStopReason, getHeraldCommentSkipReason, deriveHeraldAlertMessages } from "./herald-policy";
 
 // Court Herald — read-only watcher of Ash's TikTok account via ScrapeCreators.
 // No login, no posting, no automation against TikTok itself: the scraper
@@ -41,12 +42,16 @@ async function scrape(path: string, params: Record<string, string>): Promise<Rec
 
 type ScrapedVideo = { id: string; desc: string; url: string; postDate: string | null };
 type HeraldSweepTrigger = "message" | "manual" | "schedule";
+type CommentSkipCounts = { missingId: number; missingText: number; duplicate: number };
 type VideoSweepResult = {
   video: ScrapedVideo;
+  pagesFetched: number;
+  stopReason: string;
   commentsReturned: number;
   error: string | null;
   alreadyStored: number;
   newComments: number;
+  skipped: CommentSkipCounts;
 };
 
 async function fetchRecentVideos(handle: string): Promise<ScrapedVideo[]> {
@@ -70,23 +75,98 @@ async function fetchRecentVideos(handle: string): Promise<ScrapedVideo[]> {
   }).filter((v) => v.id);
 }
 
-async function fetchComments(video: ScrapedVideo): Promise<{ comments: InsertTiktokComment[]; returnedCount: number }> {
-  const data = await scrape("/v1/tiktok/video/comments", { url: video.url });
-  const list = (data["comments"] || []) as Array<Record<string, unknown>>;
-  const comments = list.map((c) => {
-    const user = (c["user"] || {}) as Record<string, unknown>;
-    const created = Number(c["create_time"] ?? 0);
-    return {
-      commentId: String(c["cid"] ?? c["id"] ?? ""),
-      videoId: video.id,
-      videoDesc: video.desc,
-      videoUrl: video.url,
-      author: String(user["unique_id"] ?? user["nickname"] ?? c["author"] ?? ""),
-      text: String(c["text"] ?? ""),
-      commentCreatedAt: created > 0 ? new Date(created * 1000) : null,
-    };
-  }).filter((c) => c.commentId && c.text);
-  return { comments, returnedCount: list.length };
+const MAX_COMMENT_PAGES_PER_VIDEO = 5;
+
+async function fetchComments(video: ScrapedVideo): Promise<{
+  comments: InsertTiktokComment[];
+  returnedCount: number;
+  pagesFetched: number;
+  alreadyStored: number;
+  skipped: CommentSkipCounts;
+  stopReason: string;
+}> {
+  const comments: InsertTiktokComment[] = [];
+  const seenIds = new Set<string>();
+  const storedIds = new Set<string>();
+  const skipped: CommentSkipCounts = { missingId: 0, missingText: 0, duplicate: 0 };
+  let returnedCount = 0;
+  let pagesFetched = 0;
+  let cursor: string | undefined;
+  let stopReason = "page-cap";
+
+  for (let pageNumber = 1; pageNumber <= MAX_COMMENT_PAGES_PER_VIDEO; pageNumber++) {
+    const data = await scrape("/v1/tiktok/video/comments", {
+      url: video.url,
+      ...(cursor ? { cursor } : {}),
+    });
+    pagesFetched++;
+    const list = Array.isArray(data["comments"]) ? data["comments"] as Array<Record<string, unknown>> : [];
+    returnedCount += list.length;
+    const parsed = list.map((raw) => {
+      const user = (raw["user"] || {}) as Record<string, unknown>;
+      const created = Number(raw["create_time"] ?? 0);
+      return {
+        raw,
+        commentId: String(raw["cid"] ?? raw["id"] ?? ""),
+        text: String(raw["text"] ?? ""),
+        value: {
+          commentId: String(raw["cid"] ?? raw["id"] ?? ""),
+          videoId: video.id,
+          videoDesc: video.desc,
+          videoUrl: video.url,
+          author: String(user["unique_id"] ?? user["nickname"] ?? raw["author"] ?? ""),
+          text: String(raw["text"] ?? ""),
+          commentCreatedAt: created > 0 ? new Date(created * 1000) : null,
+        } satisfies InsertTiktokComment,
+      };
+    });
+    const pageIds = [...new Set(parsed.map((item) => item.commentId).filter(Boolean))];
+    const existingRows = pageIds.length
+      ? await db
+        .select({ commentId: ashTiktokComments.commentId })
+        .from(ashTiktokComments)
+        .where(inArray(ashTiktokComments.commentId, pageIds))
+      : [];
+    const existingIds = new Set(existingRows.map((row) => row.commentId));
+
+    for (const item of parsed) {
+      const skipReason = getHeraldCommentSkipReason(item.commentId, item.text, seenIds);
+      if (skipReason) {
+        skipped[skipReason === "missing-id" ? "missingId" : skipReason === "missing-text" ? "missingText" : "duplicate"]++;
+        continue;
+      }
+      seenIds.add(item.commentId);
+      if (existingIds.has(item.commentId)) {
+        storedIds.add(item.commentId);
+        continue;
+      }
+      comments.push(item.value);
+    }
+
+    const rawCursor = data["cursor"];
+    const hasMore = data["has_more"] === true || data["has_more"] === 1;
+    const stop = getCommentPageStopReason({
+      hasStoredComment: existingIds.size > 0,
+      hasMore,
+      cursor: typeof rawCursor === "string" || typeof rawCursor === "number" ? rawCursor : null,
+      pageNumber,
+      maxPages: MAX_COMMENT_PAGES_PER_VIDEO,
+    });
+    if (stop) {
+      stopReason = stop;
+      break;
+    }
+    cursor = String(rawCursor);
+  }
+
+  return {
+    comments,
+    returnedCount,
+    pagesFetched,
+    alreadyStored: storedIds.size,
+    skipped,
+    stopReason,
+  };
 }
 
 function sweepLogMessage(
@@ -100,17 +180,18 @@ function sweepLogMessage(
   const totalReturned = videos.reduce((sum, item) => sum + item.commentsReturned, 0);
   const totalAlreadyStored = videos.reduce((sum, item) => sum + item.alreadyStored, 0);
   const totalNew = videos.reduce((sum, item) => sum + item.newComments, 0);
+  const totalSkipped = videos.reduce((sum, item) => sum + item.skipped.missingId + item.skipped.missingText + item.skipped.duplicate, 0);
   const lines = [
     `Herald sweep ${status}`,
     `Started: ${startedAt.toISOString()}`,
     `Trigger: ${trigger}`,
     `TikTok account: ${targetHandle ? `@${targetHandle}` : "not configured"}`,
     `Videos checked: ${videos.filter((item) => !item.error).length}/${videos.length}`,
-    `Comments returned: ${totalReturned}; already stored: ${totalAlreadyStored}; new: ${totalNew}`,
+    `Comments returned: ${totalReturned}; already stored: ${totalAlreadyStored}; new: ${totalNew}; skipped: ${totalSkipped}`,
   ];
   for (const item of videos) {
     lines.push(
-      `Video ${item.video.id} | posted: ${item.video.postDate ?? "unknown"} | comments returned: ${item.commentsReturned}; already stored: ${item.alreadyStored}; new: ${item.newComments}${item.error ? ` | error: ${item.error}` : ""}`,
+      `Video ${item.video.id} | posted: ${item.video.postDate ?? "unknown"} | pages: ${item.pagesFetched}; stop: ${item.stopReason}; comments returned: ${item.commentsReturned}; already stored: ${item.alreadyStored}; new: ${item.newComments}; skipped missing ID: ${item.skipped.missingId}, missing text: ${item.skipped.missingText}, duplicate: ${item.skipped.duplicate}${item.error ? ` | error: ${item.error}` : ""}`,
     );
   }
   if (error) lines.push(`Error: ${error}`);
@@ -151,7 +232,7 @@ export async function sweepTheWalls(
   }
   if (fetchInFlight) return fetchInFlight;
   const cooldown = force ? FORCE_COOLDOWN_MS : FETCH_COOLDOWN_MS;
-  if (Date.now() - lastFetchAt < cooldown) {
+  if (trigger !== "schedule" && Date.now() - lastFetchAt < cooldown) {
     await logSweep(sweepLogMessage(startedAt, trigger, targetHandle, "skipped", videosChecked, "Sweep cooldown is active"));
     return 0;
   }
@@ -168,22 +249,33 @@ export async function sweepTheWalls(
           returned.push({ video, comments: result.comments });
           videosChecked.push({
             video,
+            pagesFetched: result.pagesFetched,
+            stopReason: result.stopReason,
             commentsReturned: result.returnedCount,
             error: null,
-            alreadyStored: 0,
+            alreadyStored: result.alreadyStored,
             newComments: 0,
+            skipped: result.skipped,
           });
         } catch (e) {
           const error = e instanceof Error ? e.message : String(e);
           videosChecked.push({
             video,
+            pagesFetched: 0,
+            stopReason: "request-error",
             commentsReturned: 0,
             error,
             alreadyStored: 0,
             newComments: 0,
+            skipped: { missingId: 0, missingText: 0, duplicate: 0 },
           });
           logger.error(`${tag} comments fetch failed for video ${video.id}: ${error}`);
         }
+      }
+      const failedVideoCount = videosChecked.filter((item) => item.error).length;
+      if (failedVideoCount > 0) {
+        status = "failed";
+        sweepError = `${failedVideoCount} video comment request${failedVideoCount === 1 ? "" : "s"} failed`;
       }
       const all = returned.flatMap((item) => item.comments);
       if (all.length === 0) return 0;
@@ -210,7 +302,6 @@ export async function sweepTheWalls(
       for (const item of videosChecked) {
         if (item.error) continue;
         const videoComments = returned.find((result) => result.video.id === item.video.id)?.comments ?? [];
-        item.alreadyStored = new Set(videoComments.filter((comment) => known.has(comment.commentId)).map((comment) => comment.commentId)).size;
         item.newComments = new Set(videoComments.filter((comment) => freshOwner.get(comment.commentId) === item.video.id).map((comment) => comment.commentId)).size;
       }
       if (fresh.length > 0) {
@@ -230,6 +321,28 @@ export async function sweepTheWalls(
     }
   })();
   return fetchInFlight;
+}
+
+export async function getHeraldActivityAlerts(now = new Date()): Promise<Array<{
+  id: number;
+  kind: "herald_alert";
+  message: string;
+  createdAt: Date;
+  hasScreenshot: false;
+}>> {
+  const history = await db
+    .select({ message: ashActivity.message, createdAt: ashActivity.createdAt })
+    .from(ashActivity)
+    .where(eq(ashActivity.kind, "herald_sweep"))
+    .orderBy(desc(ashActivity.id))
+    .limit(500);
+  return deriveHeraldAlertMessages(history, now).map((message, index) => ({
+    id: -100 - index,
+    kind: "herald_alert" as const,
+    message,
+    createdAt: now,
+    hasScreenshot: false as const,
+  }));
 }
 
 /**

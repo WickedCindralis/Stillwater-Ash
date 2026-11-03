@@ -6,7 +6,7 @@ import {
   type NextFunction,
 } from "express";
 import { sendMessageSchema, updateSettingsSchema, updatePersonaSchema, updateHeraldCommentSchema, updateDiscordChannelsSchema, chessMoveSchema, connect4MoveSchema, createAshBookSchema, updateAshBookSchema, writeStorySchema, updateStoryChapterSchema, type AshState } from "@workspace/db";
-import { sweepTheWalls, manualSweepWaitMs } from "../lib/ash/herald";
+import { sweepTheWalls, manualSweepWaitMs, getHeraldActivityAlerts } from "../lib/ash/herald";
 import { normalizeTiktokHandle } from "../lib/ash/tiktok-handle";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
@@ -1187,9 +1187,15 @@ router.post("/connect4/resign", requireAuth, async (_req, res): Promise<void> =>
 });
 
 // ── Activity feed ──
-router.get("/activity", requireAuth, async (_req, res): Promise<void> => {
+router.get("/activity", requireAuth, async (req, res): Promise<void> => {
   const events = await storage.getActivity(100);
-  res.json(events);
+  let alerts: Awaited<ReturnType<typeof getHeraldActivityAlerts>> = [];
+  try {
+    alerts = await getHeraldActivityAlerts();
+  } catch (error) {
+    req.log.error({ err: error }, "Could not compute Herald activity alerts");
+  }
+  res.json([...alerts, ...events]);
 });
 
 router.get("/activity/:id/screenshot", requireAuth, async (req, res): Promise<void> => {

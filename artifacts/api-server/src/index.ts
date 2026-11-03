@@ -5,6 +5,7 @@ import { storage } from "./lib/ash/storage";
 import { discordHerald } from "./lib/ash/discord";
 import { startHangoutIdleScheduler } from "./lib/ash/hangout";
 import { startSongWorker } from "./lib/ash/song-service";
+import { startHeraldScheduler } from "./lib/ash/herald-scheduler";
 import { setVectorMemoryReady } from "./lib/ash/vector-memory";
 import { initMemory } from "./lib/ash/vector-memory-runtime.mjs";
 import { migrateLegacyStoryToBook } from "./lib/ash/story-library-migration";
@@ -68,4 +69,5 @@ app.listen(port, async (err) => {
   });
   startHangoutIdleScheduler();
   startSongWorker();
+  startHeraldScheduler();
 });

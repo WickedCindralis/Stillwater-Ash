@@ -33,6 +33,8 @@ MEMORY_HOUSE_NAME = "Stillwater"
 
 [userenv.development]
 MEMORY_CAPTURE_ENABLED = "false"
+HERALD_SCHEDULE_ENABLED = "false"
 
 [userenv.production]
 MEMORY_CAPTURE_ENABLED = "true"
+HERALD_SCHEDULE_ENABLED = "true"

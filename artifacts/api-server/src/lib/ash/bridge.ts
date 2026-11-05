@@ -969,6 +969,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     reply: string,
     allowedIds: ReadonlySet<number>,
     activity?: ProactiveWindowActivity,
+    draftedIds?: Set<number>,
   ): Promise<string> {
     if (!reply || !/^\s*HERALD\s*#?\d+\s*:/im.test(reply)) return reply;
     const kept: string[] = [];
@@ -986,6 +987,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
           const { saveAshDraft } = await import("./herald");
           if (await saveAshDraft(id, m[2])) {
             saved++;
+            draftedIds?.add(id);
             recordProactiveAction(activity, "heraldReply");
           }
         } catch (e) {
@@ -1156,7 +1158,6 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     dispatch?: { correlationId: string; occurrence: number },
   ): Promise<void> {
     let heraldIds: number[] = [];
-    let providerCompleted = false;
     try {
       if (trigger === "message") {
         await storage.logActivity("door_opened", `${door} opened from a message`).catch(() => {});
@@ -1207,7 +1208,6 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       }
 
       const output = await this.callDoorModel(door, page, correlationId);
-      providerCompleted = true;
       // Door output is private housekeeping: never recursively detect doors,
       // add it to chat history, or send it to memory capture.
       if (door === "STATUS") {
@@ -1238,7 +1238,13 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       } else if (door === "NOTES") {
         await this.parseAshNotes(output, activity);
       } else if (door === "HERALD") {
-        await this.parseHeraldDrafts(output, new Set(heraldIds), activity);
+        const draftedIds = new Set<number>();
+        await this.parseHeraldDrafts(output, new Set(heraldIds), activity, draftedIds);
+        const withoutDraft = heraldIds.filter((id) => !draftedIds.has(id));
+        if (withoutDraft.length > 0) {
+          const { releaseHeraldClaim } = await import("./herald");
+          await releaseHeraldClaim(withoutDraft);
+        }
       } else if (door === "BOOKS") {
         const command = parseBookCommand(output);
         if (command) {
@@ -1272,9 +1278,9 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         NOTES: "note",
       };
       recordProactiveFailure(activity, failureAction[door]);
-      if (!providerCompleted && heraldIds.length > 0) {
+      if (heraldIds.length > 0) {
         const { releaseHeraldClaim } = await import("./herald").catch(() => ({ releaseHeraldClaim: async () => {} }));
-        await releaseHeraldClaim(heraldIds).catch((releaseError) => this.error("Could not release failed Herald door claim:", releaseError));
+        await releaseHeraldClaim(heraldIds).catch((releaseError) => this.error("Could not release undrafted Herald claim:", releaseError));
       }
     }
   }

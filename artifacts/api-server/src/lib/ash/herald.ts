@@ -4,6 +4,12 @@ import { logger } from "../logger";
 import { storage } from "./storage";
 import { normalizeTiktokHandle, resolveTiktokHandle } from "./tiktok-handle";
 import { getCommentPageStopReason, getHeraldCommentSkipReason, deriveHeraldAlertMessages } from "./herald-policy";
+import {
+  extractHeraldCommentText,
+  formatHeraldTimestamp,
+  sanitizeHeraldLogValue,
+  summarizeHeraldTextFields,
+} from "./herald-comment-text";
 
 // Court Herald — read-only watcher of Ash's TikTok account via ScrapeCreators.
 // No login, no posting, no automation against TikTok itself: the scraper
@@ -55,6 +61,14 @@ async function scrape(path: string, params: Record<string, string>): Promise<Rec
 type ScrapedVideo = { id: string; desc: string; url: string; postDate: string | null };
 type HeraldSweepTrigger = "message" | "manual" | "schedule";
 type CommentSkipCounts = { missingId: number; missingText: number; duplicate: number };
+type SkippedCommentDetail = {
+  reason: string;
+  commentId: string;
+  author: string;
+  timestamp: string;
+  textFields: string;
+};
+type RecoveredCommentDetail = Omit<SkippedCommentDetail, "reason"> & { source: string };
 type VideoSweepResult = {
   video: ScrapedVideo;
   pagesFetched: number;
@@ -64,6 +78,8 @@ type VideoSweepResult = {
   alreadyStored: number;
   newComments: number;
   skipped: CommentSkipCounts;
+  skipDetails: SkippedCommentDetail[];
+  recoveredText: RecoveredCommentDetail[];
 };
 
 async function fetchRecentVideos(handle: string): Promise<ScrapedVideo[]> {
@@ -95,12 +111,16 @@ async function fetchComments(video: ScrapedVideo): Promise<{
   pagesFetched: number;
   alreadyStored: number;
   skipped: CommentSkipCounts;
+  skipDetails: SkippedCommentDetail[];
+  recoveredText: RecoveredCommentDetail[];
   stopReason: string;
 }> {
   const comments: InsertTiktokComment[] = [];
   const seenIds = new Set<string>();
   const storedIds = new Set<string>();
   const skipped: CommentSkipCounts = { missingId: 0, missingText: 0, duplicate: 0 };
+  const skipDetails: SkippedCommentDetail[] = [];
+  const recoveredText: RecoveredCommentDetail[] = [];
   let returnedCount = 0;
   let pagesFetched = 0;
   let cursor: string | undefined;
@@ -115,20 +135,28 @@ async function fetchComments(video: ScrapedVideo): Promise<{
     const list = Array.isArray(data["comments"]) ? data["comments"] as Array<Record<string, unknown>> : [];
     returnedCount += list.length;
     const parsed = list.map((raw) => {
-      const user = (raw["user"] || {}) as Record<string, unknown>;
-      const created = Number(raw["create_time"] ?? 0);
+      const nestedComment = raw["comment"] && typeof raw["comment"] === "object" ? raw["comment"] as Record<string, unknown> : {};
+      const nestedReply = raw["reply"] && typeof raw["reply"] === "object" ? raw["reply"] as Record<string, unknown> : {};
+      const user = (raw["user"] || nestedComment["user"] || nestedReply["user"] || {}) as Record<string, unknown>;
+      const rawTimestamp = raw["create_time"] ?? raw["createTime"] ?? raw["created_at"] ?? nestedComment["create_time"] ?? nestedReply["create_time"];
+      const timestamp = formatHeraldTimestamp(rawTimestamp);
+      const extracted = extractHeraldCommentText(raw);
+      const text = extracted?.text ?? "";
       return {
         raw,
-        commentId: String(raw["cid"] ?? raw["id"] ?? ""),
-        text: String(raw["text"] ?? ""),
+        commentId: String(raw["cid"] ?? raw["id"] ?? raw["comment_id"] ?? nestedComment["cid"] ?? nestedComment["id"] ?? nestedReply["cid"] ?? nestedReply["id"] ?? ""),
+        text,
+        textSource: extracted?.source ?? "",
+        author: String(user["unique_id"] ?? user["nickname"] ?? raw["author"] ?? ""),
+        timestamp,
         value: {
-          commentId: String(raw["cid"] ?? raw["id"] ?? ""),
+          commentId: String(raw["cid"] ?? raw["id"] ?? raw["comment_id"] ?? nestedComment["cid"] ?? nestedComment["id"] ?? nestedReply["cid"] ?? nestedReply["id"] ?? ""),
           videoId: video.id,
           videoDesc: video.desc,
           videoUrl: video.url,
           author: String(user["unique_id"] ?? user["nickname"] ?? raw["author"] ?? ""),
-          text: String(raw["text"] ?? ""),
-          commentCreatedAt: created > 0 ? new Date(created * 1000) : null,
+          text,
+          commentCreatedAt: timestamp === "unknown" ? null : new Date(timestamp),
         } satisfies InsertTiktokComment,
       };
     });
@@ -145,9 +173,25 @@ async function fetchComments(video: ScrapedVideo): Promise<{
       const skipReason = getHeraldCommentSkipReason(item.commentId, item.text, seenIds);
       if (skipReason) {
         skipped[skipReason === "missing-id" ? "missingId" : skipReason === "missing-text" ? "missingText" : "duplicate"]++;
+        skipDetails.push({
+          reason: skipReason,
+          commentId: item.commentId,
+          author: item.author,
+          timestamp: item.timestamp,
+          textFields: summarizeHeraldTextFields(item.raw),
+        });
         continue;
       }
       seenIds.add(item.commentId);
+      if (item.textSource && item.textSource !== "text") {
+        recoveredText.push({
+          commentId: item.commentId,
+          author: item.author,
+          timestamp: item.timestamp,
+          textFields: summarizeHeraldTextFields(item.raw),
+          source: item.textSource,
+        });
+      }
       if (existingIds.has(item.commentId)) {
         storedIds.add(item.commentId);
         continue;
@@ -177,6 +221,8 @@ async function fetchComments(video: ScrapedVideo): Promise<{
     pagesFetched,
     alreadyStored: storedIds.size,
     skipped,
+    skipDetails,
+    recoveredText,
     stopReason,
   };
 }
@@ -205,6 +251,12 @@ function sweepLogMessage(
     lines.push(
       `Video ${item.video.id} | posted: ${item.video.postDate ?? "unknown"} | pages: ${item.pagesFetched}; stop: ${item.stopReason}; comments returned: ${item.commentsReturned}; already stored: ${item.alreadyStored}; new: ${item.newComments}; skipped missing ID: ${item.skipped.missingId}, missing text: ${item.skipped.missingText}, duplicate: ${item.skipped.duplicate}${item.error ? ` | error: ${item.error}` : ""}`,
     );
+    for (const skipped of item.skipDetails) {
+      lines.push(`Skipped comment | reason: ${skipped.reason}; ID: ${sanitizeHeraldLogValue(skipped.commentId)}; author: ${sanitizeHeraldLogValue(skipped.author)}; timestamp: ${sanitizeHeraldLogValue(skipped.timestamp)}; text fields: ${skipped.textFields}`);
+    }
+    for (const recovered of item.recoveredText) {
+      lines.push(`Comment text recovered | ID: ${sanitizeHeraldLogValue(recovered.commentId)}; author: ${sanitizeHeraldLogValue(recovered.author)}; timestamp: ${sanitizeHeraldLogValue(recovered.timestamp)}; source: ${recovered.source}`);
+    }
   }
   if (error) lines.push(`Error: ${error}`);
   return lines.join("\n");
@@ -270,6 +322,8 @@ export async function sweepTheWalls(
             alreadyStored: result.alreadyStored,
             newComments: 0,
             skipped: result.skipped,
+            skipDetails: result.skipDetails,
+            recoveredText: result.recoveredText,
           });
         } catch (e) {
           const error = e instanceof Error ? e.message : String(e);
@@ -282,6 +336,8 @@ export async function sweepTheWalls(
             alreadyStored: 0,
             newComments: 0,
             skipped: { missingId: 0, missingText: 0, duplicate: 0 },
+            skipDetails: [],
+            recoveredText: [],
           });
           logger.error(`${tag} comments fetch failed for video ${video.id}: ${error}`);
         }
@@ -377,8 +433,8 @@ export async function getHeraldActivityAlerts(now = new Date()): Promise<Array<{
  * quoted-data boundaries with an instruction not to obey anything inside, and
  * the total size is capped.
  *
- * Call `releaseHeraldClaim(ids)` if the model call fails, so the comments are
- * delivered on the next message instead of being silently lost.
+ * Claims without a saved draft are released after the model response, so an
+ * empty or non-HERALD response does not silently remove them from Ash's queue.
  */
 export async function claimHeraldPacket(): Promise<{ packet: string; ids: number[] }> {
   const candidates = await storage.getUnseenTiktokComments(10);

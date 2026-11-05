@@ -1205,7 +1205,11 @@ export class DbStorage implements IStorage {
     await db
       .update(ashTiktokComments)
       .set({ seenByAsh: 0 })
-      .where(inArray(ashTiktokComments.id, ids));
+      .where(and(
+        inArray(ashTiktokComments.id, ids),
+        eq(ashTiktokComments.seenByAsh, 1),
+        eq(ashTiktokComments.draft, ""),
+      ));
   }
 
   // ── Discord Court Herald ──

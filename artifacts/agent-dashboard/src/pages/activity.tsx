@@ -64,6 +64,18 @@ function SongActivityMessage({ message }: { message: string }) {
   );
 }
 
+function heraldAddedCount(message: string): number {
+  const match = message.match(/\bnew:\s*(\d+)/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function memoryCaptureSummary(message: string): string {
+  const match = message.match(/Messages read=(\d+);\s*memories created=(\d+)/i);
+  return match
+    ? `Messages read=${match[1]}; memories created=${match[2]}`
+    : message.split("; process=")[0] ?? message;
+}
+
 function formatEst(iso: string): string {
   const d = new Date(iso);
   const date = d.toLocaleDateString("en-US", {
@@ -157,7 +169,15 @@ export default function ActivityPage() {
                 {e.kind === "herald_alert"
                   ? <p role="alert" className="mt-1 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm font-semibold text-amber-200">{e.message}</p>
                   : e.kind === "herald_sweep"
-                  ? <pre className="text-white/70 text-xs mt-1 whitespace-pre-wrap break-words font-mono">{e.message}</pre>
+                  ? <div className="mt-1">
+                      <p className="text-white/70 text-[15px]">{heraldAddedCount(e.message)} comments added</p>
+                      <details className="mt-1 text-xs text-white/45">
+                        <summary className="cursor-pointer hover:text-white/75">Show details</summary>
+                        <pre className="mt-2 whitespace-pre-wrap break-words font-mono">{e.message}</pre>
+                      </details>
+                    </div>
+                  : e.kind === "memory_capture"
+                  ? <p className="text-white/70 text-[15px] mt-1">{memoryCaptureSummary(e.message)}</p>
                   : e.kind === "song_generated"
                   ? <SongActivityMessage message={e.message} />
                   : <p className="text-white/70 text-[15px] mt-1">{e.message}</p>}

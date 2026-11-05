@@ -873,15 +873,10 @@ export class DbStorage implements IStorage {
     const savedImageKind = hasImage ? imageKind ?? (msg.role === "ash" ? "generated" : "upload") : null;
     return db.transaction(async (tx) => {
       const [message] = await tx.insert(ashMessages).values({ ...msg, imageUrl }).returning();
-      if (savedImageKind) {
-        const descriptions = {
-          upload: "Image uploaded to chat history",
-          generated: "Generated image saved to chat history",
-          screenshot: "Screenshot saved to chat history",
-        };
+      if (savedImageKind === "screenshot") {
         await tx.insert(ashActivity).values({
-          kind: savedImageKind,
-          message: descriptions[savedImageKind],
+          kind: "screenshot",
+          message: "Screenshot saved to chat history",
         });
       }
       return message!;

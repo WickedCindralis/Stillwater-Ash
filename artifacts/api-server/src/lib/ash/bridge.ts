@@ -39,6 +39,14 @@ import { ASH_NOTES_MAX_WORDS, type AshDiscordMessage, type AshMessage } from "@w
 import { randomUUID } from "node:crypto";
 import { getAshMemoryRecall, recordAshMemoryMessage, getPendingAshMemoryCount, runAshMemoryReview } from "./vector-memory";
 import { extractOpenDoors, launchDoorFollowUps, type AshDoor } from "./door-command";
+import {
+  createProactiveWindowActivity,
+  formatProactiveWindowActivity,
+  recordProactiveAction,
+  recordProactiveFailure,
+  type ProactiveAction,
+  type ProactiveWindowActivity,
+} from "./proactive-window-activity";
 import { normalizeBookTitle, parseBookCommand } from "./book-command";
 
 // Single-agent bridge for Ash — heartbeats, 8 status tiers with dynamic ping
@@ -857,7 +865,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
   }
 
   // ── Tag parsing ──
-  private async parseStatusChanges(reply: string): Promise<string> {
+  private async parseStatusChanges(reply: string, activity?: ProactiveWindowActivity): Promise<string> {
     if (!reply) return reply;
     let cleaned = reply;
     const statusPattern = /^\s*\[STATUS CHANGED TO ([A-Z_ ]+)\.?\]\s*$/gim;
@@ -872,9 +880,11 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
           this.statusEnteredAt = Date.now();
           this.log(`Status changed by Ash → ${mapped}`);
           await storage.logActivity("status_change", `${oldStatus} -> ${mapped}`).catch(() => {});
+          recordProactiveAction(activity, "statusChange");
         } catch (e) {
           this.error("Failed to persist status change:", e);
           await storage.logActivity("door_failure", `STATUS change failed; error=${e instanceof Error ? e.message : String(e)}`).catch(() => {});
+          recordProactiveFailure(activity, "statusChange");
         }
       }
       cleaned = cleaned.replace(match[0], "");
@@ -882,7 +892,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     return cleaned.replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  private async parsePingToggles(reply: string): Promise<string> {
+  private async parsePingToggles(reply: string, activity?: ProactiveWindowActivity): Promise<string> {
     if (!reply) return reply;
     let cleaned = reply;
     if (/\[PINGS_OFF\]/i.test(cleaned)) {
@@ -890,7 +900,11 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
         await storage.updateState({ selfPromptPaused: 1 });
         this.log("Proactive pings turned OFF by Ash");
         await storage.logActivity("pings_off", "Ash_Cindralis disabled their own proactive pings").catch(() => {});
-      } catch (e) { this.error("Failed to persist PINGS_OFF:", e); }
+        recordProactiveAction(activity, "pingSetting");
+      } catch (e) {
+        this.error("Failed to persist PINGS_OFF:", e);
+        recordProactiveFailure(activity, "pingSetting");
+      }
       cleaned = cleaned.replace(/\[PINGS_OFF\]/gi, "");
     }
     if (/\[PINGS_ON\]/i.test(cleaned)) {
@@ -898,13 +912,17 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
         await storage.updateState({ selfPromptPaused: 0 });
         this.log("Proactive pings turned ON by Ash");
         await storage.logActivity("pings_on", "Ash_Cindralis enabled their own proactive pings").catch(() => {});
-      } catch (e) { this.error("Failed to persist PINGS_ON:", e); }
+        recordProactiveAction(activity, "pingSetting");
+      } catch (e) {
+        this.error("Failed to persist PINGS_ON:", e);
+        recordProactiveFailure(activity, "pingSetting");
+      }
       cleaned = cleaned.replace(/\[PINGS_ON\]/gi, "");
     }
     return cleaned.replace(/\n{3,}/g, "\n\n").trim();
   }
 
-  private async parseDiaryEntries(reply: string): Promise<string> {
+  private async parseDiaryEntries(reply: string, activity?: ProactiveWindowActivity): Promise<string> {
     if (!reply) return reply;
     const entries: string[] = [];
 
@@ -931,9 +949,11 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
         await storage.createDiaryEntry({ content: entry });
         this.log(`Diary entry saved (${entry.length} chars)`);
         await storage.logActivity("door_diary", "DIARY saved").catch(() => {});
+        recordProactiveAction(activity, "diaryEntry");
       } catch (e) {
         this.error("Failed to save diary entry:", e);
         await storage.logActivity("door_failure", `DIARY save failed; error=${e instanceof Error ? e.message : String(e)}`).catch(() => {});
+        recordProactiveFailure(activity, "diaryEntry");
       }
     }
     cleaned = kept.join("\n");
@@ -944,7 +964,11 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
   // Wicked to copy out by hand. Saved to the Herald's draft boxes (only if
   // empty; never clobbers Wicked's own writing). Lines are stripped from the
   // visible reply.
-  private async parseHeraldDrafts(reply: string, allowedIds: ReadonlySet<number>): Promise<string> {
+  private async parseHeraldDrafts(
+    reply: string,
+    allowedIds: ReadonlySet<number>,
+    activity?: ProactiveWindowActivity,
+  ): Promise<string> {
     if (!reply || !/^\s*HERALD\s*#?\d+\s*:/im.test(reply)) return reply;
     const kept: string[] = [];
     let saved = 0;
@@ -959,9 +983,13 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
         }
         try {
           const { saveAshDraft } = await import("./herald");
-          if (await saveAshDraft(id, m[2])) saved++;
+          if (await saveAshDraft(id, m[2])) {
+            saved++;
+            recordProactiveAction(activity, "heraldReply");
+          }
         } catch (e) {
           this.error("Failed to save herald draft:", e);
+          recordProactiveFailure(activity, "heraldReply");
         }
         continue;
       }
@@ -1009,7 +1037,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
 
   // [NOTES] ... [/NOTES] — append one automatically dated entry to Ash's
   // living packet section. Existing entries are never overwritten or truncated.
-  private async parseAshNotes(reply: string): Promise<string> {
+  private async parseAshNotes(reply: string, activity?: ProactiveWindowActivity): Promise<string> {
     if (!reply) return reply;
     const m = reply.match(/^\s*\[NOTES\]\s*$([\s\S]*?)^\s*\[\/NOTES\]\s*$/im);
     if (!m) return reply;
@@ -1021,14 +1049,17 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
         if (result.saved) {
           this.log(`Ash appended a Note (${result.wordCount}/${ASH_NOTES_MAX_WORDS} words used)`);
           await storage.logActivity("door_notes", "NOTES added").catch(() => {});
+          recordProactiveAction(activity, "note");
         } else {
           this.log(`Ash's Notes are full (${result.wordCount}/${ASH_NOTES_MAX_WORDS} words); entry not saved`);
           await storage.logActivity("persona", "Ash's Notes are full; his new entry was not saved").catch(() => {});
+          recordProactiveFailure(activity, "note");
         }
       }
     } catch (e) {
       this.error("Failed to save Ash's Notes:", e);
       await storage.logActivity("door_failure", `NOTES save failed; error=${e instanceof Error ? e.message : String(e)}`).catch(() => {});
+      recordProactiveFailure(activity, "note");
     }
     return (reply.substring(0, m.index!) + reply.substring(m.index! + m[0].length))
       .replace(/\n{3,}/g, "\n\n").trim();
@@ -1117,7 +1148,11 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     }
   }
 
-  private async runDoor(door: AshDoor, trigger: "message" | "proactive" = "message"): Promise<void> {
+  private async runDoor(
+    door: AshDoor,
+    trigger: "message" | "proactive" = "message",
+    activity?: ProactiveWindowActivity,
+  ): Promise<void> {
     let heraldIds: number[] = [];
     let providerCompleted = false;
     try {
@@ -1129,6 +1164,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         const result = await runAshMemoryReview((reviewPrompt) => this.callDoorModel(door, reviewPrompt));
         if (!result) return;
         await storage.logActivity("memory_review", `Shown=${result.shown}; changed=${result.scored}; accepted as-is=${result.silenceAccepted}; pin requests=${result.pinRequests}; wording changes=${result.wordingProposals}; triggered by ${trigger}`).catch(() => {});
+        recordProactiveAction(activity, "memoriesReviewed", result.shown);
         return;
       }
       if (door === "STATUS") {
@@ -1151,7 +1187,9 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         page = `[AVAILABLE BOOKS]\n${lines.join("\n") || "(No books yet.)"}\n\nTo write, reply WRITE: <title>. To start a new book, reply NEW: <title>.`;
       } else if (door === "HERALD") {
         const { sweepTheWalls, claimHeraldPacket } = await import("./herald");
-        await sweepTheWalls(false, trigger === "message" ? "message" : "schedule");
+        const sweep = await sweepTheWalls(false, trigger === "message" ? "message" : "schedule");
+        if (sweep.status === "failed") recordProactiveFailure(activity, "heraldComment");
+        else recordProactiveAction(activity, "heraldComment", sweep.added);
         const claimed = await claimHeraldPacket();
         heraldIds = claimed.ids;
         if (!claimed.packet) return;
@@ -1168,23 +1206,25 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       // Door output is private housekeeping: never recursively detect doors,
       // add it to chat history, or send it to memory capture.
       if (door === "STATUS") {
-        const statusParsed = await this.parseStatusChanges(output);
-        await this.parsePingToggles(statusParsed);
+        const statusParsed = await this.parseStatusChanges(output, activity);
+        await this.parsePingToggles(statusParsed, activity);
       } else if (door === "SONG") {
         const command = stripSongCommand(output);
         if (command.prompt && !command.error) {
           await enqueueSong(command.prompt, "door:SONG", randomUUID(), command.title, command.lyrics);
           await storage.logActivity("song_queued", "SONG queued").catch(() => {});
+          recordProactiveAction(activity, "song");
         } else if (command.error) {
           this.error(`Song door command rejected: ${command.error}`);
           await storage.logActivity("door_failure", `SONG request rejected; error=${command.error}`).catch(() => {});
+          recordProactiveFailure(activity, "song");
         }
       } else if (door === "DIARY") {
-        await this.parseDiaryEntries(output);
+        await this.parseDiaryEntries(output, activity);
       } else if (door === "NOTES") {
-        await this.parseAshNotes(output);
+        await this.parseAshNotes(output, activity);
       } else if (door === "HERALD") {
-        await this.parseHeraldDrafts(output, new Set(heraldIds));
+        await this.parseHeraldDrafts(output, new Set(heraldIds), activity);
       } else if (door === "BOOKS") {
         const command = parseBookCommand(output);
         if (command) {
@@ -1194,18 +1234,30 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
             if (book) {
               await storage.logActivity("door_books", `BOOKS: ${book.title}; writing started`).catch(() => {});
               await this.startStoryWrite(book.id);
+              recordProactiveAction(activity, "bookContinued");
             }
             else this.log(`Ignored BOOKS write for unavailable title "${command.title}"`);
           } else {
             const created = await storage.createBook(command.title, command.premise);
             await storage.logActivity("door_books", `NEW book started: ${created.title}`).catch(() => {});
             await this.startStoryWrite(created.id, command.premise ? "Write the opening chapter using the premise in this book's Story Packet." : "Write the opening chapter of this book.");
+            recordProactiveAction(activity, "bookStarted");
           }
         }
       }
     } catch (error) {
       this.error(`Ash door failed [door=${door}]:`, error);
       await storage.logActivity("door_failure", `${door} failed; error=${error instanceof Error ? error.message : String(error)}`).catch(() => {});
+      const failureAction: Record<AshDoor, ProactiveAction> = {
+        STATUS: "statusChange",
+        SONG: "song",
+        DIARY: "diaryEntry",
+        REVIEWS: "memoriesReviewed",
+        BOOKS: "bookStarted",
+        HERALD: "heraldReply",
+        NOTES: "note",
+      };
+      recordProactiveFailure(activity, failureAction[door]);
       if (!providerCompleted && heraldIds.length > 0) {
         const { releaseHeraldClaim } = await import("./herald").catch(() => ({ releaseHeraldClaim: async () => {} }));
         await releaseHeraldClaim(heraldIds).catch((releaseError) => this.error("Could not release failed Herald door claim:", releaseError));
@@ -1213,13 +1265,27 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     }
   }
 
-  private launchDoors(doors: readonly AshDoor[], trigger: "message" | "proactive" = "message"): void {
-    launchDoorFollowUps(
+  private launchDoors(
+    doors: readonly AshDoor[],
+    trigger: "message" | "proactive" = "message",
+    activity?: ProactiveWindowActivity,
+  ): Promise<void> {
+    return launchDoorFollowUps(
       doors,
-      (door) => this.runDoor(door, trigger),
+      (door) => this.runDoor(door, trigger, activity),
       async (door, error) => {
         this.error(`Unhandled door failure [door=${door}]:`, error);
         await storage.logActivity("door_failure", `${door} failed; error=${error instanceof Error ? error.message : String(error)}`).catch(() => {});
+        const failureAction: Record<AshDoor, ProactiveAction> = {
+          STATUS: "statusChange",
+          SONG: "song",
+          DIARY: "diaryEntry",
+          REVIEWS: "memoriesReviewed",
+          BOOKS: "bookStarted",
+          HERALD: "heraldReply",
+          NOTES: "note",
+        };
+        recordProactiveFailure(activity, failureAction[door]);
       },
     );
   }
@@ -1464,15 +1530,14 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
         }
         this.log(`Proactive window: OpenAI response received [chars=${response.length}]`);
         if (!response) {
-          await storage.logActivity(
-            "proactive_window",
-            `${new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })} - NONE; ${proactiveActivityContext()}`,
-          ).catch(() => {});
+          await storage.logActivity("proactive_window", "PROACTIVE WINDOW: no action").catch(() => {});
           continue;
         }
         const { doors, text } = extractOpenDoors(response);
-        await storage.logActivity("proactive_window", `${new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })} - ${doors.length ? doors.join(", ") : "NONE"}; process=${processName}; pid=${process.pid}; startedAt=${new Date(proactiveStartedAt).toISOString()}; durationMs=${Date.now() - proactiveStartedAt}`).catch(() => {});
-        this.launchDoors(doors, "proactive");
+        const activity = createProactiveWindowActivity();
+        void this.launchDoors(doors, "proactive", activity).then(async () => {
+          await storage.logActivity("proactive_window", formatProactiveWindowActivity(activity)).catch(() => {});
+        });
         const trimmed = text.trim();
         if (trimmed.toUpperCase() === "NONE" || trimmed.length === 0) {
           this.log("Self-prompt: nothing to record this window");
@@ -1481,6 +1546,7 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
         }
       } catch (e) {
         this.error("Self-prompt loop error:", e);
+        await storage.logActivity("proactive_window", "PROACTIVE WINDOW: no action").catch(() => {});
         await storage.logActivity("proactive_failure", `Proactive window failed; error=${e instanceof Error ? e.message : String(e)}; process=${processName}; pid=${process.pid}; startedAt=${new Date(proactiveStartedAt).toISOString()}; durationMs=${Date.now() - proactiveStartedAt}`).catch(() => {});
       } finally {
         this.processingLock = false;

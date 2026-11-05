@@ -7,12 +7,12 @@ export function launchDoorFollowUps(
   doors: readonly AshDoor[],
   runDoor: (door: AshDoor) => Promise<void>,
   onFailure: (door: AshDoor, error: unknown) => void,
-): void {
-  for (const door of doors) {
-    void Promise.resolve()
+): Promise<void> {
+  return Promise.all(doors.map((door) =>
+    Promise.resolve()
       .then(() => runDoor(door))
-      .catch((error) => onFailure(door, error));
-  }
+      .catch((error) => onFailure(door, error)),
+  )).then(() => undefined);
 }
 
 export function extractOpenDoors(reply: string): { doors: AshDoor[]; text: string } {

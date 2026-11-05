@@ -82,6 +82,7 @@ type VideoSweepResult = {
   skipped: CommentSkipCounts;
   skipDetails: SkippedCommentDetail[];
   recoveredText: RecoveredCommentDetail[];
+  paginationDetails: string[];
 };
 
 async function fetchRecentVideos(handle: string): Promise<ScrapedVideo[]> {
@@ -115,6 +116,7 @@ async function fetchComments(video: ScrapedVideo): Promise<{
   skipped: CommentSkipCounts;
   skipDetails: SkippedCommentDetail[];
   recoveredText: RecoveredCommentDetail[];
+  paginationDetails: string[];
   stopReason: string;
 }> {
   const comments: InsertTiktokComment[] = [];
@@ -123,6 +125,7 @@ async function fetchComments(video: ScrapedVideo): Promise<{
   const skipped: CommentSkipCounts = { missingId: 0, missingText: 0, duplicate: 0 };
   const skipDetails: SkippedCommentDetail[] = [];
   const recoveredText: RecoveredCommentDetail[] = [];
+  const paginationDetails: string[] = [];
   let returnedCount = 0;
   let pagesFetched = 0;
   let cursor: string | undefined;
@@ -131,6 +134,7 @@ async function fetchComments(video: ScrapedVideo): Promise<{
   for (let pageNumber = 1; pageNumber <= MAX_COMMENT_PAGES_PER_VIDEO; pageNumber++) {
     const data = await scrape("/v1/tiktok/video/comments", {
       url: video.url,
+      trim: "false",
       ...(cursor ? { cursor } : {}),
     });
     pagesFetched++;
@@ -212,7 +216,9 @@ async function fetchComments(video: ScrapedVideo): Promise<{
     }
 
     const rawCursor = data["cursor"];
-    const hasMore = data["has_more"] === true || data["has_more"] === 1;
+    const rawHasMore = data["has_more"];
+    const hasMore = rawHasMore === true || Number(rawHasMore) === 1;
+    paginationDetails.push(`page ${pageNumber}: returned ${list.length}; has_more=${String(rawHasMore ?? "missing")}; cursor=${String(rawCursor ?? "missing")}`);
     const stop = getCommentPageStopReason({
       hasStoredComment: existingIds.size > 0,
       hasMore,
@@ -235,6 +241,7 @@ async function fetchComments(video: ScrapedVideo): Promise<{
     skipped,
     skipDetails,
     recoveredText,
+    paginationDetails,
     stopReason,
   };
 }
@@ -263,6 +270,7 @@ function sweepLogMessage(
     lines.push(
       `Video ${item.video.id} | posted: ${item.video.postDate ?? "unknown"} | pages: ${item.pagesFetched}; stop: ${item.stopReason}; comments returned: ${item.commentsReturned}; already stored: ${item.alreadyStored}; new: ${item.newComments}; skipped missing ID: ${item.skipped.missingId}, missing text: ${item.skipped.missingText}, duplicate: ${item.skipped.duplicate}${item.error ? ` | error: ${item.error}` : ""}`,
     );
+    lines.push(`Pagination: ${item.paginationDetails.join(" | ") || "(no page response)"}`);
     for (const skipped of item.skipDetails) {
       lines.push(`Skipped comment | reason: ${skipped.reason}; ID: ${sanitizeHeraldLogValue(skipped.commentId)}; author: ${sanitizeHeraldLogValue(skipped.author)}; timestamp: ${sanitizeHeraldLogValue(skipped.timestamp)}; text fields: ${skipped.textFields}`);
     }
@@ -336,6 +344,7 @@ export async function sweepTheWalls(
             skipped: result.skipped,
             skipDetails: result.skipDetails,
             recoveredText: result.recoveredText,
+            paginationDetails: result.paginationDetails,
           });
         } catch (e) {
           const error = e instanceof Error ? e.message : String(e);
@@ -350,6 +359,7 @@ export async function sweepTheWalls(
             skipped: { missingId: 0, missingText: 0, duplicate: 0 },
             skipDetails: [],
             recoveredText: [],
+            paginationDetails: [],
           });
           logger.error(`${tag} comments fetch failed for video ${video.id}: ${error}`);
         }

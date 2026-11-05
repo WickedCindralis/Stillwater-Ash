@@ -26,7 +26,7 @@ function mentionText(value: unknown): string {
 function shareCommentText(value: unknown): string {
   const info = record(value);
   const description = stringAt(info?.["desc"]);
-  const match = description.match(/(?:'|’|’)s comment:\s*([\s\S]*)$/i);
+  const match = description.match(/(?:'|’)s comment:\s*([\s\S]*)$/i);
   return match?.[1]?.trim() ?? "";
 }
 
@@ -54,11 +54,13 @@ const TEXT_FIELD_PATHS = [
   "text", "comment_text", "commentText", "content", "desc",
   "comment.text", "reply.text", "share_info.desc", "text_extra",
   "comment.text_extra", "reply.text_extra",
+  "reply_comment", "reply_comment.text", "reply_comment.text_extra",
 ] as const;
 
 export function summarizeHeraldTextFields(raw: ProviderComment, maxValueLength = 120): string {
   const comment = record(raw["comment"]);
   const reply = record(raw["reply"]);
+  const replyComment = record(raw["reply_comment"]);
   const shareInfo = record(raw["share_info"]);
   const values: Record<string, unknown> = {
     text: raw["text"],
@@ -72,6 +74,9 @@ export function summarizeHeraldTextFields(raw: ProviderComment, maxValueLength =
     text_extra: raw["text_extra"],
     "comment.text_extra": comment?.["text_extra"],
     "reply.text_extra": reply?.["text_extra"],
+    reply_comment: raw["reply_comment"],
+    "reply_comment.text": replyComment?.["text"],
+    "reply_comment.text_extra": replyComment?.["text_extra"],
   };
   const present = TEXT_FIELD_PATHS.flatMap((path) => {
     const value = values[path];

@@ -36,4 +36,15 @@ export const ashSongClips = pgTable("ash_song_clips", {
   index("ash_song_clips_job_idx").on(table.jobId),
 ]);
 
+// Keeps durable App Storage paths separate from the original provider clip rows.
+export const ashSongStoredAudio = pgTable("ash_song_stored_audio", {
+  id: serial("id").primaryKey(),
+  clipRowId: integer("clip_row_id").notNull().references(() => ashSongClips.id),
+  objectPath: text("object_path").notNull(),
+  contentType: text("content_type").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("ash_song_stored_audio_clip_idx").on(table.clipRowId),
+]);
+
 export type AshSongJob = typeof ashSongJobs.$inferSelect;

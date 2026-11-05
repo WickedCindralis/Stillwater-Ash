@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Storage } from "@google-cloud/storage";
 
 const SIDECAR = "http://127.0.0.1:1106";
@@ -63,4 +63,38 @@ export async function deleteImageObject(objectPath: string): Promise<void> {
   const { bucket, prefix } = storageLocation();
   const objectName = `${prefix ? `${prefix}/` : ""}${objectPath.slice("/objects/".length)}`;
   await client.bucket(bucket).file(objectName).delete({ ignoreNotFound: true });
+}
+
+export async function saveSongAudioFromUrl(urlText: string, jobId: string, clipId: string): Promise<{ objectPath: string; contentType: string }> {
+  const url = new URL(urlText);
+  if (url.protocol !== "https:" || url.hostname !== "files.aimusicapi.ai") {
+    throw new Error("Song audio URL is not an approved provider URL");
+  }
+  const { bucket, prefix } = storageLocation();
+  const hash = createHash("sha256").update(`${jobId}:${clipId}`).digest("hex");
+  const objectName = `${prefix ? `${prefix}/` : ""}music/${hash}.mp3`;
+  const file = client.bucket(bucket).file(objectName);
+  const [exists] = await file.exists();
+  if (exists) return { objectPath: `/objects/${objectName.slice(prefix ? prefix.length + 1 : 0)}`, contentType: "audio/mpeg" };
+
+  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  if (!response.ok) throw new Error(`Could not download song audio (HTTP ${response.status})`);
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "audio/mpeg";
+  if (!contentType.startsWith("audio/")) throw new Error("Provider returned a non-audio file");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > 100 * 1024 * 1024) throw new Error("Song audio size is invalid");
+  await file.save(bytes, { resumable: false, metadata: { contentType, cacheControl: "private, max-age=31536000" } });
+  return { objectPath: `/objects/${objectName.slice(prefix ? prefix.length + 1 : 0)}`, contentType };
+}
+
+export async function readSongAudioObject(objectPath: string): Promise<{ bytes: Buffer; contentType: string }> {
+  if (!objectPath.startsWith("/objects/music/")) throw new Error("Invalid song audio object reference");
+  const { bucket, prefix } = storageLocation();
+  const objectName = `${prefix ? `${prefix}/` : ""}${objectPath.slice("/objects/".length)}`;
+  const file = client.bucket(bucket).file(objectName);
+  const [metadata] = await file.getMetadata();
+  const [bytes] = await file.download();
+  const contentType = String(metadata.contentType || "audio/mpeg");
+  if (!contentType.startsWith("audio/")) throw new Error("Stored object is not audio");
+  return { bytes, contentType };
 }

@@ -2,7 +2,7 @@ import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AshState, SystemInfo } from "@/lib/types";
-import { Flame, Smartphone, Activity, Server, LogOut, Brain } from "lucide-react";
+import { Flame, Smartphone, Activity, Server, LogOut, Brain, Music2 } from "lucide-react";
 import { SiDiscord } from "react-icons/si";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -135,6 +135,16 @@ export default function HomePage() {
             <Brain className="w-5 h-5 text-gold/70 self-end -mb-6" />
             <span className="font-serif text-2xl text-gold">Memory</span>
             <span className="text-xs text-white/40">Ash’s memories & recall</span>
+          </Link>
+
+          <Link
+            href="/music"
+            className="group border border-gold/50 rounded-2xl bg-black/60 hover:bg-gold/5 transition-colors px-6 py-8 flex flex-col items-center justify-center gap-3"
+            data-testid="link-home-music"
+          >
+            <Music2 className="w-5 h-5 text-gold/70 self-end -mb-6" />
+            <span className="font-serif text-2xl text-gold">Music</span>
+            <span className="text-xs text-white/40">Ash’s songs & lyric archive</span>
           </Link>
         </div>
       </div>

@@ -14,6 +14,7 @@ import DiscordPage from "./pages/discord";
 import PacketPage from "./pages/packet";
 import StoryPage from "./pages/story";
 import MemoryPage from "./pages/memory";
+import MusicPage from "./pages/music";
 import { Power } from "lucide-react";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -154,6 +155,11 @@ function Router() {
       <Route path="/memory">
         <AuthGate>
           <MemoryPage />
+        </AuthGate>
+      </Route>
+      <Route path="/music">
+        <AuthGate>
+          <MusicPage />
         </AuthGate>
       </Route>
       <Route>

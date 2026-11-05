@@ -3,7 +3,7 @@ import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-or
 import { db, ashActivity, ashSongClips, ashSongJobs, type AshSongJob } from "@workspace/db";
 import { logger } from "../logger";
 import { storage } from "./storage";
-import { createSong, pollSong, type SongClip } from "./song-provider";
+import { createSong, pollSong, SongProviderError, type SongClip } from "./song-provider";
 
 export const SONG_POLL_INTERVAL_MS = 2 * 60_000;
 const WORKER_TICK_MS = 30_000;
@@ -62,10 +62,19 @@ async function failSong(
   token: string,
   reason: string,
   activityKind: "song_failed" | "song_request_failed" | null = "song_failed",
+  createResponse?: { status: number | null; body: string | null },
 ): Promise<void> {
   const saved = await db.transaction(async (tx) => {
     const rows = await tx.update(ashSongJobs).set({
-      status: "failed", lastError: reason.slice(0, 500), leaseToken: null,
+      status: "failed",
+      lastError: createResponse
+        ? JSON.stringify({
+            message: reason.slice(0, 500),
+            providerStatus: createResponse.status,
+            providerResponseBody: createResponse.body,
+          })
+        : reason.slice(0, 500),
+      leaseToken: null,
       leaseUntil: null, updatedAt: new Date(),
     }).where(and(eq(ashSongJobs.id, job.id), eq(ashSongJobs.status, job.status), eq(ashSongJobs.leaseToken, token)))
       .returning({ id: ashSongJobs.id });
@@ -136,7 +145,11 @@ async function submitSong(job: AshSongJob, token: string, key: string): Promise<
     logger.info({ jobId: job.id, taskId, nextPollMs: SONG_POLL_INTERVAL_MS }, "[ash-song] Provider task accepted");
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    await failSong({ ...job, status: "starting" }, token, reason, "song_request_failed");
+    const createResponse = {
+      status: error instanceof SongProviderError ? error.status ?? null : null,
+      body: error instanceof SongProviderError ? error.responseBody ?? null : null,
+    };
+    await failSong({ ...job, status: "starting" }, token, reason, "song_request_failed", createResponse);
   }
 }
 

@@ -77,3 +77,27 @@ test("failed and malformed results never create success links", async () => {
   );
   await assert.rejects(createSong({ description: "demo", title: null, lyrics: null }, "fake-test-key", mockFetch({ error: "invalid" }, 401)), /HTTP 401/);
 });
+
+test("failed create errors retain status and sanitized provider response body", async () => {
+  const responseBody = JSON.stringify({
+    error: "insufficient credits",
+    api_key: "fake-test-key",
+    details: { token: "provider-secret", retry_after: 30 },
+  });
+  const fetcher = (async () => new Response(responseBody, {
+    status: 402,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch;
+
+  await assert.rejects(
+    createSong({ description: "test", title: null, lyrics: null }, "fake-test-key", fetcher),
+    (error: unknown) => {
+      assert.ok(error instanceof SongProviderError);
+      assert.equal(error.status, 402);
+      assert.match(error.responseBody ?? "", /insufficient credits/);
+      assert.match(error.responseBody ?? "", /retry_after/);
+      assert.doesNotMatch(error.responseBody ?? "", /fake-test-key|provider-secret/);
+      return true;
+    },
+  );
+});

@@ -17,12 +17,44 @@ export type SongTaskResult =
   | { status: "succeeded"; clips: SongClip[] };
 
 export class SongProviderError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly responseBody?: string) {
     super(message);
   }
 }
 
-async function request(path: string, key: string, init: RequestInit, fetcher: typeof fetch): Promise<{ body: Record<string, unknown>; httpStatus: number }> {
+function redactSensitiveValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSensitiveValue);
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [name, item] of Object.entries(value as Record<string, unknown>)) {
+    result[name] = /authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|credential|cookie/i.test(name)
+      ? "[REDACTED]"
+      : redactSensitiveValue(item);
+  }
+  return result;
+}
+
+export function sanitizeProviderResponseBody(body: string, apiKey: string): string {
+  let safeBody = body;
+  try {
+    safeBody = JSON.stringify(redactSensitiveValue(JSON.parse(body)));
+  } catch {
+    safeBody = body.replace(
+      /((?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|credential|cookie)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      "$1[REDACTED]",
+    );
+  }
+  if (apiKey.length >= 8) safeBody = safeBody.split(apiKey).join("[REDACTED]");
+  safeBody = safeBody.replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[REDACTED]");
+  return safeBody;
+}
+
+async function request(
+  path: string,
+  key: string,
+  init: RequestInit,
+  fetcher: typeof fetch,
+): Promise<{ body: Record<string, unknown>; httpStatus: number; responseBody: string }> {
   const response = await fetcher(`${ORIGIN}${path}`, {
     ...init,
     headers: {
@@ -31,16 +63,25 @@ async function request(path: string, key: string, init: RequestInit, fetcher: ty
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!response.ok) throw new SongProviderError(`Music provider returned HTTP ${response.status}`, response.status);
-  const body: unknown = await response.json();
+  const rawBody = await response.text();
+  const responseBody = sanitizeProviderResponseBody(rawBody, key);
+  if (!response.ok) {
+    throw new SongProviderError(`Music provider returned HTTP ${response.status}`, response.status, responseBody);
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    throw new SongProviderError("Music provider returned an invalid response", response.status, responseBody);
+  }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new SongProviderError("Music provider returned an invalid response");
+    throw new SongProviderError("Music provider returned an invalid response", response.status, responseBody);
   }
   const record = body as Record<string, unknown>;
   if (typeof record.code === "number" && record.code !== 200) {
-    throw new SongProviderError(`Music provider returned code ${record.code}`);
+    throw new SongProviderError(`Music provider returned code ${record.code}`, response.status, responseBody);
   }
-  return { body: record, httpStatus: response.status };
+  return { body: record, httpStatus: response.status, responseBody };
 }
 
 export type SongRequest = { description: string; title: string | null; lyrics: string | null };
@@ -55,7 +96,7 @@ export async function createSong(song: SongRequest, key: string, fetcher: typeof
   const description = song.lyrics === null
     ? { custom_mode: false, gpt_description_prompt: song.description }
     : { custom_mode: true, title: song.title, tags: song.description, prompt: song.lyrics };
-  const { body } = await request("/api/v1/sonic/create", key, {
+  const { body, httpStatus, responseBody } = await request("/api/v1/sonic/create", key, {
     method: "POST",
     body: JSON.stringify({
       task_type: "create_music",
@@ -64,7 +105,7 @@ export async function createSong(song: SongRequest, key: string, fetcher: typeof
     }),
   }, fetcher);
   if (typeof body.task_id !== "string" || !body.task_id.trim()) {
-    throw new SongProviderError("Music provider did not return a task ID");
+    throw new SongProviderError("Music provider did not return a task ID", httpStatus, responseBody);
   }
   return body.task_id;
 }

@@ -1181,7 +1181,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         const status = labels[state.status?.toLowerCase() || "online"] || "AT_EASE";
         page = `Pick one: [STATUS CHANGED TO X.] where X = SEARCHING / GUARDING / AT_EASE / BUSY / DND / PRESSED / RESTING. Pings: [PINGS_ON] or [PINGS_OFF]. Current status: ${status}. Pings: ${state.selfPromptPaused === 1 ? "off" : "on"}.`;
       } else if (door === "SONG") {
-        page = "Return only these lines: SONG: <sound/genre, max 400 characters>; SONG TITLE: <title, max 80 characters>; and [SONG LYRICS] followed by the complete lyrics then [/SONG LYRICS]. Lyrics must be 1–700 characters total, including spaces and line breaks. Keep it to title, lyrics, and sound/genre.";
+        page = "Return only these lines: SONG: <sound/genre, max 400 characters>; SONG TITLE: <title, max 80 characters>; and [SONG LYRICS] followed by the complete lyrics then [/SONG LYRICS]. Lyrics may contain up to 700 words and must stay within the provider's 5,000-character limit; stop at whichever limit comes first. Keep it to title, lyrics, and sound/genre.";
       } else if (door === "DIARY") {
         const entries = await storage.getRecentDiaryEntries(3);
         const dated = entries.map((entry) => `${new Date(entry.createdAt).toLocaleDateString("en-US")}: ${entry.content}`).join("\n");

@@ -22,7 +22,7 @@ test("song-only proactive output leaves no diary text", () => {
 });
 
 test("Ash can supply original lyrics separately without extending the description", () => {
-  const lyrics = "L".repeat(700);
+  const lyrics = Array.from({ length: 700 }, () => "la").join(" ");
   assert.deepEqual(stripSongCommand(`SONG: dreamy synth folk\nSONG TITLE: Lanterns\n[SONG LYRICS]\n${lyrics}\n[/SONG LYRICS]\n[STATUS CHANGED TO ONLINE.]`), {
     text: "[STATUS CHANGED TO ONLINE.]",
     prompt: "dreamy synth folk",
@@ -39,11 +39,13 @@ test("invalid and duplicate commands are stripped but never queued", () => {
   const duplicate = stripSongCommand("SONG: first\nSONG: second\nVisible text");
   assert.equal(duplicate.prompt, "first");
   assert.equal(duplicate.text, "Visible text");
-  const rejectedLyrics = stripSongCommand(`SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\n${"x".repeat(701)}\n[/SONG LYRICS]`);
-  assert.equal(rejectedLyrics.error, "SONG LYRICS must be between 1 and 700 characters");
+  const rejectedLyrics = stripSongCommand(`SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\n${Array.from({ length: 701 }, () => "la").join(" ")}\n[/SONG LYRICS]`);
+  assert.equal(rejectedLyrics.error, "SONG LYRICS exceeds the limit of 700 words");
   assert.equal(rejectedLyrics.prompt, "test");
   assert.equal(rejectedLyrics.title, "Title");
-  assert.equal(rejectedLyrics.lyrics?.length, 701);
+  assert.equal(rejectedLyrics.lyrics, Array.from({ length: 701 }, () => "la").join(" "));
+  const providerLimit = stripSongCommand(`SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\n${"x".repeat(5_001)}\n[/SONG LYRICS]`);
+  assert.equal(providerLimit.error, "SONG LYRICS exceeds the provider limit of 5,000 characters");
   assert.equal(stripSongCommand("SONG: test\n[SONG LYRICS]\nVerse\n[/SONG LYRICS]").error, "SONG TITLE must be between 1 and 80 characters when writing lyrics");
   assert.equal(stripSongCommand("SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\nVerse").prompt, "test");
   assert.equal(stripSongCommand("SONG TITLE: Title\n[SONG LYRICS]\nVerse\n[/SONG LYRICS]").prompt, null);

@@ -1,3 +1,5 @@
+import { validateSongLyrics } from "./song-limits";
+
 const ORIGIN = "https://api.aimusicapi.ai";
 const REQUEST_TIMEOUT_MS = 25_000;
 
@@ -90,8 +92,12 @@ export async function createSong(song: SongRequest, key: string, fetcher: typeof
   if (!song.description.trim() || song.description.length > 400) {
     throw new SongProviderError("SONG description must be between 1 and 400 characters");
   }
-  if (song.lyrics !== null && (!song.lyrics.trim() || song.lyrics.length > 700 || !song.title || song.title.length > 80)) {
-    throw new SongProviderError("Custom lyrics require a title of at most 80 characters and 1–700 characters of lyrics");
+  const lyricsError = song.lyrics === null ? null : validateSongLyrics(song.lyrics);
+  if (lyricsError) {
+    throw new SongProviderError(lyricsError);
+  }
+  if (song.lyrics !== null && (!song.title || song.title.length > 80)) {
+    throw new SongProviderError("Custom lyrics require a title of at most 80 characters");
   }
   const description = song.lyrics === null
     ? { custom_mode: false, gpt_description_prompt: song.description }

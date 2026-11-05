@@ -1,3 +1,5 @@
+import { validateSongLyrics } from "./song-limits";
+
 export type SongCommand = {
   text: string;
   prompt: string | null;
@@ -50,8 +52,9 @@ export function stripSongCommand(reply: string): SongCommand {
   if (titles.length > 1) return rejected("Only one SONG TITLE may be used");
   const lyrics = lyricBlocks[0] ?? null;
   const title = titles[0] ?? null;
-  if (lyrics !== null && (!lyrics || lyrics.length > 700)) {
-    return rejected("SONG LYRICS must be between 1 and 700 characters");
+  if (lyrics !== null) {
+    const lyricsError = validateSongLyrics(lyrics);
+    if (lyricsError) return rejected(lyricsError);
   }
   if (lyrics !== null && (!title || title.length > 80)) {
     return rejected("SONG TITLE must be between 1 and 80 characters when writing lyrics");

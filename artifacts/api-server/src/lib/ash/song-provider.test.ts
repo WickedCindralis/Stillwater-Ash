@@ -23,8 +23,8 @@ test("creates one description-mode v6 task", async () => {
   assert.equal(await createSong({ description: "night-drive synthwave", title: null, lyrics: null }, "fake-test-key", fetcher), "task-1");
 });
 
-test("Ash-written lyrics use custom mode and preserve all 700 characters", async () => {
-  const lyrics = "L".repeat(700);
+test("Ash-written lyrics use custom mode and allow 700 words", async () => {
+  const lyrics = Array.from({ length: 700 }, () => "la").join(" ");
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
     assert.deepEqual(JSON.parse(String(init?.body)), {
       task_type: "create_music", mv: "chirp-v6",
@@ -37,10 +37,9 @@ test("Ash-written lyrics use custom mode and preserve all 700 characters", async
     createSong({ description: "x".repeat(401), title: null, lyrics: null }, "fake-test-key", fetcher),
     /between 1 and 400 characters/,
   );
-  await assert.rejects(
-    createSong({ description: "dreamy synth folk", title: "Lanterns", lyrics: "L".repeat(701) }, "fake-test-key", fetcher),
-    /1–700 characters/,
-  );
+  const tooManyWords = Array.from({ length: 701 }, () => "la").join(" ");
+  await assert.rejects(createSong({ description: "dreamy synth folk", title: "Lanterns", lyrics: tooManyWords }, "fake-test-key", fetcher), /700 words/);
+  await assert.rejects(createSong({ description: "dreamy synth folk", title: "Lanterns", lyrics: "L".repeat(5_001) }, "fake-test-key", fetcher), /5,000 characters/);
 });
 test("polls until every clip has a final audio URL", async () => {
   assert.deepEqual(await pollSong("task-1", "fake-test-key", mockFetch({ code: 200, data: [] })), { status: "pending" });

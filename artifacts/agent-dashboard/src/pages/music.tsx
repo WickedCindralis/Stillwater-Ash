@@ -8,6 +8,8 @@ type MusicClip = {
   title: string;
   audioUrl: string;
   downloadUrl: string;
+  stored: boolean;
+  fallbackUrl: string | null;
 };
 
 type MusicEntry = {
@@ -197,22 +199,23 @@ export default function MusicPage() {
                               className="h-9 w-full max-w-xl accent-[#c9a84c]"
                               controls
                               preload="none"
-                              src={clip.audioUrl}
+                               src={clip.stored ? clip.audioUrl : clip.fallbackUrl || clip.audioUrl}
                               aria-label={`Audio player: ${clip.title}`}
                               data-testid={`audio-music-clip-${clip.id}`}
                             >
                               Your browser does not support audio playback.
                             </audio>
                           </div>
-                          <a
-                            href={clip.downloadUrl}
+                           <a
+                             href={clip.stored ? clip.downloadUrl : clip.fallbackUrl || clip.downloadUrl}
                             download
                             className="inline-flex min-h-9 items-center justify-center gap-2 self-start rounded-full border border-gold/25 px-3 text-[10px] uppercase tracking-[0.12em] text-gold/80 transition-colors hover:border-gold/55 hover:bg-gold/5 sm:self-auto"
                             data-testid={`link-download-music-clip-${clip.id}`}
                           >
                             <Download className="h-3.5 w-3.5" />
-                            Download
+                             {clip.stored ? "Download" : "Provider link"}
                           </a>
+                           {!clip.stored && <span className="text-[10px] text-amber-200/65">Permanent copy unavailable</span>}
                         </div>
                       ))}
                     </div>

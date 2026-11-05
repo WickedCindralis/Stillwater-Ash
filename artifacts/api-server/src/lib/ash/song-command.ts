@@ -14,7 +14,7 @@ export function stripSongCommand(reply: string): SongCommand {
   let cleaned = reply.replace(
     /^[ \t]*\[SONG LYRICS\][ \t]*\r?\n([\s\S]*?)^[ \t]*\[\/SONG LYRICS\][ \t]*\r?$/gim,
     (_block, body: string) => {
-      lyricBlocks.push(body.trim());
+      lyricBlocks.push(body.replace(/^\r?\n/, "").replace(/\r?\n$/, ""));
       return "";
     },
   );
@@ -34,7 +34,9 @@ export function stripSongCommand(reply: string): SongCommand {
     descriptions.push(description.trim());
     return "";
   }).replace(/\n{3,}/g, "\n\n").trim();
-  const rejected = (error: string): SongCommand => ({ text, prompt: null, title: null, lyrics: null, error });
+  const rejected = (error: string): SongCommand => ({
+    text, prompt: descriptions[0] ?? null, title: titles[0] ?? null, lyrics: lyricBlocks[0] ?? null, error,
+  });
   if (count === 0) {
     if (titles.length || lyricBlocks.length || malformedLyrics) return rejected("SONG TITLE and SONG LYRICS require a SONG command");
     return { text: reply, prompt: null, title: null, lyrics: null, error: null };

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { asc, desc, eq, isNull } from "drizzle-orm";
 import { db, ashSongJobs, ashSongClips, ashSongStoredAudio } from "@workspace/db";
 import { logger } from "../logger";
 import { readSongAudioObject, saveSongAudioFromUrl } from "../image-storage";
@@ -8,10 +8,20 @@ function readableFailure(value: string): string | null {
   try {
     const parsed = JSON.parse(value) as { message?: string; providerStatus?: number | null; providerResponseBody?: string | null };
     const reason = parsed.message || "Song request failed";
-    return parsed.providerStatus == null ? reason : `${reason} (HTTP ${parsed.providerStatus})`;
+    const status = parsed.providerStatus == null ? "" : ` (HTTP ${parsed.providerStatus})`;
+    return `${reason}${status}${parsed.providerResponseBody ? `\n${parsed.providerResponseBody}` : ""}`;
   } catch {
     return value;
   }
+}
+
+function triggerLabel(source: string): string {
+  if (source === "door:SONG") return "Song door";
+  if (source === "proactive:door:SONG") return "Proactive window · Song door";
+  if (source === "self_prompt") return "Proactive window";
+  if (source === "private_message") return "Private chat";
+  if (source.startsWith("discord")) return "Discord";
+  return source;
 }
 
 async function storeClip(clipRowId: number, jobId: string, clipId: string, audioUrl: string): Promise<void> {
@@ -76,7 +86,7 @@ export async function listMusicEntries() {
       sound: job.prompt,
       lyrics: job.lyricsText || "",
       createdAt: job.createdAt,
-      trigger: job.source,
+      trigger: triggerLabel(job.source),
       status: job.status === "succeeded" ? "generated" : job.status === "failed" ? "failed" : "in_progress",
       failureReason: readableFailure(job.lastError),
       clips: clips.map((clip) => ({

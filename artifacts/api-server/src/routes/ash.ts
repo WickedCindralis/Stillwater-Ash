@@ -11,6 +11,7 @@ import { normalizeTiktokHandle } from "../lib/ash/tiktok-handle";
 import { SYSTEM_PROMPT, DEFAULT_SOUL_SHEET, DEFAULT_CORE_ANCHORS } from "../lib/ash/persona";
 import { storage } from "../lib/ash/storage";
 import { readImageBytes } from "../lib/image-storage";
+import { getStoredSongAudio, listMusicEntries } from "../lib/ash/music-library";
 import {
   authorizeHangoutCompanion,
   getHangoutScreenshot,
@@ -1197,6 +1198,30 @@ router.post("/connect4/resign", requireAuth, async (_req, res): Promise<void> =>
 });
 
 // ── Activity feed ──
+router.get("/music", requireAuth, async (_req, res): Promise<void> => {
+  res.json(await listMusicEntries());
+});
+
+router.get("/music/audio/:clipId", requireAuth, async (req, res): Promise<void> => {
+  const clipId = Number(req.params.clipId);
+  if (!Number.isSafeInteger(clipId) || clipId < 1) {
+    res.status(400).json({ error: "Invalid clip ID" });
+    return;
+  }
+  const stored = await getStoredSongAudio(clipId);
+  if (!stored) {
+    res.status(404).json({ error: "Stored audio is not available" });
+    return;
+  }
+  res.setHeader("Content-Type", stored.contentType);
+  res.setHeader("Content-Length", stored.bytes.length);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  if (req.query["download"] === "1") {
+    res.setHeader("Content-Disposition", `attachment; filename="stillwater-song-${clipId}.mp3"`);
+  }
+  res.send(stored.bytes);
+});
+
 router.get("/activity", requireAuth, async (req, res): Promise<void> => {
   const events = await storage.getActivity(100);
   let alerts: Awaited<ReturnType<typeof getHeraldActivityAlerts>> = [];

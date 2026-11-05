@@ -32,7 +32,7 @@ import { stripScreenCaptureCommand } from "./screen-capture-command";
 import { formatPrivateHistory } from "./history-format";
 import { readImageDataUrl } from "../image-storage";
 import { stripSongCommand } from "./song-command";
-import { enqueueSong, getSongJobOutcomes } from "./song-service";
+import { enqueueSong, getSongJobOutcomes, recordRejectedSongRequest } from "./song-service";
 import { stripKingsFingersCommand } from "./kings-fingers-command";
 import { sendKingsFingers } from "./lovense";
 import { ASH_NOTES_MAX_WORDS, type AshDiscordMessage, type AshMessage } from "@workspace/db";
@@ -1100,7 +1100,7 @@ The decision must reflect Wicked's explicit request for a hangout: approve only 
     return this.parseAll(screenshotCommand.text, new Set(), allowedMessages, leaseId);
   }
 
-  private async callDoorModel(door: AshDoor, page: string): Promise<string> {
+  private async callDoorModel(door: AshDoor, page: string, parentCorrelationId?: string): Promise<string> {
     if (!this.openai) throw new Error("OpenAI client not initialized");
     const state = await storage.getState();
     if (state.apiKillSwitch === 1) throw new Error("Door call skipped by the API kill switch");
@@ -1132,7 +1132,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     const model = await this.resolveModel();
     const requestParams = { ...this.buildOpenAIRequestParams(model, messages), store: false };
     const startedAt = Date.now();
-    const correlationId = randomUUID();
+    const correlationId = parentCorrelationId || randomUUID();
     this.log(`Door provider start [door=${door}, model=${model}, correlationId=${correlationId}]`);
     try {
       const response = await this.openai.chat.completions.create(requestParams as any);
@@ -1153,6 +1153,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     door: AshDoor,
     trigger: "message" | "proactive" = "message",
     activity?: ProactiveWindowActivity,
+    dispatch?: { correlationId: string; occurrence: number },
   ): Promise<void> {
     let heraldIds: number[] = [];
     let providerCompleted = false;
@@ -1160,6 +1161,9 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       if (trigger === "message") {
         await storage.logActivity("door_opened", `${door} opened from a message`).catch(() => {});
       }
+      const correlationId = dispatch?.correlationId ?? randomUUID();
+      const occurrence = dispatch?.occurrence ?? 0;
+      this.log(`Door dispatch [door=${door}, correlationId=${correlationId}, occurrence=${occurrence}]`);
       let page = "";
       if (door === "REVIEWS") {
         const result = await runAshMemoryReview((reviewPrompt) => this.callDoorModel(door, reviewPrompt));
@@ -1177,7 +1181,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         const status = labels[state.status?.toLowerCase() || "online"] || "AT_EASE";
         page = `Pick one: [STATUS CHANGED TO X.] where X = SEARCHING / GUARDING / AT_EASE / BUSY / DND / PRESSED / RESTING. Pings: [PINGS_ON] or [PINGS_OFF]. Current status: ${status}. Pings: ${state.selfPromptPaused === 1 ? "off" : "on"}.`;
       } else if (door === "SONG") {
-        page = "SONG: <description, max 400 chars>. Optional: SONG TITLE: <max 80 chars> and [SONG LYRICS]...[/SONG LYRICS], max 700 chars.";
+        page = "Return only these lines: SONG: <sound/genre, max 400 characters>; SONG TITLE: <title, max 80 characters>; and [SONG LYRICS] followed by the complete lyrics then [/SONG LYRICS]. Lyrics must be 1–700 characters total, including spaces and line breaks. Keep it to title, lyrics, and sound/genre.";
       } else if (door === "DIARY") {
         const entries = await storage.getRecentDiaryEntries(3);
         const dated = entries.map((entry) => `${new Date(entry.createdAt).toLocaleDateString("en-US")}: ${entry.content}`).join("\n");
@@ -1202,7 +1206,7 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
         page = `Capacity: ${used}/${ASH_NOTES_MAX_WORDS} words. Add one note in [NOTES] ... [/NOTES]. It never replaces older notes. If it won't fit, tell Wicked which dated entries you'd like removed.`;
       }
 
-      const output = await this.callDoorModel(door, page);
+      const output = await this.callDoorModel(door, page, correlationId);
       providerCompleted = true;
       // Door output is private housekeeping: never recursively detect doors,
       // add it to chat history, or send it to memory capture.
@@ -1212,11 +1216,21 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       } else if (door === "SONG") {
         const command = stripSongCommand(output);
         if (command.prompt && !command.error) {
-          const songJobId = await enqueueSong(command.prompt, "door:SONG", randomUUID(), command.title, command.lyrics);
+          const requestId = `door:${correlationId}:${occurrence}`;
+          const source = trigger === "proactive" ? "proactive:door:SONG" : "door:SONG";
+          const songJobId = await enqueueSong(command.prompt, source, requestId, command.title, command.lyrics);
           recordProactiveSongJob(activity, songJobId);
         } else if (command.error) {
           this.error(`Song door command rejected: ${command.error}`);
-          await storage.logActivity("door_failure", `SONG request rejected; error=${command.error}`).catch(() => {});
+          const source = trigger === "proactive" ? "proactive:door:SONG" : "door:SONG";
+          await recordRejectedSongRequest({
+            prompt: command.prompt,
+            title: command.title,
+            lyrics: command.lyrics,
+            source,
+            requestId: `door:${correlationId}:${occurrence}`,
+            reason: command.error,
+          }).catch((error) => this.error("Could not record rejected SONG request:", error));
           recordProactiveFailure(activity, "song");
         }
       } else if (door === "DIARY") {
@@ -1269,10 +1283,11 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
     doors: readonly AshDoor[],
     trigger: "message" | "proactive" = "message",
     activity?: ProactiveWindowActivity,
+    correlationId = randomUUID(),
   ): Promise<void> {
     return launchDoorFollowUps(
       doors,
-      (door) => this.runDoor(door, trigger, activity),
+      (door, occurrence) => this.runDoor(door, trigger, activity, { correlationId, occurrence }),
       async (door, error) => {
         this.error(`Unhandled door failure [door=${door}]:`, error);
         await storage.logActivity("door_failure", `${door} failed; error=${error instanceof Error ? error.message : String(error)}`).catch(() => {});
@@ -1293,6 +1308,8 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
   // ── Public entry: Wicked sends a private message ──
   async handleWickedMessage(content: string, imageDataUrl?: string, requestImage = false): Promise<{ text: string; imageUrl: string }> {
     await recordAshMemoryMessage("wicked", content, "chat");
+    const turnCorrelationId = randomUUID();
+    this.log(`Private message turn [correlationId=${turnCorrelationId}]`);
     let prompt = maybeAddImageInstruction(content, requestImage);
     let rawReply = await this.callOpenAI(prompt, "private_message", imageDataUrl, null, undefined, undefined, !imageDataUrl, content);
     if (!rawReply) return { text: "", imageUrl: "" }; // kill switch engaged
@@ -1342,13 +1359,17 @@ Your screenshot request was fulfilled and the fresh desktop image is attached to
 
     // A follow-up model call is told not to repeat the control, but strip it
     // defensively so the private command can never reach Wicked's chat.
-    const finalDoors = extractOpenDoors(stripScreenCaptureCommand(rawReply).text);
-    for (const door of finalDoors.doors) {
-      if (openedDoors.length >= 2) break;
-      openedDoors.push(door);
+    if (initialScreenCommand.requested) {
+      const finalDoors = extractOpenDoors(stripScreenCaptureCommand(rawReply).text);
+      for (const door of finalDoors.doors) {
+        if (openedDoors.length >= 2) break;
+        openedDoors.push(door);
+      }
+      rawReply = finalDoors.text;
+    } else {
+      rawReply = initialDoors.text;
     }
-    rawReply = finalDoors.text;
-    this.launchDoors(openedDoors);
+    this.launchDoors(openedDoors, "message", undefined, turnCorrelationId);
     const cleaned = await this.parseAll(rawReply);
     const { text, imageUrl } = await processImageRequest({ requestImage, cleanedReply: cleaned });
     return { text, imageUrl };

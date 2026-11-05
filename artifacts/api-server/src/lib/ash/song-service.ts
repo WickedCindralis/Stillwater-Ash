@@ -4,6 +4,7 @@ import { db, ashActivity, ashSongClips, ashSongJobs, type AshSongJob } from "@wo
 import { logger } from "../logger";
 import { storage } from "./storage";
 import { createSong, pollSong, SongProviderError, type SongClip } from "./song-provider";
+import { storeGeneratedSongAudio } from "./music-library";
 
 export const SONG_POLL_INTERVAL_MS = 2 * 60_000;
 const WORKER_TICK_MS = 30_000;
@@ -43,6 +44,35 @@ export async function enqueueSong(
   logger.info({ jobId: id, source }, "[ash-song] Song command queued");
   void processSongJobs().catch((error) => logger.error({ error }, "[ash-song] Worker failed"));
   return id;
+}
+
+export async function recordRejectedSongRequest(input: {
+  prompt: string | null;
+  title: string | null;
+  lyrics: string | null;
+  source: string;
+  requestId: string;
+  reason: string;
+}): Promise<void> {
+  const id = `openai:${input.requestId}`;
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(8812339)`);
+    const [existing] = await tx.select({ id: ashSongJobs.id }).from(ashSongJobs).where(eq(ashSongJobs.id, id)).limit(1);
+    if (existing) return;
+    await tx.insert(ashSongJobs).values({
+      id,
+      source: input.source,
+      prompt: input.prompt ?? "",
+      title: input.title,
+      lyricsText: input.lyrics,
+      status: "failed",
+      lastError: input.reason,
+    });
+    await tx.insert(ashActivity).values({
+      kind: "song_request_failed",
+      message: `Song request failed: ${input.reason.slice(0, 300)}`,
+    });
+  });
 }
 
 export async function getSongJobOutcomes(jobIds: readonly string[]): Promise<Array<{ id: string; status: string; clipCount: number }>> {
@@ -113,6 +143,10 @@ async function finishSong(job: AshSongJob, token: string, clips: SongClip[]): Pr
     return true;
   });
   if (saved) {
+    await storeGeneratedSongAudio(job.id).catch((error) => {
+      const reason = error instanceof Error ? error.message : String(error);
+      logger.error({ jobId: job.id, reason }, "[ash-song] Could not store generated audio; library backfill will retry");
+    });
     for (const clip of clips) logger.info({ jobId: job.id, taskId: job.providerTaskId, audioUrl: clip.audioUrl }, "[ash-song] Song generated and saved");
   }
 }

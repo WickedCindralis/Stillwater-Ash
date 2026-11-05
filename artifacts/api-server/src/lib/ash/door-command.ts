@@ -5,12 +5,12 @@ const ALLOWED_DOORS = new Set<string>(ASH_DOORS);
 
 export function launchDoorFollowUps(
   doors: readonly AshDoor[],
-  runDoor: (door: AshDoor) => Promise<void>,
+  runDoor: (door: AshDoor, index: number) => Promise<void>,
   onFailure: (door: AshDoor, error: unknown) => void,
 ): Promise<void> {
-  return Promise.all(doors.map((door) =>
+  return Promise.all(doors.map((door, index) =>
     Promise.resolve()
-      .then(() => runDoor(door))
+      .then(() => runDoor(door, index))
       .catch((error) => onFailure(door, error)),
   )).then(() => undefined);
 }

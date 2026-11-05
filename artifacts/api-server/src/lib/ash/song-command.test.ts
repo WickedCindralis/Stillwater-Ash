@@ -35,13 +35,17 @@ test("Ash can supply original lyrics separately without extending the descriptio
 test("invalid and duplicate commands are stripped but never queued", () => {
   assert.equal(stripSongCommand("SONG: \nHello").error, "SONG description must be between 1 and 400 characters");
   assert.equal(stripSongCommand(`SONG: ${"x".repeat(400)}`).prompt?.length, 400);
-  assert.equal(stripSongCommand(`SONG: ${"x".repeat(401)}`).prompt, null);
+  assert.equal(stripSongCommand(`SONG: ${"x".repeat(401)}`).prompt?.length, 401);
   const duplicate = stripSongCommand("SONG: first\nSONG: second\nVisible text");
-  assert.equal(duplicate.prompt, null);
+  assert.equal(duplicate.prompt, "first");
   assert.equal(duplicate.text, "Visible text");
-  assert.equal(stripSongCommand(`SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\n${"x".repeat(701)}\n[/SONG LYRICS]`).error, "SONG LYRICS must be between 1 and 700 characters");
+  const rejectedLyrics = stripSongCommand(`SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\n${"x".repeat(701)}\n[/SONG LYRICS]`);
+  assert.equal(rejectedLyrics.error, "SONG LYRICS must be between 1 and 700 characters");
+  assert.equal(rejectedLyrics.prompt, "test");
+  assert.equal(rejectedLyrics.title, "Title");
+  assert.equal(rejectedLyrics.lyrics?.length, 701);
   assert.equal(stripSongCommand("SONG: test\n[SONG LYRICS]\nVerse\n[/SONG LYRICS]").error, "SONG TITLE must be between 1 and 80 characters when writing lyrics");
-  assert.equal(stripSongCommand("SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\nVerse").prompt, null);
+  assert.equal(stripSongCommand("SONG: test\nSONG TITLE: Title\n[SONG LYRICS]\nVerse").prompt, "test");
   assert.equal(stripSongCommand("SONG TITLE: Title\n[SONG LYRICS]\nVerse\n[/SONG LYRICS]").prompt, null);
 });
 

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, ashActivity, ashSongClips, ashSongJobs, type AshSongJob } from "@workspace/db";
 import { logger } from "../logger";
 import { storage } from "./storage";
-import { createSong, pollSong, SongProviderError, type SongClip } from "./song-provider";
+import { createSong, pollSong, type SongClip } from "./song-provider";
 
 export const SONG_POLL_INTERVAL_MS = 2 * 60_000;
 const WORKER_TICK_MS = 30_000;
@@ -19,7 +19,7 @@ let warnedMissingKey = false;
 
 export async function enqueueSong(
   prompt: string, source: string, responseId: string, title: string | null = null, lyrics: string | null = null,
-): Promise<void> {
+): Promise<string | null> {
   if (!process.env["AIMUSICAPI_KEY"]?.trim()) {
     throw new Error("Music provider is not configured");
   }
@@ -39,12 +39,30 @@ export async function enqueueSong(
     await tx.insert(ashSongJobs).values({ id, source, prompt, title, lyricsText: lyrics });
     return true;
   });
-  if (!inserted) return;
+  if (!inserted) return null;
   logger.info({ jobId: id, source }, "[ash-song] Song command queued");
   void processSongJobs().catch((error) => logger.error({ error }, "[ash-song] Worker failed"));
+  return id;
 }
 
-async function failSong(job: AshSongJob, token: string, reason: string): Promise<void> {
+export async function getSongJobOutcomes(jobIds: readonly string[]): Promise<Array<{ id: string; status: string; clipCount: number }>> {
+  if (!jobIds.length) return [];
+  const jobs = await db.select({ id: ashSongJobs.id, status: ashSongJobs.status })
+    .from(ashSongJobs).where(inArray(ashSongJobs.id, [...jobIds]));
+  const clips = await db.select({
+    jobId: ashSongClips.jobId,
+    count: sql<number>`count(*)::int`,
+  }).from(ashSongClips).where(inArray(ashSongClips.jobId, [...jobIds])).groupBy(ashSongClips.jobId);
+  const clipCounts = new Map(clips.map((clip) => [clip.jobId, clip.count]));
+  return jobs.map((job) => ({ ...job, clipCount: clipCounts.get(job.id) ?? 0 }));
+}
+
+async function failSong(
+  job: AshSongJob,
+  token: string,
+  reason: string,
+  activityKind: "song_failed" | "song_request_failed" | null = "song_failed",
+): Promise<void> {
   const saved = await db.transaction(async (tx) => {
     const rows = await tx.update(ashSongJobs).set({
       status: "failed", lastError: reason.slice(0, 500), leaseToken: null,
@@ -52,7 +70,13 @@ async function failSong(job: AshSongJob, token: string, reason: string): Promise
     }).where(and(eq(ashSongJobs.id, job.id), eq(ashSongJobs.status, job.status), eq(ashSongJobs.leaseToken, token)))
       .returning({ id: ashSongJobs.id });
     if (!rows.length) return false;
-    await tx.insert(ashActivity).values({ kind: "song_failed", message: `Song generation failed: ${reason.slice(0, 300)}` });
+    if (activityKind) {
+      const prefix = activityKind === "song_request_failed" ? "Song request failed" : "Song failed";
+      await tx.insert(ashActivity).values({
+        kind: activityKind,
+        message: `${prefix}: ${reason.slice(0, 300)}`,
+      });
+    }
     return true;
   });
   if (saved) logger.error({ jobId: job.id, taskId: job.providerTaskId, reason }, "[ash-song] Generation failed");
@@ -71,10 +95,12 @@ async function finishSong(job: AshSongJob, token: string, clips: SongClip[]): Pr
         imageUrl: clip.imageUrl, videoUrl: clip.videoUrl, lyrics: clip.lyrics,
         durationSeconds: clip.durationSeconds,
       }).onConflictDoNothing({ target: [ashSongClips.jobId, ashSongClips.clipId] });
-      await tx.insert(ashActivity).values({
-        kind: "song_generated", message: `Song generated: ${clip.title}\n${clip.audioUrl}`,
-      });
     }
+    const title = job.title?.trim() || clips[0]?.title || "Untitled song";
+    await tx.insert(ashActivity).values({
+      kind: "song_generated",
+      message: `${clips.length} song${clips.length === 1 ? "" : "s"} generated: ${title}\n${clips.map((clip) => clip.audioUrl).join("\n")}`,
+    });
     return true;
   });
   if (saved) {
@@ -110,13 +136,13 @@ async function submitSong(job: AshSongJob, token: string, key: string): Promise<
     logger.info({ jobId: job.id, taskId, nextPollMs: SONG_POLL_INTERVAL_MS }, "[ash-song] Provider task accepted");
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    await failSong({ ...job, status: "starting" }, token, reason);
+    await failSong({ ...job, status: "starting" }, token, reason, "song_request_failed");
   }
 }
 
 async function checkSong(job: AshSongJob, token: string, key: string): Promise<void> {
   if (!job.providerTaskId) {
-    await failSong(job, token, "Pending song has no provider task ID");
+    await failSong(job, token, "Pending song has no provider task ID", null);
     return;
   }
   if (Date.now() - job.createdAt.getTime() >= MAX_JOB_AGE_MS) {
@@ -135,12 +161,8 @@ async function checkSong(job: AshSongJob, token: string, key: string): Promise<v
     else await rescheduleSong(job, token);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    if (error instanceof SongProviderError && [400, 401, 403, 404].includes(error.status ?? 0)) {
-      await failSong(job, token, reason);
-    } else {
-      logger.error({ jobId: job.id, taskId: job.providerTaskId, reason }, "[ash-song] Poll failed; retrying in two minutes");
-      await rescheduleSong(job, token, reason);
-    }
+    logger.error({ jobId: job.id, taskId: job.providerTaskId, reason }, "[ash-song] Poll failed; retrying in two minutes");
+    await rescheduleSong(job, token, reason);
   }
 }
 
@@ -166,7 +188,6 @@ export async function processSongJobs(): Promise<void> {
       .returning({ id: ashSongJobs.id });
     for (const row of stale) {
       logger.error({ jobId: row.id }, "[ash-song] Interrupted create cannot be retried safely");
-      await storage.logActivity("song_failed", "Song generation interrupted before the provider task ID was saved");
     }
 
     const queued = await db.select().from(ashSongJobs).where(eq(ashSongJobs.status, "queued"))

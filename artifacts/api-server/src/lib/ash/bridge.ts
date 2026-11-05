@@ -32,7 +32,7 @@ import { stripScreenCaptureCommand } from "./screen-capture-command";
 import { formatPrivateHistory } from "./history-format";
 import { readImageDataUrl } from "../image-storage";
 import { stripSongCommand } from "./song-command";
-import { enqueueSong } from "./song-service";
+import { enqueueSong, getSongJobOutcomes } from "./song-service";
 import { stripKingsFingersCommand } from "./kings-fingers-command";
 import { sendKingsFingers } from "./lovense";
 import { ASH_NOTES_MAX_WORDS, type AshDiscordMessage, type AshMessage } from "@workspace/db";
@@ -44,6 +44,8 @@ import {
   formatProactiveWindowActivity,
   recordProactiveAction,
   recordProactiveFailure,
+  recordProactiveSongJob,
+  recordProactiveSongOutcome,
   type ProactiveAction,
   type ProactiveWindowActivity,
 } from "./proactive-window-activity";
@@ -796,7 +798,6 @@ RULES FOR YOUR REPLY:
         try {
           await enqueueSong(songCommand.prompt, source, songOriginId || providerResponseId, songCommand.title, songCommand.lyrics);
           songQueued = true;
-          await storage.logActivity("song_queued", `SONG queued (${source})`).catch(() => {});
         } catch (error) {
           this.error(`Could not queue song [source=${source}, providerResponseId=${providerResponseId}]:`, error);
           await storage.logActivity("song_failed", "Song request could not be queued").catch(() => {});
@@ -1211,9 +1212,8 @@ ${history.map((message) => `${message.role === "wicked" ? "Wicked" : "Ash"}: ${m
       } else if (door === "SONG") {
         const command = stripSongCommand(output);
         if (command.prompt && !command.error) {
-          await enqueueSong(command.prompt, "door:SONG", randomUUID(), command.title, command.lyrics);
-          await storage.logActivity("song_queued", "SONG queued").catch(() => {});
-          recordProactiveAction(activity, "song");
+          const songJobId = await enqueueSong(command.prompt, "door:SONG", randomUUID(), command.title, command.lyrics);
+          recordProactiveSongJob(activity, songJobId);
         } else if (command.error) {
           this.error(`Song door command rejected: ${command.error}`);
           await storage.logActivity("door_failure", `SONG request rejected; error=${command.error}`).catch(() => {});
@@ -1536,6 +1536,15 @@ Take a quiet moment. Wicked isn't here. Open a door if you want one, or reply NO
         const { doors, text } = extractOpenDoors(response);
         const activity = createProactiveWindowActivity();
         void this.launchDoors(doors, "proactive", activity).then(async () => {
+          const outcomes = await getSongJobOutcomes(activity.songJobIds).catch(() => []);
+          const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
+          for (const jobId of activity.songJobIds) {
+            const outcome = byId.get(jobId);
+            if (!outcome) recordProactiveSongOutcome(activity, "in_progress");
+            else if (outcome.status === "succeeded") recordProactiveSongOutcome(activity, "succeeded", outcome.clipCount);
+            else if (outcome.status === "failed") recordProactiveSongOutcome(activity, "failed");
+            else recordProactiveSongOutcome(activity, "in_progress");
+          }
           await storage.logActivity("proactive_window", formatProactiveWindowActivity(activity)).catch(() => {});
         });
         const trimmed = text.trim();

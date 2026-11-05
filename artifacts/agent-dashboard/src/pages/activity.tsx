@@ -16,6 +16,7 @@ const KIND_LABELS: Record<string, string> = {
   screenshot: "Screenshot",
   song_generated: "Song",
   song_failed: "Song failed",
+  song_request_failed: "Song request failed",
   proactive_window: "Proactive",
   proactive_failure: "Proactive failed",
   door_opened: "Door opened",
@@ -46,21 +47,24 @@ function matchesFilter(event: AshActivity, filter: ActivityFilter): boolean {
 }
 
 function SongActivityMessage({ message }: { message: string }) {
-  const [title, link] = message.split("\n", 2);
-  let safeUrl: string | null = null;
-  try {
-    const url = new URL(link);
-    if (url.protocol === "https:") safeUrl = url.toString();
-  } catch {
-    // Old or malformed activity messages are displayed as text, never as links.
-  }
+  const [title] = message.split("\n", 1);
+  const safeUrls = (message.match(/https:\/\/[^\s]+/g) ?? []).flatMap((candidate) => {
+    try {
+      const url = new URL(candidate);
+      return url.protocol === "https:" ? [url.toString()] : [];
+    } catch {
+      return [];
+    }
+  });
   return (
-    <p className="text-white/70 text-[15px] mt-1">
-      {title}
-      {safeUrl && (
-        <> · <a href={safeUrl} target="_blank" rel="noopener noreferrer" className="text-gold underline underline-offset-2 hover:text-white">Listen to song</a></>
-      )}
-    </p>
+    <div className="text-white/70 text-[15px] mt-1">
+      <p>{title}</p>
+      {safeUrls.map((url, index) => (
+        <a key={`${url}-${index}`} href={url} target="_blank" rel="noopener noreferrer" className="mr-3 text-gold underline underline-offset-2 hover:text-white">
+          Listen to song {safeUrls.length > 1 ? index + 1 : ""}
+        </a>
+      ))}
+    </div>
   );
 }
 

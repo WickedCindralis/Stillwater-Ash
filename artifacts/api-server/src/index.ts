@@ -6,6 +6,7 @@ import { discordHerald } from "./lib/ash/discord";
 import { startHangoutIdleScheduler } from "./lib/ash/hangout";
 import { startSongWorker } from "./lib/ash/song-service";
 import { startHeraldScheduler } from "./lib/ash/herald-scheduler";
+import { releaseExistingHeraldClaimsOnce } from "./lib/ash/herald";
 import { setVectorMemoryReady } from "./lib/ash/vector-memory";
 import { initMemory } from "./lib/ash/vector-memory-runtime.mjs";
 import { migrateLegacyStoryToBook } from "./lib/ash/story-library-migration";
@@ -39,6 +40,13 @@ try {
 } catch (err) {
   logger.error({ err }, "Story library startup migration failed");
   process.exit(1);
+}
+
+try {
+  const released = await releaseExistingHeraldClaimsOnce();
+  if (released > 0) logger.info({ released }, "Released existing undrafted Herald claims once");
+} catch (err) {
+  logger.error({ err }, "One-time Herald claim release failed; it will retry on next startup");
 }
 
 app.listen(port, async (err) => {

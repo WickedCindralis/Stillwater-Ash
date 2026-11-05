@@ -97,6 +97,7 @@ export interface IStorage {
     patch: Partial<Omit<AshConnect4Game, "id" | "createdAt">>,
   ): Promise<AshConnect4Game>;
   listTiktokComments(limit?: number): Promise<AshTiktokComment[]>;
+  getTiktokComment(id: number): Promise<AshTiktokComment | null>;
   updateTiktokComment(
     id: number,
     patch: Partial<Pick<AshTiktokComment, "status" | "draft">>,
@@ -1157,6 +1158,11 @@ export class DbStorage implements IStorage {
       .limit(limit);
   }
 
+  async getTiktokComment(id: number): Promise<AshTiktokComment | null> {
+    const [row] = await db.select().from(ashTiktokComments).where(eq(ashTiktokComments.id, id)).limit(1);
+    return row ?? null;
+  }
+
   async updateTiktokComment(
     id: number,
     patch: Partial<Pick<AshTiktokComment, "status" | "draft">>,
@@ -1173,14 +1179,20 @@ export class DbStorage implements IStorage {
     return db
       .select()
       .from(ashTiktokComments)
-      .where(eq(ashTiktokComments.seenByAsh, 0))
+      .where(and(
+        eq(ashTiktokComments.seenByAsh, 0),
+        sql`lower(trim(both '@' from ${ashTiktokComments.author})) <> 'wickedsread'`,
+      ))
       .orderBy(ashTiktokComments.id)
       .limit(limit);
   }
 
   async countUnseenTiktokComments(): Promise<number> {
     const [row] = await db.select({ count: count() }).from(ashTiktokComments)
-      .where(eq(ashTiktokComments.seenByAsh, 0));
+      .where(and(
+        eq(ashTiktokComments.seenByAsh, 0),
+        sql`lower(trim(both '@' from ${ashTiktokComments.author})) <> 'wickedsread'`,
+      ));
     return row?.count ?? 0;
   }
 

@@ -1,11 +1,13 @@
-import { db, ashActivity, ashTiktokComments, type InsertTiktokComment } from "@workspace/db";
-import { inArray, eq, and, desc } from "drizzle-orm";
+import { db, ashActivity, ashState, ashTiktokComments, type InsertTiktokComment } from "@workspace/db";
+import { inArray, eq, and, desc, sql } from "drizzle-orm";
 import { logger } from "../logger";
 import { storage } from "./storage";
 import { normalizeTiktokHandle, resolveTiktokHandle } from "./tiktok-handle";
-import { getCommentPageStopReason, getHeraldCommentSkipReason, deriveHeraldAlertMessages } from "./herald-policy";
+import { getCommentPageStopReason, getHeraldCommentSkipReason, deriveHeraldAlertMessages, isHeraldScheduleEnabled } from "./herald-policy";
+import { saveHeraldImageFromUrl } from "../image-storage";
 import {
   extractHeraldCommentText,
+  extractHeraldImageUrl,
   formatHeraldTimestamp,
   sanitizeHeraldLogValue,
   summarizeHeraldTextFields,
@@ -142,11 +144,13 @@ async function fetchComments(video: ScrapedVideo): Promise<{
       const timestamp = formatHeraldTimestamp(rawTimestamp);
       const extracted = extractHeraldCommentText(raw);
       const text = extracted?.text ?? "";
+      const imageUrl = extractHeraldImageUrl(raw);
       return {
         raw,
         commentId: String(raw["cid"] ?? raw["id"] ?? raw["comment_id"] ?? nestedComment["cid"] ?? nestedComment["id"] ?? nestedReply["cid"] ?? nestedReply["id"] ?? ""),
         text,
         textSource: extracted?.source ?? "",
+        imageUrl,
         author: String(user["unique_id"] ?? user["nickname"] ?? raw["author"] ?? ""),
         timestamp,
         value: {
@@ -196,7 +200,15 @@ async function fetchComments(video: ScrapedVideo): Promise<{
         storedIds.add(item.commentId);
         continue;
       }
-      comments.push(item.value);
+      let imageObjectPath: string | null = null;
+      if (item.imageUrl) {
+        try {
+          imageObjectPath = (await saveHeraldImageFromUrl(item.imageUrl, item.commentId)).objectPath;
+        } catch (error) {
+          logger.warn(`${tag} could not archive image for comment ${item.commentId}: ${error instanceof Error ? error.message : error}`);
+        }
+      }
+      comments.push({ ...item.value, imageObjectPath });
     }
 
     const rawCursor = data["cursor"];
@@ -506,4 +518,25 @@ export async function saveAshDraft(commentId: number, text: string): Promise<boo
 /** Un-claim comments whose delivery failed, so they go out on the next message. */
 export async function releaseHeraldClaim(ids: number[]): Promise<void> {
   await storage.releaseTiktokCommentsClaim(ids);
+}
+
+export async function releaseExistingHeraldClaimsOnce(): Promise<number> {
+  if (!isHeraldScheduleEnabled("true", process.env["NODE_ENV"], process.env["REPLIT_DEPLOYMENT"])) return 0;
+  return db.transaction(async (tx) => {
+    await tx.insert(ashState).values({ id: "ash" }).onConflictDoNothing();
+    const [claimed] = await tx.update(ashState)
+      .set({ heraldClaimsReleased: 1 })
+      .where(and(eq(ashState.id, "ash"), eq(ashState.heraldClaimsReleased, 0)))
+      .returning({ id: ashState.id });
+    if (!claimed) return 0;
+    const released = await tx.update(ashTiktokComments)
+      .set({ seenByAsh: 0 })
+      .where(and(
+        eq(ashTiktokComments.seenByAsh, 1),
+        eq(ashTiktokComments.draft, ""),
+        sql`lower(trim(both '@' from ${ashTiktokComments.author})) <> 'wickedsread'`,
+      ))
+      .returning({ id: ashTiktokComments.id });
+    return released.length;
+  });
 }

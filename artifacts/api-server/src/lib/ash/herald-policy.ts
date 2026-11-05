@@ -29,7 +29,6 @@ export function getCommentPageStopReason(input: {
   pageNumber: number;
   maxPages: number;
 }): "stored-comment" | "no-more-pages" | "page-cap" | null {
-  if (input.hasStoredComment) return "stored-comment";
   if (!input.hasMore || input.cursor == null || String(input.cursor) === "") return "no-more-pages";
   if (input.pageNumber >= input.maxPages) return "page-cap";
   return null;

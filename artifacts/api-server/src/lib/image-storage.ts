@@ -87,6 +87,29 @@ export async function saveSongAudioFromUrl(urlText: string, jobId: string, clipI
   return { objectPath: `/objects/${objectName.slice(prefix ? prefix.length + 1 : 0)}`, contentType };
 }
 
+export async function saveHeraldImageFromUrl(urlText: string, commentId: string): Promise<{ objectPath: string; contentType: string }> {
+  const url = new URL(urlText);
+  const host = url.hostname.toLowerCase();
+  const allowed = ["tiktokcdn.com", "tiktokcdn-us.com", "ibytedtos.com", "byteoversea.com", "muscdn.com", "tiktokv.com"];
+  if (url.protocol !== "https:" || !allowed.some((domain) => host === domain || host.endsWith(`.${domain}`))) {
+    throw new Error("Herald image URL is not from an approved TikTok media host");
+  }
+  const { bucket, prefix } = storageLocation();
+  const hash = createHash("sha256").update(commentId).digest("hex");
+  const objectName = `${prefix ? `${prefix}/` : ""}herald/${hash}`;
+  const file = client.bucket(bucket).file(objectName);
+  const [exists] = await file.exists();
+  if (exists) return { objectPath: `/objects/${objectName.slice(prefix ? prefix.length + 1 : 0)}`, contentType: "image/jpeg" };
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Could not download Herald image (HTTP ${response.status})`);
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+  if (!contentType.startsWith("image/")) throw new Error("Provider returned a non-image file");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw new Error("Herald image size is invalid");
+  await file.save(bytes, { resumable: false, metadata: { contentType, cacheControl: "private, max-age=31536000" } });
+  return { objectPath: `/objects/${objectName.slice(prefix ? prefix.length + 1 : 0)}`, contentType };
+}
+
 export async function readSongAudioObject(objectPath: string): Promise<{ bytes: Buffer; contentType: string }> {
   if (!objectPath.startsWith("/objects/music/")) throw new Error("Invalid song audio object reference");
   const { bucket, prefix } = storageLocation();

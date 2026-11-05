@@ -64,6 +64,7 @@ export const ashState = pgTable("ash_state", {
   discordContinuitySummary: text("discord_continuity_summary").notNull().default(""),
   // Court Herald: TikTok account to watch (read-only, via scraper service).
   tiktokUsername: text("tiktok_username").notNull().default(""),
+  heraldClaimsReleased: integer("herald_claims_released").notNull().default(0),
 });
 
 // Multi-book Story library. The legacy ash_story row is retained as a frozen
@@ -150,6 +151,7 @@ export const ashTiktokComments = pgTable("ash_tiktok_comments", {
   status: text("status").notNull().default("new"),
   draft: text("draft").notNull().default(""),
   seenByAsh: integer("seen_by_ash").notNull().default(0),
+  imageObjectPath: text("image_object_path"),
 });
 
 // Discord Court Herald: Wicked explicitly selects these halls. No Discord
@@ -459,7 +461,7 @@ export type UpdatePersonaPayload = z.infer<typeof updatePersonaSchema>;
 
 // Court Herald
 export type AshTiktokComment = typeof ashTiktokComments.$inferSelect;
-export type InsertTiktokComment = Omit<AshTiktokComment, "id" | "fetchedAt" | "status" | "draft" | "seenByAsh">;
+export type InsertTiktokComment = Omit<AshTiktokComment, "id" | "fetchedAt" | "status" | "draft" | "seenByAsh" | "imageObjectPath"> & { imageObjectPath?: string | null };
 export const updateHeraldCommentSchema = z.object({
   status: z.enum(["new", "answered", "ignored", "saved"]).optional(),
   draft: z.string().max(4000).optional(),

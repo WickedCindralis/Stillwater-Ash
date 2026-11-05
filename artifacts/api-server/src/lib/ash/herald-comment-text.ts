@@ -50,6 +50,28 @@ export function extractHeraldCommentText(raw: ProviderComment): { text: string; 
   return selected ? { text: selected[1].trim(), source: selected[0] } : null;
 }
 
+export function extractHeraldImageUrl(raw: ProviderComment): string | null {
+  const findUrl = (value: unknown, depth = 0): string | null => {
+    if (depth > 6) return null;
+    if (typeof value === "string") return /^https:\/\//i.test(value) ? value : null;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = findUrl(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    const item = record(value);
+    if (!item) return null;
+    for (const key of ["url_list", "url", "image_url", "display_image", "origin_image", "image"]) {
+      const found = findUrl(item[key], depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+  return findUrl(raw["image_list"]);
+}
+
 const TEXT_FIELD_PATHS = [
   "text", "comment_text", "commentText", "content", "desc",
   "comment.text", "reply.text", "share_info.desc", "text_extra",

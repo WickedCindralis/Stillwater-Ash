@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractHeraldCommentText, summarizeHeraldTextFields } from "./herald-comment-text";
+import { extractHeraldCommentText, extractHeraldImageUrl, summarizeHeraldTextFields } from "./herald-comment-text";
 
 test("keeps plain text including mentions, links, and emoji-only comments", () => {
   assert.deepEqual(extractHeraldCommentText({ text: "@Ash https://example.test 🖤" }), {
@@ -35,4 +35,11 @@ test("skip diagnostics summarize provider text fields and cap values", () => {
   assert.match(summary, /share_info\.desc=/);
   assert.match(summary, /text_extra=/);
   assert.ok(summary.length < 400);
+});
+
+test("extracts the first image URL from TikTok image_list shapes", () => {
+  assert.equal(extractHeraldImageUrl({
+    image_list: [{ display_image: { url_list: ["https://p16-sign.tiktokcdn-us.com/photo.jpg"] } }],
+  }), "https://p16-sign.tiktokcdn-us.com/photo.jpg");
+  assert.equal(extractHeraldImageUrl({ image_list: null }), null);
 });

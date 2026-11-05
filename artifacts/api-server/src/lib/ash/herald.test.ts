@@ -52,7 +52,7 @@ test("comment skips distinguish missing IDs, missing text, and duplicates", () =
 test("pagination stops on a stored comment, exhaustion, or page cap", () => {
   const base = { hasStoredComment: false, hasMore: true, cursor: 20, pageNumber: 1, maxPages: 5 };
   assert.equal(getCommentPageStopReason(base), null);
-  assert.equal(getCommentPageStopReason({ ...base, hasStoredComment: true }), "stored-comment");
+  assert.equal(getCommentPageStopReason({ ...base, hasStoredComment: true }), null);
   assert.equal(getCommentPageStopReason({ ...base, hasMore: false }), "no-more-pages");
   assert.equal(getCommentPageStopReason({ ...base, cursor: null }), "no-more-pages");
   assert.equal(getCommentPageStopReason({ ...base, pageNumber: 5 }), "page-cap");

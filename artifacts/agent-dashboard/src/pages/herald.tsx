@@ -209,6 +209,15 @@ export default function HeraldPage() {
                   )}
                 </div>
                 <p className="mt-1.5 whitespace-pre-wrap leading-relaxed">{c.text}</p>
+                {c.imageUrl && (
+                  <img
+                    src={c.imageUrl}
+                    alt={`Image attached to comment by @${c.author}`}
+                    loading="lazy"
+                    className="mt-3 max-h-80 max-w-full rounded-lg border border-white/10 object-contain"
+                    data-testid={`herald-comment-image-${c.id}`}
+                  />
+                )}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 {(["answered", "saved", "ignored"] as const).map((s) => (

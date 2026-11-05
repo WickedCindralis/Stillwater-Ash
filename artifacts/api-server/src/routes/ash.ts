@@ -831,10 +831,30 @@ router.get("/herald/comments", requireAuth, async (_req, res): Promise<void> => 
   const comments = await storage.listTiktokComments();
   const state = await storage.getState();
   res.json({
-    comments,
+    comments: comments.map(({ imageObjectPath, ...comment }) => ({
+      ...comment,
+      imageUrl: imageObjectPath ? `/api/herald/comments/${comment.id}/image` : null,
+    })),
     tiktokUsername: normalizeTiktokHandle(state.tiktokUsername),
     scraperConfigured: !!process.env["SCRAPECREATORS_API_KEY"],
   });
+});
+
+router.get("/herald/comments/:id/image", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params["id"]);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Bad comment id" });
+    return;
+  }
+  const comment = await storage.getTiktokComment(id);
+  if (!comment?.imageObjectPath) {
+    res.status(404).json({ error: "Comment image not found" });
+    return;
+  }
+  const image = await readImageBytes(comment.imageObjectPath);
+  res.setHeader("Content-Type", image.contentType);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.send(image.bytes);
 });
 
 router.patch("/herald/comments/:id", requireAuth, async (req, res): Promise<void> => {

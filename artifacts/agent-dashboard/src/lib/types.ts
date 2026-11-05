@@ -37,6 +37,7 @@ export interface HeraldComment {
   status: "new" | "answered" | "ignored" | "saved";
   draft: string;
   seenByAsh: number;
+  imageUrl?: string | null;
 }
 
 export interface AshActivity {
